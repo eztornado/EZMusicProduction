@@ -1,0 +1,12 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/ivan/daw/build/cmake_install.cmake",
+		"/Users/ivan/daw/build/engine/cmake_install.cmake",
+		"/Users/ivan/daw/build/_deps/juce-build/cmake_install.cmake",
+		"/Users/ivan/daw/build/_deps/juce-build/modules/cmake_install.cmake",
+		"/Users/ivan/daw/build/_deps/juce-build/extras/Build/cmake_install.cmake",
+		"/Users/ivan/daw/build/_deps/juce-build/extras/Build/juceaide/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
