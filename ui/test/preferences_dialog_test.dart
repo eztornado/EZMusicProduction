@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cadence_ui/engine/engine_service.dart';
+import 'package:cadence_ui/l10n/l10n.dart';
 import 'package:cadence_ui/ui/preferences_dialog.dart';
 
 void main() {
@@ -15,6 +16,9 @@ void main() {
     service.initialiseDevice();
 
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('es'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: Builder(
           builder: (context) => TextButton(

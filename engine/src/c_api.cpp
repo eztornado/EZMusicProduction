@@ -13,14 +13,37 @@ cadence::Engine* asEngine(CadenceEngine* handle)
 
 } // namespace
 
+static CadenceEngine* g_active_engine = nullptr;
+
 CadenceEngine* cadence_engine_create(void)
 {
-    return reinterpret_cast<CadenceEngine*>(new cadence::Engine());
+    auto* e = new cadence::Engine();
+    g_active_engine = reinterpret_cast<CadenceEngine*>(e);
+    return reinterpret_cast<CadenceEngine*>(e);
 }
 
 void cadence_engine_destroy(CadenceEngine* engine)
 {
+    if (g_active_engine == engine) g_active_engine = nullptr;
     delete asEngine(engine);
+}
+
+CadenceEngine* cadence_engine_get_active(void)
+{
+    return g_active_engine;
+}
+
+CadenceResult cadence_engine_drop_file(const char* utf8_path)
+{
+    auto* e = g_active_engine;
+    if (e == nullptr || utf8_path == nullptr)
+        return kCadenceErrorNullArgument;
+    // Add to the first track at position 0. Iván can then drag the clip
+    // to the desired track/position on the timeline.
+    auto trackId = asEngine(e)->trackIdAt(0);
+    auto clipId = asEngine(e)->addClip(trackId,
+        juce::File(juce::String::fromUTF8(utf8_path)), 0.0, 1.0f);
+    return clipId >= 0 ? kCadenceOk : kCadenceErrorNotFound;
 }
 
 CadenceResult cadence_engine_initialise(CadenceEngine* engine)
@@ -30,6 +53,25 @@ CadenceResult cadence_engine_initialise(CadenceEngine* engine)
     if (asEngine(engine)->initialise().failed())
         return kCadenceErrorAudioDevice;
     return kCadenceOk;
+}
+
+CadenceResult cadence_engine_restart_audio(CadenceEngine* engine)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->restartAudio().failed()
+               ? kCadenceErrorAudioDevice : kCadenceOk;
+}
+
+void cadence_engine_initialise_audio_background(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->initialiseAudioInBackground();
+}
+
+int cadence_engine_audio_initialised(CadenceEngine* engine)
+{
+    return (engine != nullptr && asEngine(engine)->audioInitialised()) ? 1 : 0;
 }
 
 CadenceResult cadence_engine_new_project(CadenceEngine* engine, double sample_rate)
@@ -69,6 +111,281 @@ CadenceResult cadence_engine_set_track_volume(CadenceEngine* engine, CadenceTrac
         return kCadenceErrorInvalidArgument;
     return asEngine(engine)->setTrackVolume(track_id, linear_gain).failed()
                ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_set_track_volume_automation(CadenceEngine* engine,
+                                                         CadenceTrackId track_id,
+                                                         const double* times,
+                                                         const double* values,
+                                                         int count)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (count < 0 || (count > 0 && (times == nullptr || values == nullptr)))
+        return kCadenceErrorInvalidArgument;
+    std::vector<cadence::AutomationPoint> points;
+    points.reserve((size_t) count);
+    for (int i = 0; i < count; ++i)
+        points.push_back({ times[i], values[i] });
+    return asEngine(engine)->setTrackVolumeAutomation(track_id, points).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+int cadence_engine_track_volume_auto_count(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    return engine != nullptr ? asEngine(engine)->trackVolumeAutoCount(track_id) : 0;
+}
+
+CadenceResult cadence_engine_set_track_lane_automation(CadenceEngine* engine,
+                                                       CadenceTrackId track_id,
+                                                       int lane,
+                                                       const double* times,
+                                                       const double* values,
+                                                       int count)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (lane < 0 || lane > 2 || count < 0
+        || (count > 0 && (times == nullptr || values == nullptr)))
+        return kCadenceErrorInvalidArgument;
+    std::vector<cadence::AutomationPoint> points;
+    points.reserve((size_t) count);
+    for (int i = 0; i < count; ++i)
+        points.push_back({ times[i], values[i] });
+    return asEngine(engine)->setTrackLaneAutomation(track_id, lane, points).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+int cadence_engine_track_lane_auto_count(CadenceEngine* engine,
+                                         CadenceTrackId track_id, int lane)
+{
+    return engine != nullptr ? asEngine(engine)->trackLaneAutomationCount(track_id, lane) : 0;
+}
+
+CadenceResult cadence_engine_set_track_param_automation(CadenceEngine* engine,
+                                                        CadenceTrackId track_id,
+                                                        int slot_kind,
+                                                        int slot_index,
+                                                        int param_index,
+                                                        const char* utf8_name,
+                                                        const double* times,
+                                                        const double* values,
+                                                        int count)
+{
+    if (engine == nullptr || utf8_name == nullptr)
+        return kCadenceErrorNullArgument;
+    if (count < 0 || (count > 0 && (times == nullptr || values == nullptr)))
+        return kCadenceErrorInvalidArgument;
+    std::vector<cadence::AutomationPoint> points;
+    points.reserve((size_t) count);
+    for (int i = 0; i < count; ++i)
+        points.push_back({ times[i], values[i] });
+    return asEngine(engine)
+        ->setTrackParamAutomation(track_id, slot_kind, slot_index, param_index,
+                                  juce::String::fromUTF8(utf8_name), points)
+        .failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+int cadence_engine_track_param_lane_count(CadenceEngine* engine,
+                                          CadenceTrackId track_id)
+{
+    return engine != nullptr ? asEngine(engine)->trackParamLaneCount(track_id) : 0;
+}
+
+CadenceResult cadence_engine_track_param_lane_info(CadenceEngine* engine,
+                                                   CadenceTrackId track_id,
+                                                   int lane_index,
+                                                   int* out_slot_kind,
+                                                   int* out_slot_index,
+                                                   int* out_param_index)
+{
+    if (engine == nullptr || out_slot_kind == nullptr || out_slot_index == nullptr
+        || out_param_index == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)
+        ->trackParamLaneInfo(track_id, lane_index, out_slot_kind, out_slot_index,
+                             out_param_index)
+        .failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+const char* cadence_engine_track_param_lane_name(CadenceEngine* engine,
+                                                 CadenceTrackId track_id,
+                                                 int lane_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->trackParamLaneName(track_id, lane_index)
+               : "";
+}
+
+int cadence_engine_track_param_lane_point_count(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int lane_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->trackParamLanePointCount(track_id, lane_index)
+               : 0;
+}
+
+CadenceResult cadence_engine_track_param_lane_point_at(CadenceEngine* engine,
+                                                       CadenceTrackId track_id,
+                                                       int lane_index,
+                                                       int point_index,
+                                                       double* out_time,
+                                                       double* out_value)
+{
+    if (engine == nullptr || out_time == nullptr || out_value == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto point =
+        asEngine(engine)->trackParamLanePointAt(track_id, lane_index, point_index);
+    *out_time = point.timeSeconds;
+    *out_value = point.value;
+    return kCadenceOk;
+}
+
+CadenceResult cadence_engine_remove_track_param_lane(CadenceEngine* engine,
+                                                     CadenceTrackId track_id,
+                                                     int lane_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->removeTrackParamLane(track_id, lane_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+int cadence_engine_plugin_param_count(CadenceEngine* engine,
+                                      CadenceTrackId track_id, int slot_kind,
+                                      int slot_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamCount(track_id, slot_kind, slot_index)
+               : 0;
+}
+
+const char* cadence_engine_plugin_param_name(CadenceEngine* engine,
+                                             CadenceTrackId track_id,
+                                             int slot_kind, int slot_index,
+                                             int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamName(track_id, slot_kind,
+                                                   slot_index, param_index)
+               : "";
+}
+
+CadenceResult cadence_engine_track_lane_auto_at(CadenceEngine* engine,
+                                                CadenceTrackId track_id, int lane,
+                                                int index, double* out_time,
+                                                double* out_value)
+{
+    if (engine == nullptr || out_time == nullptr || out_value == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto point = asEngine(engine)->trackLaneAutomationAt(track_id, lane, index);
+    *out_time = point.timeSeconds;
+    *out_value = point.value;
+    return kCadenceOk;
+}
+
+float cadence_engine_track_volume_effective_at(CadenceEngine* engine,
+                                               CadenceTrackId track_id,
+                                               double time_seconds)
+{
+    if (engine == nullptr || ! std::isfinite(time_seconds))
+        return 0.0f;
+    return asEngine(engine)->trackVolumeEffectiveAt(track_id, time_seconds);
+}
+
+CadenceResult cadence_engine_track_volume_auto_at(CadenceEngine* engine,
+                                                  CadenceTrackId track_id, int index,
+                                                  double* out_time, double* out_value)
+{
+    if (engine == nullptr || out_time == nullptr || out_value == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto point = asEngine(engine)->trackVolumeAutoAt(track_id, index);
+    *out_time = point.timeSeconds;
+    *out_value = point.value;
+    return kCadenceOk;
+}
+
+CadenceResult cadence_engine_set_track_volume_auto_point_at(CadenceEngine* engine,
+                                                            CadenceTrackId track_id,
+                                                            double time_seconds,
+                                                            double value)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(time_seconds) || ! std::isfinite(value))
+        return kCadenceErrorInvalidArgument;
+    return asEngine(engine)
+        ->setTrackVolumeAutomationPointAt(track_id, time_seconds, value)
+        .failed()
+               ? kCadenceErrorInvalidArgument : kCadenceOk;
+}
+
+double cadence_engine_input_quantize(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->inputQuantizeSeconds() : 0.0;
+}
+
+CadenceResult cadence_engine_set_input_quantize(CadenceEngine* engine,
+                                                double grid_seconds)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(grid_seconds) || grid_seconds < 0.0)
+        return kCadenceErrorInvalidArgument;
+    return asEngine(engine)->setInputQuantize(grid_seconds).failed()
+               ? kCadenceErrorInvalidArgument : kCadenceOk;
+}
+
+double cadence_engine_midi_input_latency(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->midiInputLatencyMs() : 0.0;
+}
+
+CadenceResult cadence_engine_set_midi_input_latency(CadenceEngine* engine,
+                                                    double ms)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(ms))
+        return kCadenceErrorInvalidArgument;
+    asEngine(engine)->setMidiInputLatencyMs(ms);
+    return kCadenceOk;
+}
+
+CadenceResult cadence_engine_copy_clip(CadenceEngine* engine,
+                                       CadenceClipId clip_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->copyClip(clip_id).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_paste_clip(CadenceEngine* engine,
+                                        CadenceTrackId track_id,
+                                        double start_seconds)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(start_seconds))
+        return kCadenceErrorInvalidArgument;
+    return asEngine(engine)->pasteClip(track_id, start_seconds).failed()
+               ? kCadenceErrorInvalidArgument : kCadenceOk;
+}
+
+int cadence_engine_has_pending_plugin_jobs(CadenceEngine* engine)
+{
+    return engine != nullptr
+        ? (asEngine(engine)->hasPendingPluginJobs() ? 1 : 0) : 0;
+}
+
+void cadence_engine_pump_one_plugin_job(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->pumpOnePluginJob();
 }
 
 CadenceResult cadence_engine_set_track_pan(CadenceEngine* engine, CadenceTrackId track_id, float pan)
@@ -471,6 +788,47 @@ CadenceResult cadence_engine_midi_clip_set_note(CadenceEngine* engine, CadenceCl
                ? kCadenceErrorNotFound : kCadenceOk;
 }
 
+double cadence_engine_clip_note_orig_start_at(CadenceEngine* engine, CadenceClipId clip_id,
+                                              int index)
+{
+    return engine != nullptr ? asEngine(engine)->clipNoteOrigStartAt(clip_id, index) : 0.0;
+}
+
+CadenceResult cadence_engine_quantize_clip_notes(CadenceEngine* engine, CadenceClipId clip_id,
+                                                 double grid_seconds, double swing,
+                                                 double catch_range, double max_move,
+                                                 int non_grid, int iterative,
+                                                 double iter_strength)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(grid_seconds) || grid_seconds <= 0.0
+        || ! std::isfinite(swing) || ! std::isfinite(catch_range)
+        || ! std::isfinite(max_move) || ! std::isfinite(iter_strength))
+        return kCadenceErrorInvalidArgument;
+    return asEngine(engine)
+        ->quantizeClipNotes(clip_id, grid_seconds, swing, catch_range, max_move,
+                            non_grid != 0, iterative != 0, iter_strength)
+        .failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_reset_clip_quantize(CadenceEngine* engine, CadenceClipId clip_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->resetClipQuantize(clip_id).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_freeze_clip_quantize(CadenceEngine* engine, CadenceClipId clip_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->freezeClipQuantize(clip_id).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
 int cadence_engine_clip_is_midi(CadenceEngine* engine, CadenceClipId clip_id)
 {
     return (engine != nullptr && asEngine(engine)->clipIsMidi(clip_id)) ? 1 : 0;
@@ -489,6 +847,28 @@ void cadence_engine_clip_note_at(CadenceEngine* engine, CadenceClipId clip_id, i
         return;
     asEngine(engine)->clipNoteAt(clip_id, index, out_pitch, out_velocity,
                                  out_start, out_length);
+}
+
+CadenceResult cadence_engine_move_clip_to_track(CadenceEngine* engine, CadenceClipId clip_id,
+                                                CadenceTrackId track_id, double start_seconds)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(start_seconds))
+        return kCadenceErrorInvalidArgument;
+    return asEngine(engine)->moveClipToTrack(clip_id, track_id, start_seconds).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_split_clip(CadenceEngine* engine, CadenceClipId clip_id,
+                                        double time_seconds)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(time_seconds))
+        return kCadenceErrorInvalidArgument;
+    return asEngine(engine)->splitClipAt(clip_id, time_seconds).failed()
+               ? kCadenceErrorInvalidArgument : kCadenceOk;
 }
 
 CadenceResult cadence_engine_set_clip_fades(CadenceEngine* engine, CadenceClipId clip_id,
@@ -571,15 +951,308 @@ double cadence_engine_record_start_seconds(CadenceEngine* engine)
     return engine != nullptr ? asEngine(engine)->recordStartSeconds() : 0.0;
 }
 
+int cadence_engine_recording_note_count(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    return engine != nullptr ? asEngine(engine)->recordingNoteCount(track_id) : 0;
+}
+
+void cadence_engine_recording_note_at(CadenceEngine* engine, CadenceTrackId track_id,
+                                      int index, int* out_pitch, float* out_velocity,
+                                      double* out_start, double* out_length)
+{
+    if (engine == nullptr)
+        return;
+    asEngine(engine)->recordingNoteAt(track_id, index, out_pitch, out_velocity,
+                                      out_start, out_length);
+}
+
 void cadence_engine_set_debug_loopback(int enabled)
 {
     cadence::Engine::setDebugLoopback(enabled != 0);
+}
+
+void cadence_engine_rescan_plugins(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->rescanPlugins();
+}
+
+void cadence_engine_scan_plugins_now(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->scanPluginsNow();
+}
+
+int cadence_engine_plugin_scan_active(CadenceEngine* engine)
+{
+    return (engine != nullptr && asEngine(engine)->pluginScanActive()) ? 1 : 0;
+}
+
+int cadence_engine_plugin_count(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->pluginCount() : 0;
+}
+
+const char* cadence_engine_plugin_name_at(CadenceEngine* engine, int index)
+{
+    return engine != nullptr ? asEngine(engine)->pluginNameAt(index) : "";
+}
+
+const char* cadence_engine_plugin_uid_at(CadenceEngine* engine, int index)
+{
+    return engine != nullptr ? asEngine(engine)->pluginUidAt(index) : "";
+}
+
+int cadence_engine_plugin_is_instrument_at(CadenceEngine* engine, int index)
+{
+    return (engine != nullptr && asEngine(engine)->pluginIsInstrumentAt(index)) ? 1 : 0;
+}
+
+const char* cadence_engine_plugin_format_at(CadenceEngine* engine, int index)
+{
+    return engine != nullptr ? asEngine(engine)->pluginFormatAt(index) : "";
+}
+
+CadenceResult cadence_engine_track_add_fx(CadenceEngine* engine, CadenceTrackId track_id,
+                                          int plugin_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->addTrackFx(track_id, plugin_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_track_remove_fx(CadenceEngine* engine, CadenceTrackId track_id,
+                                             int slot_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->removeTrackFx(track_id, slot_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_track_set_fx_bypass(CadenceEngine* engine, CadenceTrackId track_id,
+                                                 int slot_index, int bypass)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->setTrackFxBypass(track_id, slot_index, bypass != 0).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+int cadence_engine_track_fx_count(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    return engine != nullptr ? asEngine(engine)->trackFxCount(track_id) : 0;
+}
+
+const char* cadence_engine_track_fx_name_at(CadenceEngine* engine, CadenceTrackId track_id,
+                                            int slot_index)
+{
+    return engine != nullptr ? asEngine(engine)->trackFxNameAt(track_id, slot_index) : "";
+}
+
+int cadence_engine_track_fx_bypass_at(CadenceEngine* engine, CadenceTrackId track_id,
+                                      int slot_index)
+{
+    return (engine != nullptr && asEngine(engine)->trackFxBypassAt(track_id, slot_index)) ? 1 : 0;
+}
+
+CadenceResult cadence_engine_track_set_instrument_plugin(CadenceEngine* engine,
+                                                         CadenceTrackId track_id,
+                                                         int plugin_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->setTrackInstrumentPlugin(track_id, plugin_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_track_clear_instrument(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->clearTrackInstrument(track_id).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_track_set_fx_state(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int slot_index,
+                                                const void* component,
+                                                int component_size,
+                                                const void* controller,
+                                                int controller_size)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)
+                   ->setTrackFxState(track_id, slot_index, component,
+                                     component_size, controller, controller_size)
+                   .failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_track_set_instrument_state(CadenceEngine* engine,
+                                                        CadenceTrackId track_id,
+                                                        const void* component,
+                                                        int component_size,
+                                                        const void* controller,
+                                                        int controller_size)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)
+                   ->setTrackInstrumentState(track_id, component, component_size,
+                                             controller, controller_size)
+                   .failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+const char* cadence_engine_plugin_state_base64(CadenceEngine* engine,
+                                               CadenceTrackId track_id,
+                                               int slot_kind, int slot_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginStateBase64(track_id, slot_kind, slot_index)
+               : "";
+}
+
+const char* cadence_engine_track_instrument_name(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    return engine != nullptr ? asEngine(engine)->trackInstrumentName(track_id) : "";
+}
+
+CadenceResult cadence_engine_track_set_midifx(CadenceEngine* engine,
+                                              CadenceTrackId track_id,
+                                              int plugin_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->setTrackMidiFx(track_id, plugin_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_track_clear_midifx(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->clearTrackMidiFx(track_id).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+const char* cadence_engine_track_midifx_name(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    return engine != nullptr ? asEngine(engine)->trackMidiFxName(track_id) : "";
+}
+
+CadenceResult cadence_engine_open_plugin_editor(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int slot_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->openPluginEditor(track_id, slot_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_open_instrument_editor(CadenceEngine* engine,
+                                                    CadenceTrackId track_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->openInstrumentEditor(track_id).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_open_instrument_editor_with_clip(
+    CadenceEngine* engine, CadenceTrackId track_id, std::int64_t clip_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)
+        ->openInstrumentEditor(track_id, (cadence::ClipId) clip_id)
+        .failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+int cadence_engine_master_fx_count(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->masterFxCount() : 0;
+}
+
+const char* cadence_engine_master_fx_name_at(CadenceEngine* engine, int slot_index)
+{
+    return engine != nullptr ? asEngine(engine)->masterFxNameAt(slot_index) : "";
+}
+
+CadenceResult cadence_engine_master_add_fx(CadenceEngine* engine, int plugin_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->addMasterFx(plugin_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_master_remove_fx(CadenceEngine* engine, int slot_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->removeMasterFx(slot_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_master_set_fx_bypass(CadenceEngine* engine, int slot_index,
+                                                  int bypass)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->setMasterFxBypass(slot_index, bypass != 0).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+int cadence_engine_master_fx_bypass_at(CadenceEngine* engine, int slot_index)
+{
+    return (engine != nullptr && asEngine(engine)->masterFxBypassAt(slot_index)) ? 1 : 0;
 }
 
 void cadence_engine_set_metronome(CadenceEngine* engine, int enabled)
 {
     if (engine != nullptr)
         asEngine(engine)->setMetronome(enabled != 0);
+}
+
+double cadence_engine_tempo_bpm(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->tempoBpm() : 120.0;
+}
+
+CadenceResult cadence_engine_set_tempo_bpm(CadenceEngine* engine, double bpm)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(bpm))
+        return kCadenceErrorInvalidArgument;
+    return asEngine(engine)->setTempo(bpm).failed()
+               ? kCadenceErrorInvalidArgument : kCadenceOk;
+}
+
+int cadence_engine_time_sig_numerator(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->timeSigNumerator() : 4;
+}
+
+int cadence_engine_time_sig_denominator(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->timeSigDenominator() : 4;
+}
+
+CadenceResult cadence_engine_set_time_sig(CadenceEngine* engine, int numerator,
+                                          int denominator)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->setTimeSignature(numerator, denominator).failed()
+               ? kCadenceErrorInvalidArgument : kCadenceOk;
 }
 
 int cadence_engine_can_undo(CadenceEngine* engine)
@@ -620,6 +1293,65 @@ CadenceResult cadence_engine_load_project(CadenceEngine* engine, const char* utf
         return kCadenceErrorNullArgument;
     const auto r = asEngine(engine)->loadProject(juce::File(juce::String::fromUTF8(utf8_path)));
     return r.failed() ? kCadenceErrorLoadFailed : kCadenceOk;
+}
+
+CadenceResult cadence_engine_import_midi_project(CadenceEngine* engine, const char* utf8_path)
+{
+    if (engine == nullptr || utf8_path == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto r = asEngine(engine)->importMidiProject(juce::File(juce::String::fromUTF8(utf8_path)));
+    return r.failed() ? kCadenceErrorLoadFailed : kCadenceOk;
+}
+
+CadenceResult cadence_engine_import_stems_folder(CadenceEngine* engine, const char* utf8_path)
+{
+    if (engine == nullptr || utf8_path == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto r = asEngine(engine)->importStemsFolder(juce::File(juce::String::fromUTF8(utf8_path)));
+    return r.failed() ? kCadenceErrorLoadFailed : kCadenceOk;
+}
+
+CadenceResult cadence_engine_import_audio_file(CadenceEngine* engine, const char* utf8_path)
+{
+    if (engine == nullptr || utf8_path == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto r = asEngine(engine)->importAudioFile(juce::File(juce::String::fromUTF8(utf8_path)));
+    return r.failed() ? kCadenceErrorLoadFailed : kCadenceOk;
+}
+
+CadenceResult cadence_engine_preview_sound(CadenceEngine* engine, const char* utf8_path)
+{
+    if (engine == nullptr || utf8_path == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto r = asEngine(engine)->previewSound(
+        juce::File(juce::String::fromUTF8(utf8_path)));
+    return r.failed() ? kCadenceErrorLoadFailed : kCadenceOk;
+}
+
+void cadence_engine_stop_preview(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->stopPreview();
+}
+
+int cadence_engine_is_previewing(CadenceEngine* engine)
+{
+    return (engine != nullptr && asEngine(engine)->isPreviewing()) ? 1 : 0;
+}
+
+const char* cadence_engine_pick_open_file(CadenceEngine* engine,
+                                          const char* utf8_start_dir,
+                                          const char* utf8_filters)
+{
+    if (engine == nullptr)
+        return "";
+    const auto start = juce::File(utf8_start_dir != nullptr
+                                      ? juce::String::fromUTF8(utf8_start_dir)
+                                      : juce::String());
+    const auto filters = juce::String::fromUTF8(utf8_filters != nullptr
+                                                    ? utf8_filters
+                                                    : "");
+    return asEngine(engine)->pickOpenFile(start, filters);
 }
 
 CadenceResult cadence_engine_set_gain(CadenceEngine* engine, float linear_gain)
@@ -667,6 +1399,19 @@ CadenceResult cadence_engine_render(CadenceEngine* engine, const char* utf8_out_
     if (! std::isfinite(max_seconds) || max_seconds <= 0.0)
         return kCadenceErrorInvalidArgument;
     const auto r = asEngine(engine)->renderToFile(juce::File(juce::String::fromUTF8(utf8_out_path)), max_seconds);
+    return r.failed() ? kCadenceErrorRenderFailed : kCadenceOk;
+}
+
+CadenceResult cadence_engine_render_ex(CadenceEngine* engine, const char* utf8_out_path,
+                                       double max_seconds, int bits_per_sample)
+{
+    if (engine == nullptr || utf8_out_path == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(max_seconds) || max_seconds <= 0.0)
+        return kCadenceErrorInvalidArgument;
+    const auto r = asEngine(engine)->renderToFileEx(
+        juce::File(juce::String::fromUTF8(utf8_out_path)), max_seconds,
+        bits_per_sample);
     return r.failed() ? kCadenceErrorRenderFailed : kCadenceOk;
 }
 

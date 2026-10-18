@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/CMakeFiles/fluidsynth-populate"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/CMakeFiles/fluidsynth-populate.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/CMakeFiles/fluidsynth-populate-complete.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-build.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-configure.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-download.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-install.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-mkdir.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-patch.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-test.rule"
+		},
+		{
+			"file" : "/Users/ivan/daw/build/_deps/fluidsynth-subbuild/fluidsynth-populate-prefix/src/fluidsynth-populate-stamp/fluidsynth-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"fluidsynth-populate"
+		],
+		"name" : "fluidsynth-populate"
+	}
+}

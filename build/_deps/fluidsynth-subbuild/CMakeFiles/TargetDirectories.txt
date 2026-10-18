@@ -1,0 +1,3 @@
+/Users/ivan/daw/build/_deps/fluidsynth-subbuild/CMakeFiles/fluidsynth-populate.dir
+/Users/ivan/daw/build/_deps/fluidsynth-subbuild/CMakeFiles/edit_cache.dir
+/Users/ivan/daw/build/_deps/fluidsynth-subbuild/CMakeFiles/rebuild_cache.dir

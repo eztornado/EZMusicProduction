@@ -16,28 +16,63 @@
 
 namespace cadence {
 
+struct TrackCapture;
+using CaptureList = std::vector<std::shared_ptr<TrackCapture>>;
+
 // Plugin scanner/instantiator: VST3 + AudioUnit on macOS (VST2 requires the
 // Steinberg headers; add JUCE_VST2_SDK_PATH to enable that format).
-class PluginHost
+//
+// Scanning runs CHUNKED on the JUCE message thread: beginScan() builds the
+// file list (fast) and each AsyncUpdater event scans ONE file, merging the
+// result into the known list under a mutex as soon as it lands. A full scan
+// of a large plugin folder takes minutes and instantiates real plugin code,
+// so blocking a thread (or the host UI) is not viable; results are cached
+// to disk and reloaded at setup().
+class PluginHost : private juce::AsyncUpdater
 {
 public:
-    void setup();   // add formats; call once per process
-    void scan();    // scan all format locations into the known list
-    int pluginCount() const { return known_.getNumTypes(); }
-    juce::PluginDescription* descriptionAt(int index)
-    {
-        return known_.getType(index);
-    }
-    std::unique_ptr<juce::AudioPluginInstance> create(const juce::String& uid,
-                                                      double sampleRate,
-                                                      int blockSize);
+    void setup();     // add formats + load cached descriptions; once per process
+    void beginScan(); // kick a chunked scan (message thread); no-op if running
+    void scanNow();   // blocking full scan (message thread; CLI/tests)
+    bool scanActive() const { return scanning_.load(); }
+
+    int pluginCount() const;
+    int builtinCount() const { return (int) builtins_.size(); }
+    std::unique_ptr<juce::PluginDescription> descriptionAt(int index) const;
+    std::unique_ptr<juce::AudioProcessor> create(const juce::String& uid,
+                                                 double sampleRate,
+                                                 int blockSize);
 
 private:
+    void handleAsyncUpdate() override;
+    void buildScanners();
+    bool scanStep(); // scans one file; false when every format is exhausted
+    void mergeNewTypes();
+    void saveCache() const;
+    void writeInFlightFile(const juce::String& file) const;
+    void appendToDeadMansPedal(const juce::String& file) const;
+
     juce::AudioPluginFormatManager formatManager_;
+    mutable std::mutex knownMutex_;
     juce::KnownPluginList known_;
+    std::unique_ptr<juce::KnownPluginList> scanList_;
+    std::vector<std::unique_ptr<juce::PluginDirectoryScanner>> scanners_;
+    size_t scannerIndex_ = 0;
+    std::atomic<bool> scanning_ {false};
+    std::atomic<juce::uint64> stepDeadline_ {0}; // watchdog deadline, ms clock
     juce::File deadMansPedalFile_ =
         juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile("Cadence/dead_mans_pedal.txt");
+    juce::File inFlightFile_ =
+        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Cadence/scan_inflight.txt");
+    juce::File cacheFile_ =
+        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Cadence/plugin_cache.xml");
+
+    // Built-in DSP shipped with the app (EZ EQ Pro): same FX-chain path as
+    // hosted plugins, but instantiated directly — no binary on disk.
+    std::vector<juce::PluginDescription> builtins_;
 };
 
 // Immutable fx chain snapshot: swapped wholesale under the owning node's
@@ -56,22 +91,49 @@ struct TrackAudioNode {
     std::shared_ptr<const FxChain> fx;
     std::mutex fxMutex;
     std::vector<double> preparedRates; // per chain processor
+    double preparedRate = 0.0;         // sample rate the chain was prepared at
+    std::atomic<int> preparedBlock {0}; // maximumBlockSize plugins were prepared for
     std::shared_ptr<juce::AudioProcessor> instrument;
     std::mutex instrumentMutex;
     bool instrumentBypass = false;
     bool instrumentPrepared = false;
+    juce::String instrumentUid; // change detection for reconcile
+
+    // MIDI insert (arpeggiator): transforms the track's MIDI stream
+    // before the instrument plays it. Same threading rules as instrument.
+    std::shared_ptr<juce::AudioProcessor> midiFx;
+    std::mutex midiFxMutex;
+    bool midiFxBypass = false;
+    bool midiFxPrepared = false;
+    juce::String midiFxUid;
 };
 
 // Renders project snapshots: every block it picks up the current immutable
 // Project, mixes the audible tracks/clips and advances the transport. The
 // Engine owns one live instance driven by the audio device; extra instances
 // can be created for offline pulls (Engine::renderToFile).
-class ProjectAudioSource : public juce::AudioSource {
+class ProjectAudioSource : public juce::AudioSource,
+                           public juce::AudioPlayHead {
 public:
     // Replaces the project being rendered; the transport position is kept.
     void setProject(std::shared_ptr<const Project> project);
     // Rebuilds fx/instrument plugin nodes that changed (message thread).
-    void reconcileNodes(const Project& project, PluginHost& host);
+    // With deferHeavyPlugins, NEW plugin instances are queued and applied
+    // one per message-loop pass (project load stays UI-responsive); false
+    // builds everything inline (tests, offline render).
+    void reconcileNodes(const Project& project, PluginHost& host,
+                        int blockSize, bool deferHeavyPlugins = false);
+    // Drains one queued plugin job inline (message thread).
+    void pumpOnePluginJob();
+    bool hasPendingPluginJobs() const;
+    std::shared_ptr<juce::AudioProcessor> fxProcessorFor(TrackId trackId,
+                                                         int slotIndex);
+    std::shared_ptr<juce::AudioProcessor> instrumentProcessorFor(TrackId trackId);
+    std::shared_ptr<juce::AudioProcessor> midiFxProcessorFor(TrackId trackId);
+    // Plugin-parameter automation (§7.12 v1.5): applies every param lane of
+    // the track to its target processor at the block position (audio path).
+    void applyParamAutomation(const Track& track, TrackAudioNode* node,
+                              std::int64_t blockStart, double rate);
     void setPluginHost(PluginHost* host) { pluginHost_ = host; }
 
     void play();
@@ -83,12 +145,29 @@ public:
     double positionSeconds() const;
     std::int64_t positionSamples() const;
     void setRecording(bool r) { recording_.store(r); }
+    // Recording context for MIDI-GENERATOR instruments (EZDrums): the
+    // transport start and the capture list let the render path route the
+    // plugin-performed notes into the armed track's take.
+    void setRecording(bool r, std::int64_t startSamples,
+                      std::shared_ptr<const CaptureList> caps);
     void setMetronome(bool on) { metronome_.store(on); }
     void allNotesOff();
+    // True when the track's node holds a prepared instrument plugin —
+    // false means MIDI falls back to the internal synth.
+    bool trackInstrumentLive(TrackId trackId) const;
 
     // Live MIDI monitoring: notes arriving from the selected MIDI input are
     // played by armed instrument tracks (even with the transport stopped).
     void pushExternalMidi(const juce::MidiMessage& m);
+
+    // AudioPlayHead: plugins (iZotope etc.) gate their meters/DSP on the
+    // host transport. Without this they idle forever.
+    juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override;
+
+    // Queue an All-NOTES-OFF + sustain-off injection for the next audio
+    // blocks: kills stuck plugin voices on stop/pause/seek (the synth path
+    // had its own allNotesOff, but PLUGINS never received one).
+    void requestPanic() { panicRequested_.store(true); }
 
     // Metering: read-and-reset peaks (float bits in an atomic; the audio
     // thread is the only writer). trackIndex is the position in the snapshot.
@@ -106,11 +185,17 @@ private:
     std::atomic<bool> recording_ { false };
     std::atomic<bool> metronome_ { false };
     std::atomic<std::int64_t> positionSamples_ { 0 };
+    // Generator recording context (see setRecording overload).
+    std::atomic<std::int64_t> recordStartSamples_ { 0 };
+    std::shared_ptr<const CaptureList> captureList_; // atomic_load/store
     juce::AudioBuffer<float> trackScratch_;
+    juce::AudioBuffer<float> midiFxSilent_; // zero audio passed to the MIDI insert
     juce::MidiBuffer blockMidi_;
     juce::SpinLock synthsLock_;
     std::map<TrackId, std::unique_ptr<juce::Synthesiser>> synths_;
     double synthsRate_ = 0.0;
+    std::map<TrackId, int> lastSustainCc_; // audio thread only
+    std::atomic<bool> panicRequested_ { false };
     juce::AudioBuffer<float> masterBuffer_;
     std::atomic<std::uint32_t> masterPeaks_[2] {{0}, {0}};
     std::atomic<std::uint32_t> trackPeaks_[kMeterTracks] {};
@@ -120,9 +205,24 @@ private:
     std::vector<juce::MidiMessage> externalQueue_;
     std::vector<juce::MidiMessage> pendingExternal_;
 
-    std::mutex trackNodesMutex_;
+    mutable std::mutex trackNodesMutex_;
     std::map<TrackId, std::unique_ptr<TrackAudioNode>> trackNodes_;
     PluginHost* pluginHost_ = nullptr;
+
+    // Deferred plugin instantiation (project load): one job per track,
+    // applied one per message-loop pass so the UI keeps painting.
+    struct PluginJob {
+        TrackId trackId = -1;
+        std::vector<FxSlot> fx;
+        FxSlot instrument;
+        double sampleRate = 0.0;
+        int maxBlock = 0;
+    };
+    std::vector<PluginJob> pluginJobs_;      // message thread only
+    bool pluginJobsPumping_ = false;         // message thread only
+    void enqueuePluginJob(const Track& track, double rate, int maxBlock);
+    bool jobQueuedFor(const Track& track, double rate, int maxBlock) const;
+    void applyPluginJob(const PluginJob& job, PluginHost& host);
 
     juce::Synthesiser* getOrCreateSynth(TrackId trackId, double rate);
     TrackAudioNode* nodeFor(TrackId trackId);
@@ -130,7 +230,8 @@ private:
                         int numSamples);
     void drainExternalMidi();
     void renderArmedInstrumentMonitoring(const juce::AudioSourceChannelInfo& info,
-                                         const Project& project);
+                                         const Project& project,
+                                         bool injectPanic);
 };
 
 // Capture buffer for one armed track while recording. The audio thread
@@ -153,7 +254,9 @@ struct TrackCapture {
         std::uint8_t status = 0, d1 = 0, d2 = 0;
     };
     std::vector<RecordedMidiEvent> midiEvents; // guarded by midiMutex
-    std::mutex midiMutex;
+    // mutable: the guard is locked from const contexts too (locking does not
+    // change the logical state of the capture).
+    mutable std::mutex midiMutex;
     std::atomic<int> played { 0 };
     int loopbackBoundary = 0; // audio thread only (loopback synth)
 };
@@ -179,6 +282,13 @@ public:
     // Opens the default output device (stereo, two inputs for recording).
     // Required for live playback/recording.
     juce::Result initialise();
+    // Closes and re-opens the audio device: recovers from CoreAudio client
+    // kills (overrun disabling) without restarting the app.
+    juce::Result restartAudio();
+    // Opens the audio device on a background thread (non-blocking). Poll
+    // audioInitialised() to check when it's ready.
+    void initialiseAudioInBackground();
+    bool audioInitialised() const { return audioReady_.load(); }
     bool isInitialised() const;
 
     juce::StringArray outputDeviceNames();
@@ -217,6 +327,15 @@ public:
     // ---- plugins (§7.7) ----
 
     void rescanPlugins();
+    void scanPluginsNow(); // blocking (message thread); CLI/tests
+    bool pluginScanActive() const;
+
+    // ---- plugin editor windows (§7.7) ----
+    // Each open editor is a native window around the plugin's own editor
+    // component (or a generic parameter view if it has none). Windows are
+    // created on the message thread and kept alive until engine shutdown.
+    juce::Result openPluginEditor(TrackId trackId, int slotIndex);
+    juce::Result openInstrumentEditor(TrackId trackId, ClipId clipId = 0);
     int pluginCount() const;
     const char* pluginNameAt(int index) const;
     const char* pluginUidAt(int index) const;
@@ -243,10 +362,78 @@ public:
                                double sourceOffsetSeconds, double lengthSeconds);
     juce::Result setClipFades(ClipId clipId, double fadeInSeconds, double fadeOutSeconds);
 
+    // Moves a clip to another track (same track type required) and start
+    // position in one undo entry. Fades/offset are preserved.
+    juce::Result moveClipToTrack(ClipId clipId, TrackId targetTrackId,
+                                 double startSeconds);
+    // Splits a clip at the given timeline position into two clips (the right
+    // part gets a new id); MIDI notes distribute by start position, crossing
+    // notes truncate on the left side. One undo entry.
+    juce::Result splitClipAt(ClipId clipId, double timeSeconds);
+
     juce::Result setTrackName(TrackId trackId, const juce::String& name);
     juce::Result setTrackColor(TrackId trackId, int colorIndex); // 0..15
 
     juce::Result setTrackVolume(TrackId trackId, float linearGain); // 0..2
+
+    // Volume automation (§7.12 v1, Read always active): replaces the whole
+    // curve (empty = clears it, track falls back to its static volume).
+    // Points are sorted by time; one undo entry per call.
+    juce::Result setTrackVolumeAutomation(
+        TrackId trackId, const std::vector<AutomationPoint>& points);
+    // Plugin-parameter automation lane (§7.12 v1.5): keyed by
+    // (slotKind 0=fx/1=instrument, slotIndex, paramIndex). Whole-curve
+    // replace, one undo entry; the display name is stored for the UI.
+    juce::Result setTrackParamAutomation(TrackId trackId, int slotKind,
+                                         int slotIndex, int paramIndex,
+                                         const juce::String& name,
+                                         const std::vector<AutomationPoint>& points);
+    int trackParamLaneCount(TrackId trackId) const;
+    juce::Result trackParamLaneInfo(TrackId trackId, int laneIndex,
+                                    int* slotKind, int* slotIndex,
+                                    int* paramIndex) const;
+    const char* trackParamLaneName(TrackId trackId, int laneIndex) const;
+    int trackParamLanePointCount(TrackId trackId, int laneIndex) const;
+    AutomationPoint trackParamLanePointAt(TrackId trackId, int laneIndex,
+                                          int pointIndex) const;
+    juce::Result removeTrackParamLane(TrackId trackId, int laneIndex);
+    // Parameter enumeration for the chooser UI (requires the node).
+    int pluginParamCount(TrackId trackId, int slotKind, int slotIndex) const;
+    const char* pluginParamName(TrackId trackId, int slotKind, int slotIndex,
+                                int paramIndex) const;
+    int trackVolumeAutoCount(TrackId trackId) const;
+    AutomationPoint trackVolumeAutoAt(TrackId trackId, int index) const;
+
+    // Generic lane access (§7.12 v1.5): lane 0 = volume, 1 = pan,
+    // 2 = sustain (CC64). Same whole-curve replace semantics.
+    juce::Result setTrackLaneAutomation(
+        TrackId trackId, int lane, const std::vector<AutomationPoint>& points);
+    int trackLaneAutomationCount(TrackId trackId, int lane) const;
+    AutomationPoint trackLaneAutomationAt(TrackId trackId, int lane,
+                                          int index) const;
+    AutomationCurvePtr trackLaneAutomation(TrackId trackId, int lane) const;
+    // Effective gain at a timeline position: the automation curve evaluated
+    // there, or the static volume when the track has no curve. The UI fader
+    // mirrors this while playing (Read mode).
+    float trackVolumeEffectiveAt(TrackId trackId, double timeSeconds) const;
+    // Write mode (§7.12 v1.5): inserts or replaces ONE point at the given
+    // time (matches within 1 ms) — used by the W button while playing.
+    juce::Result setTrackVolumeAutomationPointAt(TrackId trackId,
+                                                 double timeSeconds,
+                                                 double value);
+
+    // Input quantize (§7.5.2 v1.5): grid in seconds for recorded MIDI takes
+    // (0 = off). Applied to note starts when the take is finalized,
+    // quantized against the project timeline.
+    double inputQuantizeSeconds() const;
+    juce::Result setInputQuantize(double gridSeconds);
+    // MIDI input latency compensation: recorded notes are shifted this many
+    // ms EARLIER at finalize (keyboard + USB + CoreMIDI delivery delay).
+    // Persisted in the device settings file.
+    double midiInputLatencyMs() const { return midiInputLatencyMs_; }
+    void setMidiInputLatencyMs(double ms) {
+        midiInputLatencyMs_ = juce::jlimit(-100.0, 100.0, ms);
+    }
     juce::Result setTrackPan(TrackId trackId, float pan);           // -1..+1
     juce::Result setTrackMute(TrackId trackId, bool muted);
     juce::Result setTrackSolo(TrackId trackId, bool soloed);
@@ -262,6 +449,46 @@ public:
     // Instrument plugin for instrument tracks (replaces the internal synth).
     juce::Result setTrackInstrumentPlugin(TrackId trackId, int pluginIndex);
     juce::Result clearTrackInstrument(TrackId trackId);
+    const char* trackInstrumentName(TrackId trackId) const;
+
+    // Restores a plug-in's saved state on its LIVE instance (an insert slot or
+    // the track's instrument). Cubase (.cpr) stores the VST3 component and
+    // controller states apart; the wrapper state JUCE's setStateInformation
+    // expects is rebuilt here. Either pointer may be null/empty. Returns
+    // failure when the slot holds no live plug-in.
+    juce::Result setTrackFxState(TrackId trackId, int slotIndex,
+                                 const void* component, int componentSize,
+                                 const void* controller, int controllerSize);
+    juce::Result setTrackInstrumentState(TrackId trackId,
+                                         const void* component,
+                                         int componentSize,
+                                         const void* controller,
+                                         int controllerSize);
+    // Test hook: the state the live plug-in currently reports, as the base64
+    // blob `getStateInformation` produces (empty when the slot is empty).
+    // slotKind: 0 = fx chain, 1 = instrument. Backed by stringOut_.
+    const char* pluginStateBase64(TrackId trackId, int slotKind,
+                                  int slotIndex) const;
+
+    // MIDI insert (EZArpeggio): transforms the track's MIDI stream.
+    juce::Result setTrackMidiFx(TrackId trackId, int pluginIndex);
+    juce::Result clearTrackMidiFx(TrackId trackId);
+    const char* trackMidiFxName(TrackId trackId) const;
+    // True when the node holds a prepared instrument plugin instance
+    // (false = playback falls back to the internal synth).
+    bool trackInstrumentLive(TrackId trackId) const;
+
+    // Clip clipboard (§7.4): copy stores a snapshot of the clip (audio
+    // clips keep their source reference; MIDI clips share their note data).
+    // Paste inserts a duplicate on a same-kind track at the given time.
+    juce::Result copyClip(ClipId clipId);
+    juce::Result pasteClip(TrackId trackId, double startSeconds);
+    // Deferred plugin-load pump (see ProjectAudioSource).
+    bool hasPendingPluginJobs() const
+    {
+        return transport_->hasPendingPluginJobs();
+    }
+    void pumpOnePluginJob() { transport_->pumpOnePluginJob(); }
 
     juce::Result addMasterFx(int pluginIndex);
     juce::Result removeMasterFx(int slotIndex);
@@ -278,6 +505,18 @@ public:
 
     void setMetronome(bool on);
 
+    // ---- tempo / time signature (project-wide; feeds ruler, metronome,
+    // quantize grid and snapping). Undoable edits. ----
+    double tempoBpm() const;
+    juce::Result setTempo(double bpm);              // 20..300
+    int timeSigNumerator() const;
+    int timeSigDenominator() const;
+    juce::Result setTimeSignature(int numerator, int denominator);
+
+    // Test hook: injects a live MIDI note as if it came from the selected
+    // input — exercises the armed-track monitoring path without hardware.
+    void debugPushLiveMidi(int pitch, bool noteOn);
+
     // Recording: startRecord captures every armed track; stopRecord (or
     // stop/pause) finalizes the takes into clips as ONE undo entry. Takes
     // are written to disk under the project's Recordings folder.
@@ -285,6 +524,15 @@ public:
     juce::Result stopRecord();
     bool isRecording() const { return recording_.load(); }
     double recordStartSeconds() const { return recordStartSeconds_.load(); }
+    // Live MIDI take of an armed instrument track while recording (§7.11):
+    // the timeline draws the notes as they arrive instead of showing an empty
+    // clip until the take is finalized. Starts are relative to the record
+    // start (same as a finalized MIDI clip's note starts). Notes still held
+    // down are reported with their length up to now. The count call refreshes
+    // the cache; the accessor reads it (message thread only).
+    int recordingNoteCount(TrackId trackId) const;
+    void recordingNoteAt(TrackId trackId, int index, int* pitch, float* velocity,
+                         double* startSeconds, double* lengthSeconds) const;
     // Test hook: synthesize a tone into captures instead of reading inputs,
     // so the whole record pipeline is verifiable without hardware.
     static void setDebugLoopback(bool enabled) { debugLoopback_.store(enabled); }
@@ -298,6 +546,22 @@ public:
     juce::Result midiClipRemoveNote(ClipId clipId, int noteIndex);
     juce::Result midiClipSetNote(ClipId clipId, int noteIndex, int pitch,
                                  double startInClipSeconds, double lengthSeconds);
+
+    // ---- quantize (§7.5.2, non-destructive) ----
+    // Moves note starts toward the nearest grid position. Non-cumulative:
+    // re-quantizing always works from each note's original position unless
+    // iterative is set (then one strength step from the current position).
+    // swing 0..1 shifts odd grid positions toward the next; catchRange 0..1
+    // leaves notes already within that fraction of the grid untouched;
+    // maxMove 0..1 caps the displacement; nonGridProtect skips notes that
+    // sit exactly between two grid positions.
+    juce::Result quantizeClipNotes(ClipId clipId, double gridSeconds,
+                                   double swing, double catchRange,
+                                   double maxMove, bool nonGridProtect,
+                                   bool iterative, double iterStrength);
+    juce::Result resetClipQuantize(ClipId clipId);  // back to original starts
+    juce::Result freezeClipQuantize(ClipId clipId); // bake current as original
+    double clipNoteOrigStartAt(ClipId clipId, int index) const;
     bool clipIsMidi(ClipId clipId) const;
     int clipNoteCount(ClipId clipId) const;
     void clipNoteAt(ClipId clipId, int index, int* pitch, float* velocity,
@@ -320,6 +584,30 @@ public:
 
     // ---- transport / render / misc ----
     juce::Result loadFile(const juce::File& file);
+    // Import a standard MIDI file (Type 0/1) as a project: every track with
+    // notes becomes an instrument track with one clip; tempo and time
+    // signature come from the file's meta events. Replaces the project.
+    juce::Result importMidiProject(const juce::File& file);
+    // Import a folder of audio files (stems): one audio track per file,
+    // named by the file stem, clip at 0. Appends to the project.
+    juce::Result importStemsFolder(const juce::File& folder);
+    // One audio file -> one audio track + clip at 0 (the unified "open"
+    // flow dispatches .wav/.aiff here).
+    juce::Result importAudioFile(const juce::File& file);
+    // NATIVE open panel (NSOpenPanel via JUCE): blocks the calling thread
+    // (the Flutter main thread IS the JUCE message thread) until the user
+    // picks or cancels. Returns the chosen path or "" when cancelled.
+    // filters: juce pattern list, e.g. "*.ezmpp;*.mid;*.cpr".
+    const char* pickOpenFile(const juce::File& startDir,
+                             const juce::String& filters);
+
+    // ---- sound-library audition preview --------------------------------
+    // Plays one file on a dedicated channel, mixed on top of the transport
+    // and independent of it: previewing never touches the project. Starting a
+    // new preview replaces the previous one.
+    juce::Result previewSound(const juce::File& file);
+    void stopPreview();
+    bool isPreviewing() const { return previewActive_.load(std::memory_order_relaxed); }
 
     // ---- document read access (UI snapshot pulls) ----
     // Cheap, allocation-free reads; strings are stable until the next read.
@@ -362,6 +650,13 @@ public:
     // Renders from position 0 to a 16-bit stereo WAV. Does not touch the
     // live transport and does not need an audio device.
     juce::Result renderToFile(const juce::File& outFile, double maxSeconds);
+    // Offline render at the project sample rate with 16 or 24 bits.
+    juce::Result renderToFileEx(const juce::File& outFile, double maxSeconds,
+                                int bitsPerSample);
+    // Adds an audio file as a clip to the given track at the given position.
+    juce::Result addClipFromPath(TrackId trackId, const juce::String& path,
+                                 double startSeconds);
+    // Returns the id of the first track (or selected track).
 
     std::shared_ptr<const Project> currentProject() const
     {
@@ -375,11 +670,17 @@ private:
     class OutputCallback;   // single audio callback: input capture + output mix
     class MidiInCallback;   // routes the selected MIDI input into captures
     void finalizeRecording();
+    // Pairs a capture's raw MIDI events into notes (shared by the live take
+    // view and finalizeRecording). NOTE: the caller must not hold
+    // capture.midiMutex. Starts are relative to the record start.
+    std::vector<MidiNote> pairCapturedNotes(const TrackCapture& capture,
+                                            double elapsed) const;
     void activateMidiInput(const juce::String& identifier);
     void onMidiMessage(const juce::MidiMessage& message);
 
     std::shared_ptr<const Project> makeEmptyProjectLocked(double sampleRate);
-    void publish(std::shared_ptr<const Project> project);
+    void publish(std::shared_ptr<const Project> project,
+                 bool deferHeavyPlugins = false);
     std::shared_ptr<Project> copyForEdit() const;
     double defaultRate() const;
     SourceId loadSourceInto(Project& project, const juce::File& file);
@@ -389,13 +690,35 @@ private:
     juce::Result editProject(const std::function<bool(Project&)>& mutate);
     juce::Result fail(const juce::String& message) const;
 
+    std::atomic<bool> audioReady_ {false};
+    std::thread initThread_;
     juce::AudioDeviceManager deviceManager_;
     std::unique_ptr<ProjectAudioSource> transport_;
     PluginHost pluginHost_;
     juce::AudioFormatManager formatManager_;
+
+    // Sound-library preview (see previewSound). previewReader_ owns the
+    // reader source; both live behind previewLock_ because the audio thread
+    // reads them while the message thread may swap the source in.
+    juce::AudioTransportSource previewTransport_;
+    std::unique_ptr<juce::AudioFormatReaderSource> previewReader_;
+    juce::AudioBuffer<float> previewBuffer_;
+    mutable juce::CriticalSection previewLock_;
+    std::atomic<bool> previewActive_ {false};
+    // Ends the preview when the source runs out (message-thread timer).
+    class PreviewWatchdog;
+    std::unique_ptr<PreviewWatchdog> previewWatchdog_;
+
+    void preparePreview(int blockSize, double sampleRate);
+    void releasePreview();
+    void renderPreview(float* const* outputChannelData, int numOutputChannels,
+                       int numFrames);
     std::shared_ptr<const Project> project_; // accessed with std::atomic_load/store
     juce::File projectFile_;                 // last save/load location
     juce::String selectedMidiInputId_;
+    double midiInputLatencyMs_ = 0.0;        // persisted in device settings
+    Clip clipboardClip_;                     // copy/paste (§7.4)
+    bool clipboardValid_ = false;
     std::vector<std::shared_ptr<const Project>> undoStack_;
     std::vector<std::shared_ptr<const Project>> redoStack_;
     mutable std::string lastErrorUtf8_;
@@ -404,14 +727,27 @@ private:
     std::mutex masterFxMutex_;
     std::shared_ptr<const FxChain> masterFxChain_;
     std::shared_ptr<const CaptureList> captures_; // accessed with std::atomic_*
+    // Open plugin editor windows (message thread only). Key: track<<16 | slot
+    // (slot 0xFFFF = instrument slot). Values keep the processor alive too.
+    // Plugin editor windows, keyed by (track<<16)|slot. The entry carries
+    // the processor it was opened for: chain edits (remove/reorder) shift
+    // slots, and a stale window would show the WRONG plugin's editor and
+    // keep the removed instance alive.
+    struct EditorEntry {
+        std::unique_ptr<juce::DocumentWindow> window;
+        std::shared_ptr<juce::AudioProcessor> proc;
+    };
+    std::map<std::uint64_t, EditorEntry> editorWindows_;
     std::atomic<bool> recording_ { false };
     std::atomic<double> recordStartSeconds_ { 0.0 };
     std::atomic<std::int64_t> recordStartSamples_ { 0 };
+    // Live-take cache filled by recordingNoteCount (message thread only).
+    mutable std::vector<MidiNote> liveTakeNotes_;
+    mutable TrackId liveTakeTrack_ = -1;
     static std::atomic<bool> debugLoopback_;
 
     std::unique_ptr<OutputCallback> outputCallback_;
     std::unique_ptr<MidiInCallback> midiInCallback_;
-    std::thread messageThread_;
     std::atomic<bool> messageLoopRunning_ { false };
     void startMessageLoop();
     void stopMessageLoop();

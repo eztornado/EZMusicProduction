@@ -137,6 +137,8 @@ juce::var projectToVar(const Project& project, const juce::File& projectDir)
     root->setProperty("timeSigNum", project.timeSigNumerator);
     root->setProperty("timeSigDen", project.timeSigDenominator);
     root->setProperty("masterGain", (double) project.masterGain);
+    if (project.inputQuantizeSeconds > 0.0)
+        root->setProperty("inputQuantize", project.inputQuantizeSeconds);
     root->setProperty("nextTrackId", (juce::int64) project.nextTrackId);
     root->setProperty("nextClipId", (juce::int64) project.nextClipId);
     root->setProperty("nextSourceId", (juce::int64) project.nextSourceId);
@@ -166,6 +168,44 @@ juce::var projectToVar(const Project& project, const juce::File& projectDir)
         trackVar->setProperty("solo", track.solo);
         trackVar->setProperty("inputChannel", track.inputChannel);
         trackVar->setProperty("fx", fxToVar(track.fx));
+        auto laneToVar = [](const AutomationCurve& curve) {
+            juce::Array<juce::var> arr;
+            for (const auto& point : curve.points)
+            {
+                auto* pointVar = new juce::DynamicObject();
+                pointVar->setProperty("t", point.timeSeconds);
+                pointVar->setProperty("v", point.value);
+                arr.add(juce::var(pointVar));
+            }
+            return arr;
+        };
+        if (track.volumeAutomation != nullptr
+            && ! track.volumeAutomation->points.empty())
+            trackVar->setProperty("volAuto",
+                                  laneToVar(*track.volumeAutomation));
+        if (track.panAutomation != nullptr
+            && ! track.panAutomation->points.empty())
+            trackVar->setProperty("panAuto",
+                                  laneToVar(*track.panAutomation));
+        if (track.sustainAutomation != nullptr
+            && ! track.sustainAutomation->points.empty())
+            trackVar->setProperty("sustainAuto",
+                                  laneToVar(*track.sustainAutomation));
+        if (! track.paramLanes.empty())
+        {
+            juce::Array<juce::var> paramsVar;
+            for (const auto& lane : track.paramLanes)
+            {
+                auto* laneVar = new juce::DynamicObject();
+                laneVar->setProperty("slotKind", lane.slotKind);
+                laneVar->setProperty("slotIndex", lane.slotIndex);
+                laneVar->setProperty("paramIndex", lane.paramIndex);
+                laneVar->setProperty("name", lane.name);
+                laneVar->setProperty("points", laneToVar(*lane.curve));
+                paramsVar.add(juce::var(laneVar));
+            }
+            trackVar->setProperty("paramAuto", paramsVar);
+        }
         if (track.instrument.pluginUid.isNotEmpty())
         {
             auto* inst = new juce::DynamicObject();
@@ -174,6 +214,15 @@ juce::var projectToVar(const Project& project, const juce::File& projectDir)
             inst->setProperty("bypass", track.instrument.bypass);
             inst->setProperty("state", track.instrument.state);
             trackVar->setProperty("instrument", juce::var(inst));
+        }
+        if (track.midiFx.pluginUid.isNotEmpty())
+        {
+            auto* mfx = new juce::DynamicObject();
+            mfx->setProperty("uid", track.midiFx.pluginUid);
+            mfx->setProperty("name", track.midiFx.name);
+            mfx->setProperty("bypass", track.midiFx.bypass);
+            mfx->setProperty("state", track.midiFx.state);
+            trackVar->setProperty("midiFx", juce::var(mfx));
         }
 
         juce::Array<juce::var> clipsVar;
@@ -195,6 +244,8 @@ juce::var projectToVar(const Project& project, const juce::File& projectDir)
                     noteVar->setProperty("velocity", (double) note.velocity);
                     noteVar->setProperty("start", note.startSeconds);
                     noteVar->setProperty("length", note.lengthSeconds);
+                    if (std::abs(note.origStartSeconds - note.startSeconds) > 1e-9)
+                        noteVar->setProperty("os", note.origStartSeconds);
                     notesVar.add(juce::var(noteVar));
                 }
                 clipVar->setProperty("notes", notesVar);
@@ -258,6 +309,7 @@ juce::Result projectFromVar(const juce::var& value, Project& out)
     out.timeSigNumerator = (int) prop(root, "timeSigNum", 4);
     out.timeSigDenominator = (int) prop(root, "timeSigDen", 4);
     out.masterGain = (float) (double) prop(root, "masterGain", 1.0);
+    out.inputQuantizeSeconds = (double) prop(root, "inputQuantize", 0.0);
     out.nextTrackId = (juce::int64) prop(root, "nextTrackId", (juce::int64) 1);
     out.nextClipId = (juce::int64) prop(root, "nextClipId", (juce::int64) 1);
     out.nextSourceId = (juce::int64) prop(root, "nextSourceId", (juce::int64) 1);
@@ -291,6 +343,74 @@ juce::Result projectFromVar(const juce::var& value, Project& out)
             track.inputChannel = (int) prop(trackVar, "inputChannel", 0);
             track.fx = fxFromArray(trackVar->getProperty("fx"));
 
+            auto laneFromArray = [](const juce::var& v) {
+                auto curve = std::make_shared<AutomationCurve>();
+                if (auto* arr = v.getArray())
+                {
+                    for (const auto& item : *arr)
+                    {
+                        auto* pointVar = item.getDynamicObject();
+                        if (pointVar == nullptr)
+                            continue;
+                        AutomationPoint point;
+                        point.timeSeconds = (double) prop(pointVar, "t", 0.0);
+                        point.value = juce::jlimit(
+                            0.0, 1.0, (double) prop(pointVar, "v", 1.0));
+                        curve->points.push_back(point);
+                    }
+                    std::sort(curve->points.begin(), curve->points.end(),
+                              [](const AutomationPoint& a,
+                                 const AutomationPoint& b) {
+                                  return a.timeSeconds < b.timeSeconds;
+                              });
+                }
+                return curve;
+            };
+            track.volumeAutomation = laneFromArray(trackVar->getProperty("volAuto"));
+            track.panAutomation = laneFromArray(trackVar->getProperty("panAuto"));
+            track.sustainAutomation =
+                laneFromArray(trackVar->getProperty("sustainAuto"));
+            if (auto* paramsVar = trackVar->getProperty("paramAuto").getArray())
+            {
+                for (const auto& item : *paramsVar)
+                {
+                    auto* laneVar = item.getDynamicObject();
+                    if (laneVar == nullptr)
+                        continue;
+                    ParamAutomationLane lane;
+                    lane.slotKind = (int) prop(laneVar, "slotKind", 0);
+                    lane.slotIndex = (int) prop(laneVar, "slotIndex", 0);
+                    lane.paramIndex = (int) prop(laneVar, "paramIndex", 0);
+                    lane.name = prop(laneVar, "name", juce::var()).toString();
+                    lane.curve = laneFromArray(laneVar->getProperty("points"));
+                    if (lane.curve != nullptr)
+                        track.paramLanes.push_back(std::move(lane));
+                }
+            }
+
+            if (auto* volAutoVar = trackVar->getProperty("volAuto").getArray())
+            {
+                auto curve = std::make_shared<AutomationCurve>();
+                for (const auto& item : *volAutoVar)
+                {
+                    auto* pointVar = item.getDynamicObject();
+                    if (pointVar == nullptr)
+                        continue;
+                    AutomationPoint point;
+                    point.timeSeconds =
+                        (double) prop(pointVar, "t", 0.0);
+                    point.value =
+                        juce::jlimit(0.0, 1.0,
+                                     (double) prop(pointVar, "v", 1.0));
+                    curve->points.push_back(point);
+                }
+                std::sort(curve->points.begin(), curve->points.end(),
+                          [](const AutomationPoint& a, const AutomationPoint& b) {
+                              return a.timeSeconds < b.timeSeconds;
+                          });
+                track.volumeAutomation = std::move(curve);
+            }
+
             auto instrumentVar = trackVar->getProperty("instrument");
             if (auto* inst = instrumentVar.getDynamicObject())
             {
@@ -298,6 +418,15 @@ juce::Result projectFromVar(const juce::var& value, Project& out)
                 track.instrument.name = prop(inst, "name", juce::var()).toString();
                 track.instrument.bypass = (bool) prop(inst, "bypass", false);
                 track.instrument.state = prop(inst, "state", juce::var()).toString();
+            }
+
+            auto midiFxVar = trackVar->getProperty("midiFx");
+            if (auto* mfx = midiFxVar.getDynamicObject())
+            {
+                track.midiFx.pluginUid = prop(mfx, "uid", juce::var()).toString();
+                track.midiFx.name = prop(mfx, "name", juce::var()).toString();
+                track.midiFx.bypass = (bool) prop(mfx, "bypass", false);
+                track.midiFx.state = prop(mfx, "state", juce::var()).toString();
             }
 
             if (auto* clipsVar = prop(trackVar, "clips", juce::var()).getArray())
@@ -328,6 +457,8 @@ juce::Result projectFromVar(const juce::var& value, Project& out)
                             note.velocity = (float) (double) prop(noteVar, "velocity", 0.8);
                             note.startSeconds = (double) prop(noteVar, "start", 0.0);
                             note.lengthSeconds = (double) prop(noteVar, "length", 0.0);
+                            note.origStartSeconds =
+                                (double) prop(noteVar, "os", note.startSeconds);
                             midi->notes.push_back(note);
                         }
                         clip.midi = std::move(midi);

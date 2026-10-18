@@ -29,11 +29,21 @@ typedef enum CadenceResult {
 
 CadenceEngine* cadence_engine_create(void);
 void cadence_engine_destroy(CadenceEngine* engine);
+/* Returns the last created engine (for native drop handlers in Swift). */
+CadenceEngine* cadence_engine_get_active(void);
+/* Adds an audio file as a clip to the first track at the playhead position.
+   Called from Swift when the user drops an audio file on the timeline. */
+CadenceResult cadence_engine_drop_file(const char* utf8_path);
 
 /* ---- device ---- */
 
 /* Opens the default OS output device. Required before play(). */
 CadenceResult cadence_engine_initialise(CadenceEngine* engine);
+CadenceResult cadence_engine_restart_audio(CadenceEngine* engine);
+/* Opens the audio device on a background thread (non-blocking).
+   Poll audio_initialised() to check when it's ready. */
+void cadence_engine_initialise_audio_background(CadenceEngine* engine);
+int cadence_engine_audio_initialised(CadenceEngine* engine);
 
 /* ---- project document ---- */
 
@@ -56,6 +66,112 @@ CadenceClipId cadence_engine_add_clip(CadenceEngine* engine,
                                       float gain);
 
 CadenceResult cadence_engine_set_track_volume(CadenceEngine* engine, CadenceTrackId track_id, float linear_gain);
+
+/* Volume automation (§7.12 v1, Read always active): replaces the whole
+   curve — count 0 clears it. times in project seconds, values 0..1. One
+   undo entry per call. */
+CadenceResult cadence_engine_set_track_volume_automation(CadenceEngine* engine,
+                                                         CadenceTrackId track_id,
+                                                         const double* times,
+                                                         const double* values,
+                                                         int count);
+int cadence_engine_track_volume_auto_count(CadenceEngine* engine, CadenceTrackId track_id);
+float cadence_engine_track_volume_effective_at(CadenceEngine* engine,
+                                               CadenceTrackId track_id,
+                                               double time_seconds);
+
+/* Generic automation lanes (§7.12 v1.5): lane 0 = volume, 1 = pan,
+   2 = sustain (CC64). Whole-curve replace; times in project seconds,
+   values 0..1. */
+CadenceResult cadence_engine_set_track_lane_automation(CadenceEngine* engine,
+                                                       CadenceTrackId track_id,
+                                                       int lane,
+                                                       const double* times,
+                                                       const double* values,
+                                                       int count);
+int cadence_engine_track_lane_auto_count(CadenceEngine* engine,
+                                         CadenceTrackId track_id, int lane);
+CadenceResult cadence_engine_track_lane_auto_at(CadenceEngine* engine,
+                                                CadenceTrackId track_id, int lane,
+                                                int index, double* out_time,
+                                                double* out_value);
+CadenceResult cadence_engine_track_volume_auto_at(CadenceEngine* engine,
+                                                  CadenceTrackId track_id, int index,
+                                                  double* out_time, double* out_value);
+
+/* Plugin-parameter automation lanes (§7.12 v1.5). slot_kind: 0 = fx chain
+   slot, 1 = instrument. set replaces the whole lane (one undo). The lane
+   list is per track; name is captured for display. */
+CadenceResult cadence_engine_set_track_param_automation(CadenceEngine* engine,
+                                                        CadenceTrackId track_id,
+                                                        int slot_kind,
+                                                        int slot_index,
+                                                        int param_index,
+                                                        const char* utf8_name,
+                                                        const double* times,
+                                                        const double* values,
+                                                        int count);
+int cadence_engine_track_param_lane_count(CadenceEngine* engine,
+                                          CadenceTrackId track_id);
+CadenceResult cadence_engine_track_param_lane_info(CadenceEngine* engine,
+                                                   CadenceTrackId track_id,
+                                                   int lane_index,
+                                                   int* out_slot_kind,
+                                                   int* out_slot_index,
+                                                   int* out_param_index);
+const char* cadence_engine_track_param_lane_name(CadenceEngine* engine,
+                                                 CadenceTrackId track_id,
+                                                 int lane_index);
+int cadence_engine_track_param_lane_point_count(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int lane_index);
+CadenceResult cadence_engine_track_param_lane_point_at(CadenceEngine* engine,
+                                                       CadenceTrackId track_id,
+                                                       int lane_index,
+                                                       int point_index,
+                                                       double* out_time,
+                                                       double* out_value);
+CadenceResult cadence_engine_remove_track_param_lane(CadenceEngine* engine,
+                                                     CadenceTrackId track_id,
+                                                     int lane_index);
+/* Parameter enumeration for the chooser UI (requires a live plugin node). */
+int cadence_engine_plugin_param_count(CadenceEngine* engine,
+                                      CadenceTrackId track_id, int slot_kind,
+                                      int slot_index);
+const char* cadence_engine_plugin_param_name(CadenceEngine* engine,
+                                             CadenceTrackId track_id,
+                                             int slot_kind, int slot_index,
+                                             int param_index);
+/* Write mode (§7.12 v1.5, the W button): inserts or replaces one point at
+   the given time. */
+CadenceResult cadence_engine_set_track_volume_auto_point_at(CadenceEngine* engine,
+                                                            CadenceTrackId track_id,
+                                                            double time_seconds,
+                                                            double value);
+
+/* Input quantize (§7.5.2 v1.5): grid in seconds for recorded MIDI takes
+   (0 = off). */
+double cadence_engine_input_quantize(CadenceEngine* engine);
+CadenceResult cadence_engine_set_input_quantize(CadenceEngine* engine,
+                                                double grid_seconds);
+
+/* MIDI input latency compensation (ms): recorded takes shift this many ms
+   earlier at finalize. Persisted with the device settings. */
+double cadence_engine_midi_input_latency(CadenceEngine* engine);
+CadenceResult cadence_engine_set_midi_input_latency(CadenceEngine* engine,
+                                                    double ms);
+
+/* Clip clipboard (§7.4): copy a snapshot, paste a duplicate on a
+   same-kind track at the given timeline position. */
+CadenceResult cadence_engine_copy_clip(CadenceEngine* engine,
+                                       CadenceClipId clip_id);
+CadenceResult cadence_engine_paste_clip(CadenceEngine* engine,
+                                        CadenceTrackId track_id,
+                                        double start_seconds);
+
+/* Deferred plugin-load queue (project load). */
+int cadence_engine_has_pending_plugin_jobs(CadenceEngine* engine);
+void cadence_engine_pump_one_plugin_job(CadenceEngine* engine);
 CadenceResult cadence_engine_set_track_pan(CadenceEngine* engine, CadenceTrackId track_id, float pan);
 CadenceResult cadence_engine_set_track_mute(CadenceEngine* engine, CadenceTrackId track_id, int muted);
 CadenceResult cadence_engine_set_track_solo(CadenceEngine* engine, CadenceTrackId track_id, int soloed);
@@ -73,6 +189,10 @@ CadenceResult cadence_engine_set_clip_bounds(CadenceEngine* engine, CadenceClipI
 /* Linear fades in seconds; clamped to [0, clip length]. One undo entry. */
 CadenceResult cadence_engine_set_clip_fades(CadenceEngine* engine, CadenceClipId clip_id,
                                             double fade_in_seconds, double fade_out_seconds);
+CadenceResult cadence_engine_move_clip_to_track(CadenceEngine* engine, CadenceClipId clip_id,
+                                                CadenceTrackId track_id, double start_seconds);
+CadenceResult cadence_engine_split_clip(CadenceEngine* engine, CadenceClipId clip_id,
+                                        double time_seconds);
 
 /* MIDI clips: creation and note editing (one undo entry per call). */
 CadenceClipId cadence_engine_add_midi_clip(CadenceEngine* engine, CadenceTrackId track_id,
@@ -90,6 +210,20 @@ int cadence_engine_clip_note_count(CadenceEngine* engine, CadenceClipId clip_id)
 void cadence_engine_clip_note_at(CadenceEngine* engine, CadenceClipId clip_id, int index,
                                  int* out_pitch, float* out_velocity,
                                  double* out_start, double* out_length);
+double cadence_engine_clip_note_orig_start_at(CadenceEngine* engine, CadenceClipId clip_id,
+                                              int index);
+
+/* Quantize (§7.5.2, non-destructive): moves note starts toward the nearest
+   grid position. swing/catch_range/max_move in 0..1; non_grid/iterative as
+   booleans; iter_strength 0..1 for the iQ step. reset restores original
+   starts, freeze bakes the current ones as the new reference. */
+CadenceResult cadence_engine_quantize_clip_notes(CadenceEngine* engine, CadenceClipId clip_id,
+                                                 double grid_seconds, double swing,
+                                                 double catch_range, double max_move,
+                                                 int non_grid, int iterative,
+                                                 double iter_strength);
+CadenceResult cadence_engine_reset_clip_quantize(CadenceEngine* engine, CadenceClipId clip_id);
+CadenceResult cadence_engine_freeze_clip_quantize(CadenceEngine* engine, CadenceClipId clip_id);
 
 CadenceResult cadence_engine_set_track_name(CadenceEngine* engine, CadenceTrackId track_id,
                                             const char* utf8_name);
@@ -173,6 +307,87 @@ CadenceResult cadence_engine_set_track_input_channel(CadenceEngine* engine, Cade
 int cadence_engine_track_armed(CadenceEngine* engine, CadenceTrackId track_id);
 int cadence_engine_track_input_channel(CadenceEngine* engine, CadenceTrackId track_id);
 
+/* ---- plugins (§7.7): VST3 + AudioUnit ---- */
+
+void cadence_engine_rescan_plugins(CadenceEngine* engine);
+void cadence_engine_scan_plugins_now(CadenceEngine* engine);
+int cadence_engine_plugin_scan_active(CadenceEngine* engine);
+int cadence_engine_plugin_count(CadenceEngine* engine);
+const char* cadence_engine_plugin_name_at(CadenceEngine* engine, int index);
+const char* cadence_engine_plugin_uid_at(CadenceEngine* engine, int index);
+int cadence_engine_plugin_is_instrument_at(CadenceEngine* engine, int index);
+const char* cadence_engine_plugin_format_at(CadenceEngine* engine, int index);
+
+CadenceResult cadence_engine_track_add_fx(CadenceEngine* engine, CadenceTrackId track_id,
+                                          int plugin_index);
+CadenceResult cadence_engine_track_remove_fx(CadenceEngine* engine, CadenceTrackId track_id,
+                                             int slot_index);
+CadenceResult cadence_engine_track_set_fx_bypass(CadenceEngine* engine, CadenceTrackId track_id,
+                                                 int slot_index, int bypass);
+int cadence_engine_track_fx_count(CadenceEngine* engine, CadenceTrackId track_id);
+const char* cadence_engine_track_fx_name_at(CadenceEngine* engine, CadenceTrackId track_id,
+                                            int slot_index);
+int cadence_engine_track_fx_bypass_at(CadenceEngine* engine, CadenceTrackId track_id,
+                                      int slot_index);
+
+CadenceResult cadence_engine_track_set_instrument_plugin(CadenceEngine* engine,
+                                                         CadenceTrackId track_id,
+                                                         int plugin_index);
+CadenceResult cadence_engine_track_clear_instrument(CadenceEngine* engine,
+                                                    CadenceTrackId track_id);
+CadenceResult cadence_engine_track_set_midifx(CadenceEngine* engine,
+                                              CadenceTrackId track_id,
+                                              int plugin_index);
+CadenceResult cadence_engine_track_clear_midifx(CadenceEngine* engine,
+                                                CadenceTrackId track_id);
+const char* cadence_engine_track_midifx_name(CadenceEngine* engine,
+                                             CadenceTrackId track_id);
+const char* cadence_engine_track_instrument_name(CadenceEngine* engine,
+                                                 CadenceTrackId track_id);
+
+/* Restores a saved plug-in state on the LIVE instance in an insert slot /
+   instrument. `component`/`controller` are the raw VST3 component and
+   controller states as stored in a Cubase project (either may be NULL/0).
+   Returns kCadenceErrorNotFound when the slot holds no live plug-in. */
+CadenceResult cadence_engine_track_set_fx_state(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int slot_index,
+                                                const void* component,
+                                                int component_size,
+                                                const void* controller,
+                                                int controller_size);
+CadenceResult cadence_engine_track_set_instrument_state(CadenceEngine* engine,
+                                                        CadenceTrackId track_id,
+                                                        const void* component,
+                                                        int component_size,
+                                                        const void* controller,
+                                                        int controller_size);
+/* Test hook: the state the live plug-in currently reports, base64-encoded
+   (empty when the slot is empty). slot_kind: 0 = fx chain, 1 = instrument. */
+const char* cadence_engine_plugin_state_base64(CadenceEngine* engine,
+                                               CadenceTrackId track_id,
+                                               int slot_kind, int slot_index);
+
+/* Opens the plugin's own editor window (or a generic parameter view).
+   Returns kCadenceErrorNotFound when the slot/track has no plugin. */
+CadenceResult cadence_engine_open_plugin_editor(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int slot_index);
+CadenceResult cadence_engine_open_instrument_editor(CadenceEngine* engine,
+                                                    CadenceTrackId track_id);
+/* Opens the instrument's editor bound to a MIDI clip (EZSynth edits that
+   clip from its own piano roll; other instruments ignore the clip). */
+CadenceResult cadence_engine_open_instrument_editor_with_clip(
+    CadenceEngine* engine, CadenceTrackId track_id, long long clip_id);
+
+int cadence_engine_master_fx_count(CadenceEngine* engine);
+const char* cadence_engine_master_fx_name_at(CadenceEngine* engine, int slot_index);
+CadenceResult cadence_engine_master_add_fx(CadenceEngine* engine, int plugin_index);
+CadenceResult cadence_engine_master_remove_fx(CadenceEngine* engine, int slot_index);
+CadenceResult cadence_engine_master_set_fx_bypass(CadenceEngine* engine, int slot_index,
+                                                  int bypass);
+int cadence_engine_master_fx_bypass_at(CadenceEngine* engine, int slot_index);
+
 /* Starts capture on every armed track (requires device + armed tracks).
    stop/pause/stop_record finalize the takes as clips (one undo entry);
    takes are written as 24-bit WAVs under Recordings/. */
@@ -181,12 +396,33 @@ CadenceResult cadence_engine_stop_record(CadenceEngine* engine);
 int cadence_engine_is_recording(CadenceEngine* engine);
 double cadence_engine_record_start_seconds(CadenceEngine* engine);
 
+/* Live MIDI take of an armed instrument track while recording (§7.11): the
+   timeline draws the notes as they arrive instead of showing an empty clip
+   until the take is finalized. Note starts are relative to the record start,
+   exactly like a finalized MIDI clip's; keys still held are reported with
+   their length up to the current position. The count call refreshes the
+   engine-side cache, so call it once per frame and then read the notes.
+   Both return 0 / do nothing when that track is not being recorded. */
+int cadence_engine_recording_note_count(CadenceEngine* engine, CadenceTrackId track_id);
+void cadence_engine_recording_note_at(CadenceEngine* engine, CadenceTrackId track_id, int index,
+                                      int* out_pitch, float* out_velocity,
+                                      double* out_start, double* out_length);
+
 /* Test hook: when enabled, record captures synthesize a tone instead of
    reading hardware inputs (deterministic pipeline verification). */
 void cadence_engine_set_debug_loopback(int enabled);
 
 /* Metronome click on every beat (accent on bar start, 4/4 fixed). */
 void cadence_engine_set_metronome(CadenceEngine* engine, int enabled);
+
+/* ---- tempo / time signature (project-wide) ---- */
+
+double cadence_engine_tempo_bpm(CadenceEngine* engine);
+CadenceResult cadence_engine_set_tempo_bpm(CadenceEngine* engine, double bpm);
+int cadence_engine_time_sig_numerator(CadenceEngine* engine);
+int cadence_engine_time_sig_denominator(CadenceEngine* engine);
+CadenceResult cadence_engine_set_time_sig(CadenceEngine* engine, int numerator,
+                                          int denominator);
 
 /* ---- undo / redo (engine-owned) ---- */
 
@@ -202,6 +438,22 @@ CadenceResult cadence_engine_redo(CadenceEngine* engine);
    file when possible. */
 CadenceResult cadence_engine_save_project(CadenceEngine* engine, const char* utf8_path);
 CadenceResult cadence_engine_load_project(CadenceEngine* engine, const char* utf8_path);
+CadenceResult cadence_engine_import_midi_project(CadenceEngine* engine, const char* utf8_path);
+CadenceResult cadence_engine_import_audio_file(CadenceEngine* engine, const char* utf8_path);
+// Native macOS open panel (blocks until picked/cancelled). Returns the
+// chosen path (caller copies) or "" when cancelled.
+const char* cadence_engine_pick_open_file(CadenceEngine* engine,
+                                          const char* utf8_start_dir,
+                                          const char* utf8_filters);
+CadenceResult cadence_engine_import_stems_folder(CadenceEngine* engine, const char* utf8_path);
+
+/* ---- sound-library preview ----
+   Auditions one audio file on a dedicated channel, mixed over the transport
+   and independent of the project (the project is never modified). Playing a
+   new file replaces the previous preview; playback stops by itself at EOF. */
+CadenceResult cadence_engine_preview_sound(CadenceEngine* engine, const char* utf8_path);
+void cadence_engine_stop_preview(CadenceEngine* engine);
+int cadence_engine_is_previewing(CadenceEngine* engine);
 
 /* Convenience (phase 1 API): a one-track project with the whole file. */
 CadenceResult cadence_engine_load_file(CadenceEngine* engine, const char* utf8_path);
@@ -228,6 +480,12 @@ double cadence_engine_master_gain(CadenceEngine* engine);
 CadenceResult cadence_engine_render(CadenceEngine* engine,
                                     const char* utf8_out_path,
                                     double max_seconds);
+/* Offline render with a chosen bit depth (16 or 24). MP3 needs an external
+   LAME encoder and is planned separately. */
+CadenceResult cadence_engine_render_ex(CadenceEngine* engine,
+                                       const char* utf8_out_path,
+                                       double max_seconds,
+                                       int bits_per_sample);
 
 /* UTF-8 description of the last failed call on this engine.
    The pointer is valid until the next failing call on the same engine. */

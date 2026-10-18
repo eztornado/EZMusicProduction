@@ -17,6 +17,7 @@ ProjectSnapshot _fixture() {
     solo: false,
     armed: false,
     inputChannel: 0,
+    fxNames: <String>[],
     clips: [ClipInfo(id: 1, start: 0, length: 3, offset: 0, maxLength: 3, fadeIn: 0, fadeOut: 0, isMidi: false, notes: [])],
   );
   const track1 = TrackInfo(
@@ -30,6 +31,7 @@ ProjectSnapshot _fixture() {
     solo: false,
     armed: false,
     inputChannel: 1,
+    fxNames: <String>[],
     clips: [ClipInfo(id: 2, start: 2, length: 1.5, offset: 0.5, maxLength: 2.5, fadeIn: 0, fadeOut: 0, isMidi: false, notes: [])],
   );
   return const ProjectSnapshot(

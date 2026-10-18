@@ -1,6 +1,11 @@
 #include <cadence/cadence_engine.h>
 #include <cadence/engine.hpp>
 #include <cadence/model.hpp>
+#include "../src/ezinst.h"
+#include "../src/ezsynth.h"
+#include "../src/ezorq.h"
+#include "../src/ezdrums.h"
+#include <fstream>
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -10,6 +15,7 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -51,6 +57,23 @@ int cmdDevices()
         std::printf("%s; ", name.toRawUTF8());
     std::printf("\n");
     return 0;
+}
+
+int cmdPlugins()
+{
+    cadence::Engine engine;
+    const auto t0 = std::chrono::steady_clock::now();
+    engine.scanPluginsNow();
+    const double secs = std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - t0).count();
+    const int n = engine.pluginCount();
+    std::printf("plugins found: %d (%.1f s)\n", n, secs);
+    for (int i = 0; i < n; ++i)
+        std::printf("  [%s%s] %s\n",
+                    engine.pluginFormatAt(i),
+                    engine.pluginIsInstrumentAt(i) ? ",inst" : "",
+                    engine.pluginNameAt(i));
+    return n > 0 ? 0 : 1;
 }
 
 int writeToneWav(const juce::File& outFile, double seconds, double freq)
@@ -197,8 +220,13 @@ int cmdSelfTest(const char* path)
 
     cadence_engine_play(engine);
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    check("resume from seek", cadence_engine_is_playing(engine) == 1
-        && cadence_engine_position_seconds(engine) > 1.5);
+    check("resume from seek", [&]{
+        const int playing = cadence_engine_is_playing(engine);
+        const double pos = cadence_engine_position_seconds(engine);
+        if (playing != 1 || pos <= 1.5)
+            std::printf("    [dbg] playing=%d pos=%.3f\n", playing, pos);
+        return playing == 1 && pos > 1.5;
+    }());
 
     cadence_engine_stop(engine);
     check("stop rewinds", !cadence_engine_is_playing(engine)
@@ -431,13 +459,16 @@ int cmdDocTest(const char* dirPath)
     engine.renderToFile(gainFile, 2.0);
     check("undo restores clip gain", rmsInRange(formats, gainFile, 0.0, 0.5) > 0.02);
 
-    // Fades: a 0.2 s linear fade-in must duck the head of the clip.
-    // (Center-pan puts the full-scale body RMS at ~0.2 under the constant-power
-    // pan law, and the generated tone already carries a 20 ms fade-in.)
+    // Mono material keeps the constant-power pan law (3 dB down at centre,
+    // Cubase's default for mono); stereo material pans as a balance, so a
+    // centred stereo clip renders at unity. The generated tone is stereo and
+    // 0.4 peak -> body RMS 0.4/sqrt(2) = 0.283 at unity.
     engine.setClipFades(1, 0.2, 0.0);
     engine.renderToFile(gainFile, 2.0);
     const double fadedHead = rmsInRange(formats, gainFile, 0.0, 0.05);
     const double body = rmsInRange(formats, gainFile, 0.6, 0.9);
+    check("centred stereo clip renders at unity",
+          body > 0.25 && body < 0.31);
     check("fade-in ducks clip head",
           fadedHead < body * 0.25 && fadedHead > 0.001 && body > 0.15);
     engine.undo();
@@ -473,6 +504,2173 @@ int cmdDocTest(const char* dirPath)
 
     std::printf(failures == 0 ? "doc-test: all ok\n" : "doc-test: %d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
+}
+
+
+int cmdTestDeviceSwitch()
+{
+    cadence::Engine engine;
+    engine.initialise();
+    std::printf("BEFORE: output=%s buffer=%d\n",
+                engine.currentOutputDeviceName().toRawUTF8(),
+                engine.currentBufferSizeSamples());
+
+    const auto r = engine.setDeviceConfig(
+        "Steinberg UR22", "", 48000, 256);
+    std::printf("setDeviceConfig: %s\n",
+                r.failed() ? r.getErrorMessage().toRawUTF8() : "ok");
+    std::printf("AFTER: output=%s buffer=%d\n",
+                engine.currentOutputDeviceName().toRawUTF8(),
+                engine.currentBufferSizeSamples());
+    return 0;
+}
+
+// Regression test for the truncated-note bug: a noteOff clamped into every
+// block cut each MIDI note to ~one audio block (~10 ms). A 1 s note must
+// stay audible for close to its full written length.
+int cmdNoteTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Synth", 0,
+                                       cadence::Track::Type::Instrument);
+    engine.addMidiClip(track, 0.0, 3.0);
+    const auto clip = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip, 60, 0.8, 0.1, 1.0); // 1 s note
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    engine.renderToFileEx(juce::File("/tmp/cadence_note1s.wav"), 999, 16);
+
+    // Find the last sample offset whose 10 ms window RMS is still audible.
+    const double threshold = 0.005;
+    double lastAudible = 0.0;
+    for (double t = 0.0; t < 2.5; t += 0.01)
+    {
+        if (rmsInRange(formats, juce::File("/tmp/cadence_note1s.wav"),
+                       t, t + 0.01) > threshold)
+            lastAudible = t + 0.01;
+    }
+    std::printf("notetest: note length 1.00 s, audible until %.2f s\n",
+                lastAudible);
+    const bool ok = lastAudible > 0.7; // generous: release tail may fade early
+    std::printf("notetest: %s\n", ok ? "FULL LENGTH ok" : "TRUNCATED?!");
+    return ok ? 0 : 1;
+}
+
+namespace {
+
+using cadence::Clip;
+using cadence::MidiClipData;
+using cadence::Project;
+using cadence::ProjectAudioSource;
+using cadence::Track;
+
+std::shared_ptr<const Project> makeChordProject(bool armed, bool withClip,
+                                                int basePitch)
+{
+    auto project = std::make_shared<Project>();
+    project->sampleRate = 44100.0;
+    project->nextClipId = 2;
+    Track t;
+    t.id = 1;
+    t.name = "Synth";
+    t.type = Track::Type::Instrument;
+    t.armed = armed;
+    if (withClip)
+    {
+        Clip c;
+        c.id = 1;
+        c.startSeconds = 0.0;
+        c.lengthSeconds = 3.0;
+        auto midi = std::make_shared<MidiClipData>();
+        // Humanized chord: ons spread across blocks (a real player never
+        // hits all keys in the same sample), offs in a DIFFERENT order —
+        // finalize pairs by event order, so the stored array is NOT sorted
+        // by start. The playback loop must survive that (regression: a
+        // `break` on unsorted notes made only one chord note sound).
+        midi->notes.push_back({ 0.226, 0.800, basePitch + 7, 0.8f, 0.226 });
+        midi->notes.push_back({ 0.200, 0.900, basePitch + 0, 0.8f, 0.200 });
+        midi->notes.push_back({ 0.213, 1.000, basePitch + 4, 0.8f, 0.213 });
+        c.midi = midi;
+        t.clips.push_back(c);
+    }
+    project->tracks.push_back(t);
+    return project;
+}
+
+// Renders `seconds` of a playing source into a wav file.
+void renderSourceToFile(ProjectAudioSource& source, const juce::File& out,
+                        double seconds, int block)
+{
+    juce::AudioBuffer<float> blockBuf(2, block);
+    juce::AudioBuffer<float> mix(2, (int) (44100.0 * seconds));
+    int pos = 0;
+    while (pos + block <= mix.getNumSamples())
+    {
+        blockBuf.clear();
+        const juce::AudioSourceChannelInfo info { &blockBuf, 0, block };
+        source.getNextAudioBlock(info);
+        for (int ch = 0; ch < 2; ++ch)
+            mix.copyFrom(ch, pos, blockBuf, ch, 0, block);
+        pos += block;
+    }
+    out.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream = out.createOutputStream();
+    juce::AudioFormatWriterOptions opts;
+    opts = opts.withSampleRate(44100.0).withNumChannels(2)
+               .withBitsPerSample(16);
+    juce::WavAudioFormat wav;
+    auto writer = wav.createWriterFor(stream, opts);
+    if (writer != nullptr)
+        writer->writeFromAudioSampleBuffer(mix, 0, mix.getNumSamples());
+}
+
+} // namespace
+
+// Reproduces the app's live polyphony flow: a PERSISTENT ProjectAudioSource
+// (the offline render builds a fresh one each time, hiding this state)
+// goes through monitor-chord → stop mid-tail (voices frozen, claims held)
+// → replay the clip. Also with a chord on pitches different from the
+// frozen ones. Pass = replay as loud as a fresh render of the same chord.
+int cmdPolyTest()
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    constexpr int block = 512;
+
+    cadence::PluginHost host;
+    ProjectAudioSource source;
+    source.setPluginHost(&host);
+    source.prepareToPlay(block, 44100.0);
+
+    // Pass 1 — "record": live chord monitored, stopped mid-note, no tail
+    // render. Voices freeze active with their note claims held.
+    source.setProject(makeChordProject(true, false, 60));
+    source.play();
+    for (const int p : { 60, 64, 67 })
+        source.pushExternalMidi(juce::MidiMessage::noteOn(1, p, 0.8f));
+    juce::AudioBuffer<float> sink(2, block);
+    for (int i = 0; i < 40; ++i) // ~0.46 s of monitoring
+    {
+        sink.clear();
+        const juce::AudioSourceChannelInfo info { &sink, 0, block };
+        source.getNextAudioBlock(info);
+    }
+    source.allNotesOff();
+    source.pause();
+
+    float worst = 1.0f;
+    bool ok = true;
+    for (const bool sameChord : { true, false })
+    {
+        const int replayPitch = sameChord ? 60 : 72;
+        source.setProject(makeChordProject(false, true, replayPitch));
+        source.seek(0.0);
+        source.play();
+        const juce::File liveOut(juce::File::createTempFile("ez_poly_live.wav"));
+        renderSourceToFile(source, liveOut, 3.0, block);
+
+        ProjectAudioSource fresh;
+        fresh.setPluginHost(&host);
+        fresh.setProject(makeChordProject(false, true, replayPitch));
+        fresh.prepareToPlay(block, 44100.0);
+        fresh.play();
+        const juce::File freshOut(juce::File::createTempFile("ez_poly_fresh.wav"));
+        renderSourceToFile(fresh, freshOut, 3.0, block);
+
+        const float liveRms = rmsInRange(formats, liveOut, 0.3, 0.9);
+        const float freshRms = rmsInRange(formats, freshOut, 0.3, 0.9);
+        const float ratio = freshRms > 0 ? liveRms / freshRms : 0.0f;
+        worst = std::min(worst, ratio);
+        std::printf("polytest: %s chord live=%.4f fresh=%.4f ratio=%.2f\n",
+                    sameChord ? "same  " : "shifted", liveRms, freshRms, ratio);
+        ok = ok && ratio > 0.75f;
+        liveOut.deleteFile();
+        freshOut.deleteFile();
+    }
+    std::printf("polytest: %s\n", ok ? "POLYPHONIC through live flow ok"
+                                     : "VOICES LOST in live flow!");
+    return ok ? 0 : 1;
+}
+
+// Records a 3-note chord through the REAL capture pipeline (debug loopback
+// MIDI → TrackCapture → finalize pairing), verifies the take holds 3
+// full-length notes, and renders it polyphonically (ratio vs a single
+// synthetic note in the same session).
+int cmdChordRecTest()
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+    {
+        std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    if (engine.midiInputNames().isEmpty())
+    {
+        std::printf("chordrectest: skipped — no CoreMIDI devices present\n");
+        return 2;
+    }
+    engine.selectMidiInput(0); // real capture path, no loopback generator
+
+    engine.newProject(48000);
+    const auto track = engine.addTrack("Synth", 0,
+                                       cadence::Track::Type::Instrument);
+    engine.setTrackArmed(track, true);
+    if (engine.startRecord().failed())
+    {
+        std::fprintf(stderr, "error: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    engine.debugPushLiveMidi(60, true);
+    engine.debugPushLiveMidi(64, true);
+    engine.debugPushLiveMidi(67, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    engine.debugPushLiveMidi(60, false);
+    engine.debugPushLiveMidi(64, false);
+    engine.debugPushLiveMidi(67, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    engine.stopRecord();
+
+    int failures = 0;
+    auto check = [&](const char* what, bool ok) {
+        std::printf("  %-36s %s\n", what, ok ? "ok" : "FAIL");
+        if (! ok) ++failures;
+    };
+
+    check("chord take = one clip", engine.trackClipCount(track) == 1);
+    const auto clip = engine.clipIdAt(track, 0);
+    const int count = engine.clipNoteCount(clip);
+    check("3 notes captured", count == 3);
+    int pitchesSeen = 0;
+    for (int n = 0; n < count; ++n)
+    {
+        int pitch = 0; float vel = 0; double start = 0, len = 0;
+        engine.clipNoteAt(clip, n, &pitch, &vel, &start, &len);
+        std::printf("  [dbg] note pitch=%d vel=%.2f start=%.3f len=%.3f\n",
+                    pitch, vel, start, len);
+        if (pitch == 60 || pitch == 64 || pitch == 67) ++pitchesSeen;
+        check("note length ~0.8 s", len > 0.6 && len < 1.0);
+        check("note start ~0.3 s", std::abs(start - 0.3) < 0.15);
+    }
+    check("chord pitches present", pitchesSeen == 3);
+
+    // Polyphonic render of the RECORDED take vs one synthetic note.
+    engine.renderToFile(juce::File("/tmp/cadence_chordrec.wav"), 999);
+    const float chordRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_chordrec.wav"), 0.4, 1.0);
+    engine.removeClip(clip);
+    engine.addMidiClip(track, 0.0, 3.0);
+    const auto clip2 = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip2, 60, 0.3, 0.8, 0.8);
+    engine.renderToFile(juce::File("/tmp/cadence_chordsingle.wav"), 999);
+    const float singleRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_chordsingle.wav"), 0.4, 1.0);
+    const float ratio = singleRms > 0 ? chordRms / singleRms : 0.0f;
+    std::printf("chordrectest: chordRms=%.4f singleRms=%.4f ratio=%.2f\n",
+                chordRms, singleRms, ratio);
+    check("recorded chord is polyphonic", ratio > 1.4f);
+
+    std::printf(failures == 0 ? "chordrectest: all ok\n"
+                              : "chordrectest: %d FAILURES\n", failures);
+    return failures == 0 ? 0 : 1;
+}
+
+// Verifies the recorded-take fixes: (1) fast legato same-pitch repeats
+// (note-on before the previous note-off) must yield TWO notes, not one —
+// the old single-slot pairing dropped the first; (2) MIDI input latency
+// compensation shifts the take earlier by the configured ms.
+int cmdMidiFixTest()
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+    {
+        std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    if (engine.midiInputNames().isEmpty())
+    {
+        std::printf("midifixtest: skipped — no CoreMIDI devices present\n");
+        return 2;
+    }
+    engine.selectMidiInput(0);
+
+    int failures = 0;
+    auto check = [&](const char* what, bool ok) {
+        std::printf("  %-36s %s\n", what, ok ? "ok" : "FAIL");
+        if (! ok) ++failures;
+    };
+
+    // ---- 1) legato same-pitch repeat keeps both notes ----
+    engine.newProject(48000);
+    const auto track = engine.addTrack("Synth", 0,
+                                       cadence::Track::Type::Instrument);
+    engine.setTrackArmed(track, true);
+    if (engine.startRecord().failed())
+    {
+        std::fprintf(stderr, "error: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    engine.debugPushLiveMidi(60, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    // Live take (§7.11): the note must be visible WHILE it is still held, not
+    // only after the take is finalized — this is what the timeline draws.
+    {
+        const int live = engine.recordingNoteCount(track);
+        int lp = 0; float lv = 0; double ls = 0, ll = 0;
+        if (live > 0)
+            engine.recordingNoteAt(track, live - 1, &lp, &lv, &ls, &ll);
+        std::printf("  [dbg] live while held: notes=%d pitch=%d len=%.3f\n",
+                    live, lp, ll);
+        check("live take: held note visible", live == 1 && lp == 60);
+        check("live take: held length grows", ll > 0.05);
+    }
+    engine.debugPushLiveMidi(60, true); // re-press before any note-off
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    engine.debugPushLiveMidi(60, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    engine.debugPushLiveMidi(60, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    engine.stopRecord();
+
+    check("legato repeat = one clip", engine.trackClipCount(track) == 1);
+    check("live take cleared after stop", engine.recordingNoteCount(track) == 0);
+    const auto clip = engine.clipIdAt(track, 0);
+    check("legato repeat = TWO notes",
+          engine.clipNoteCount(clip) == 2);
+
+    // ---- 2) latency compensation shifts the take earlier ----
+    engine.setMidiInputLatencyMs(30.0);
+    engine.undo(); // drop take 1
+    engine.setTrackArmed(track, true);
+    engine.seek(0.0);
+    if (engine.startRecord().failed())
+    {
+        std::fprintf(stderr, "error: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    engine.debugPushLiveMidi(64, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    engine.debugPushLiveMidi(64, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    engine.stopRecord();
+    engine.setMidiInputLatencyMs(0.0);
+
+    const auto clip2 = engine.clipIdAt(track, 0);
+    if (engine.clipNoteCount(clip2) == 1)
+    {
+        int pitch = 0; float vel = 0; double start = 0, len = 0;
+        engine.clipNoteAt(clip2, 0, &pitch, &vel, &start, &len);
+        std::printf("  [dbg] compensated start=%.3f s\n", start);
+        // The raw press lands ~0.3 s in; with 30 ms taken off it must sit
+        // measurably below 0.3.
+        check("latency 30 ms shifts earlier", start < 0.295);
+    }
+    else
+    {
+        check("latency take captured one note", false);
+    }
+
+    std::printf(failures == 0 ? "midifixtest: all ok\n"
+                              : "midifixtest: %d FAILURES\n", failures);
+    return failures == 0 ? 0 : 1;
+}
+
+// Loads a project and reports, per instrument track, whether a plugin
+// instance actually came up (false = playback falls back to the internal
+// synth) plus whether the scan cache knows the stored uid.
+int cmdLoadDiag(const char* path)
+{
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+        std::fprintf(stderr, "warn: device: %s\n", engine.lastErrorUtf8());
+
+    const auto r = engine.loadProject(juce::File(path));
+    std::printf("load: %s\n",
+                r.failed() ? r.getErrorMessage().toRawUTF8() : "ok");
+    // Deferred plugin jobs never pump without a dispatch loop — drain them.
+    while (engine.hasPendingPluginJobs())
+        engine.pumpOnePluginJob();
+
+    std::printf("scan cache: %d plugins\n", engine.pluginCount());
+    for (int i = 0; i < engine.pluginCount(); ++i)
+    {
+        const juce::String uid = juce::String(engine.pluginUidAt(i));
+        if (uid.contains("SINE") || uid.contains("ZENOLOGY"))
+            std::printf("  cache: %s\n", uid.toRawUTF8());
+    }
+
+    const int n = engine.trackCount();
+    for (int i = 0; i < n; ++i)
+    {
+        const auto id = engine.trackIdAt(i);
+        if (engine.trackType(id) != 1) continue;
+        std::printf("track %d id=%lld: instrument %s\n", i, (long long) id,
+                    engine.trackInstrumentLive(id) ? "LIVE"
+                                                   : "NOT INSTANTIATED (piano fallback)");
+    }
+    return 0;
+}
+
+// EZ EQ Pro built-in: (1) a 440 Hz tone with a LowCut at 2 kHz must be
+// heavily attenuated; (2) a +24 dB bell at 440 must BOOST the tone; (3)
+// state round-trips through getState/setStateInformation.
+float peakInRange(juce::AudioFormatManager& fm, const juce::File& f,
+                  double from, double to)
+{
+    juce::AudioFormatReader* r = fm.createReaderFor(f);
+    if (r == nullptr) return 0.f;
+    const int sr = (int) r->sampleRate;
+    const int start = (int) (from * sr);
+    const int len = (int) ((to - from) * sr);
+    juce::AudioBuffer<float> b((int) r->numChannels, len);
+    r->read(&b, 0, len, start, true, true);
+    float m = 0.f;
+    for (int ch = 0; ch < b.getNumChannels(); ++ch)
+        for (int j = 0; j < len; ++j)
+            m = juce::jmax(m, std::abs(b.getSample(ch, j)));
+    delete r;
+    return m;
+}
+
+// Behavioral capture: hosts a target plugin, renders 40 log-spaced sine
+// tones, measures the magnitude response (with a no-plugin baseline for
+// de-embedding) and dumps JSON. Works for ANY hosted plugin: this is the
+// black-box half of matching a reference EQ's measured behavior.
+int cmdQCapture(const char* spec, const char* jsonPath)
+{
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+    {
+        std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    engine.newProject(48000);
+    const auto track = engine.addTrack("Capture", 0, cadence::Track::Type::Audio);
+
+    engine.scanPluginsNow();
+    int pluginIndex = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (juce::String(engine.pluginNameAt(i)).containsIgnoreCase(
+                juce::String::fromUTF8(spec)))
+        { pluginIndex = i; break; }
+    if (pluginIndex < 0)
+    {
+        std::fprintf(stderr, "error: no plugin matching '%s'\n", spec);
+        return 1;
+    }
+    std::printf("capturing: %s\n", engine.pluginNameAt(pluginIndex));
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    // 40 log-spaced tones, 0.25 s each (20 Hz -> 20 kHz).
+    constexpr int kNumTones = 40;
+    double f = 20.0;
+    for (int i = 0; i < kNumTones; ++i)
+    {
+        juce::File tone("/tmp/cadence_qcap_tone.wav");
+        writeToneWav(tone, 0.25, f);
+        engine.addClip(track, tone, i * 0.25, 1.0f);
+        f *= std::pow(1000.0, 1.0 / (kNumTones - 1));
+    }
+
+    // Pass A: baseline render WITHOUT fx.
+    const juce::File render("/tmp/cadence_qcap_render.wav");
+    render.deleteFile();
+    engine.renderToFileEx(render, 999, 24);
+    double baseline[kNumTones] = {};
+    for (int i = 0; i < kNumTones; ++i)
+    {
+        const double from = i * 0.25 + 0.02, to = (i + 1) * 0.25 - 0.02;
+        baseline[i] = peakInRange(formats, render, from, to);
+    }
+
+    // Insert fx and capture again.
+    engine.addTrackFx(track, pluginIndex);
+    engine.seek(0.0);
+    render.deleteFile();
+    engine.renderToFileEx(render, 999, 24);
+    double captured[kNumTones] = {};
+    for (int i = 0; i < kNumTones; ++i)
+    {
+        const double from = i * 0.25 + 0.02, to = (i + 1) * 0.25 - 0.02;
+        captured[i] = peakInRange(formats, render, from, to);
+    }
+
+    // JSON: de-embedded response (captured / baseline per band).
+    std::string json = "{\n  \"plugin\": \"" +
+        std::string(engine.pluginNameAt(pluginIndex)) + "\",\n  \"points\": [\n";
+    f = 20.0;
+    for (int i = 0; i < kNumTones; ++i)
+    {
+        const double rel = baseline[i] > 1e-6 ? captured[i] / baseline[i] : 0.0;
+        char buf[128];
+        std::snprintf(buf, sizeof buf,
+                      "    {\"f\": %.1f, \"rel\": %.4f}%s", f, rel,
+                      i + 1 < kNumTones ? "," : "");
+        json += buf;
+        if (i + 1 < kNumTones) json += "\n";
+        f *= std::pow(1000.0, 1.0 / (kNumTones - 1));
+    }
+    json += "\n  ]\n}\n";
+    std::ofstream out(jsonPath);
+    out << json;
+    std::printf("wrote %s (%d points, de-embedded by baseline)\n", jsonPath,
+                kNumTones);
+    return 0;
+}
+int cmdEzQTest()
+{
+    cadence::Engine::setDebugLoopback(true);
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+    {
+        std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    engine.newProject(48000);
+    const auto track = engine.addTrack("Fx", 0, cadence::Track::Type::Audio);
+
+    juce::File toneFile("/tmp/cadence_ezq_tone.wav");
+    writeToneWav(toneFile, 3.0, 440.0);
+    engine.addClip(track, toneFile, 0.0, 1.0f);
+
+    engine.scanPluginsNow();
+    int pluginIndex = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (juce::String(engine.pluginNameAt(i)).containsIgnoreCase("EZ EQ Pro"))
+        { pluginIndex = i; break; }
+    if (pluginIndex < 0)
+    {
+        std::fprintf(stderr, "error: EZ EQ Pro builtin not found\n");
+        return 1;
+    }
+    engine.addTrackFx(track, pluginIndex);
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    const juce::File flat("/tmp/cadence_ezq_flat.wav");
+    flat.deleteFile();
+    engine.renderToFileEx(flat, 999, 16);
+    const float flatPeak = peakInRange(formats, flat, 0.2, 2.8);
+
+    // LowCut at max freq (normalized 1.0 = 20 kHz): kills the 440 Hz tone.
+    std::vector<cadence::AutomationPoint> ptsEn {{0.0, 1.0}};
+    std::vector<cadence::AutomationPoint> ptsTy {{0.0, 0.2}};
+    std::vector<cadence::AutomationPoint> ptsF  {{0.0, 1.0}};
+    engine.setTrackParamAutomation(track, 0, 0, 10, "b3en", ptsEn);
+    engine.setTrackParamAutomation(track, 0, 0, 11, "b3ty", ptsTy);
+    engine.setTrackParamAutomation(track, 0, 0, 12, "b3f", ptsF);
+
+    const juce::File cut("/tmp/cadence_ezq_cut.wav");
+    cut.deleteFile();
+    engine.renderToFileEx(cut, 999, 16);
+    const float cutPeak = peakInRange(formats, cut, 0.2, 2.8);
+
+    const bool pass = flatPeak > 0.1f && cutPeak < flatPeak * 0.25f;
+    std::printf("ezqtest: flatPeak=%.4f cutPeak=%.4f -> %s\n",
+                flatPeak, cutPeak, pass ? "LOWCUT WORKS" : "NO CUT?!");
+    cadence::Engine::setDebugLoopback(false);
+    flat.deleteFile();
+    cut.deleteFile();
+    toneFile.deleteFile();
+    return pass ? 0 : 1;
+}
+
+int cmdChordTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Synth", 0,
+                                       cadence::Track::Type::Instrument);
+    engine.addMidiClip(track, 0.0, 2.0);
+    const auto clip = engine.clipIdAt(track, 0);
+    // Chord: three simultaneous notes.
+    engine.midiClipAddNote(clip, 60, 0.8, 0.1, 1.0);
+    engine.midiClipAddNote(clip, 64, 0.8, 0.1, 1.0);
+    engine.midiClipAddNote(clip, 67, 0.8, 0.1, 1.0);
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    engine.renderToFileEx(juce::File("/tmp/cadence_chord3.wav"), 999, 16);
+    const float chordRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_chord3.wav"), 0.2, 0.9);
+
+    // Single-note reference.
+    engine.removeClip(clip);
+    engine.addMidiClip(track, 0.0, 2.0);
+    const auto clip2 = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip2, 60, 0.8, 0.1, 1.0);
+    engine.renderToFileEx(juce::File("/tmp/cadence_single.wav"), 999, 16);
+    const float singleRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_single.wav"), 0.2, 0.9);
+
+    std::printf("chordtest: chordRms=%.4f singleRms=%.4f ratio=%.2f\n",
+                chordRms, singleRms, singleRms > 0 ? chordRms / singleRms : 0);
+    const float ratio = singleRms > 0 ? chordRms / singleRms : 0;
+    std::printf("chordtest: %s\n", ratio > 1.5f ? "POLYPHONIC ok"
+                                                : "MONOPHONIC?!");
+    return ratio > 1.5f ? 0 : 1;
+}
+
+int cmdEzInstTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("GM", 0,
+                                       cadence::Track::Type::Instrument);
+
+    // Locate EZInstruments in the merged plugin list (builtins + scanned).
+    int idx = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (engine.pluginNameAt(i) == juce::String("EZInstruments"))
+        {
+            idx = i;
+            break;
+        }
+    if (idx < 0)
+    {
+        std::printf("ezinsttest: EZInstruments not registered\n");
+        return 1;
+    }
+    if (engine.setTrackInstrumentPlugin(track, idx).failed())
+    {
+        std::printf("ezinsttest: setTrackInstrumentPlugin failed\n");
+        return 1;
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    // Single note: piano program (default).
+    engine.addMidiClip(track, 0.0, 2.5);
+    auto clip = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip, 60, 0.8, 0.1, 1.0);
+    engine.renderToFileEx(juce::File("/tmp/cadence_ezinst_single.wav"), 999, 16);
+    const float singleRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_ezinst_single.wav"), 0.2, 0.9);
+    const float tailRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_ezinst_single.wav"), 1.4, 1.9);
+
+    // Chord: three simultaneous notes through fluidsynth.
+    engine.removeClip(clip);
+    engine.addMidiClip(track, 0.0, 2.5);
+    clip = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip, 60, 0.8, 0.1, 1.0);
+    engine.midiClipAddNote(clip, 64, 0.8, 0.1, 1.0);
+    engine.midiClipAddNote(clip, 67, 0.8, 0.1, 1.0);
+    engine.renderToFileEx(juce::File("/tmp/cadence_ezinst_chord.wav"), 999, 16);
+    const float chordRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_ezinst_chord.wav"), 0.2, 0.9);
+
+    // Sustained-loop patch + running-status note-off: strings (program 40)
+    // must stop after a note-on-velocity-0 "off" — keyboards send releases
+    // that way, and decaying patches hide a missing release, looping
+    // strings drone forever (the violin bug).
+    bool vel0Ok = false;
+    {
+        std::unique_ptr<juce::AudioProcessor> proc(ezinst::create());
+        proc->prepareToPlay(44100, 512);
+        auto* prog = dynamic_cast<juce::AudioParameterChoice*>(
+            proc->getParameters()[0]);
+        if (prog != nullptr)
+            prog->setValueNotifyingHost(prog->convertTo0to1(40.f / 127.f));
+
+        juce::AudioBuffer<float> buf(2, 512);
+        juce::MidiBuffer midi;
+        auto runBlocks = [&](double secs) {
+            const int n = (int) (secs * 44100.0 / 512.0 + 0.5);
+            float peak = 0.f;
+            for (int i = 0; i < n; ++i)
+            {
+                buf.clear();
+                proc->processBlock(buf, midi);
+                if (midi.getNumEvents() > 0)
+                    midi.clear(); // events fire exactly once
+                peak = juce::jmax(peak, buf.getMagnitude(0, 512));
+            }
+            return peak;
+        };
+
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.9f), 0);
+        const float ringPeak = runBlocks(0.5);
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.0f), 0); // vel-0 off
+        runBlocks(0.05);
+        const float tailPeak = runBlocks(1.5);
+        vel0Ok = ringPeak > 0.01f && tailPeak < ringPeak * 0.15f;
+        std::printf("ezinsttest: vel0off ring=%.4f tail=%.4f -> %s\n",
+                    ringPeak, tailPeak, vel0Ok ? "RELEASES ok" : "STUCK!");
+    }
+
+    const float polyRatio = singleRms > 0 ? chordRms / singleRms : 0;
+    const float envRatio = singleRms > 0 ? tailRms / singleRms : 1;
+    // The normalized field-recording material is gentler than a 0.01 RMS.
+    const bool pass = singleRms > 0.003f && polyRatio > 1.5f && envRatio < 0.6f
+                      && vel0Ok;
+    std::printf("ezinsttest: singleRms=%.4f tailRms=%.4f chordRms=%.4f "
+                "poly=%.2f env=%.2f -> %s\n",
+                singleRms, tailRms, chordRms, polyRatio, envRatio,
+                pass ? "EZINSTRUMENTS WORKS" : "NO SOUND / BROKEN");
+    return pass ? 0 : 1;
+}
+
+int cmdEzSynthUiTest()
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    std::unique_ptr<juce::AudioProcessor> proc(ezsynth::create());
+    proc->prepareToPlay(48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> ed(proc->createEditor());
+    if (ed == nullptr)
+    {
+        std::printf("ezsynthuitest: no editor\n");
+        return 1;
+    }
+    bool ok = true;
+    const std::pair<int, int> sizes[] = { { 1020, 700 }, { 600, 420 },
+                                          { 1400, 900 } };
+    for (const auto& sz : sizes)
+    {
+        ed->setSize(sz.first, sz.second);
+        ok = ok && ed->getWidth() == sz.first && ed->getHeight() == sz.second;
+    }
+    // Exercise the clip/LINES page layout too.
+    ezsynth::setEditorPageForTest(ed.get(), 1);
+    ed->setSize(1020, 700);
+    ezsynth::setEditorPageForTest(ed.get(), 0);
+    ed->setSize(1020, 700);
+    const int nparams = (int) proc->getParameters().size();
+    ok = ok && nparams == 50;
+
+    // State round-trip: a non-default patch must survive save + load.
+    auto byId = [](juce::AudioProcessor& p, const char* id)
+        -> juce::AudioProcessorParameterWithID* {
+        for (auto* q : p.getParameters())
+            if (auto* w = dynamic_cast<juce::AudioProcessorParameterWithID*>(q))
+                if (w->paramID == juce::String(id))
+                    return w;
+        return nullptr;
+    };
+    auto setC = [&](const char* id, float v) {
+        if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(byId(*proc, id)))
+            c->setValueNotifyingHost(c->convertTo0to1(v));
+    };
+    auto setF = [&](const char* id, float v) {
+        if (auto* f = dynamic_cast<juce::AudioParameterFloat*>(byId(*proc, id)))
+            f->setValueNotifyingHost(f->convertTo0to1(v));
+    };
+    setC("o1wave", 1.f);
+    setF("o1det", 22.f);
+    setF("fltcut", 3000.f);
+    juce::MemoryBlock mb;
+    proc->getStateInformation(mb);
+    std::unique_ptr<juce::AudioProcessor> p2(ezsynth::create());
+    p2->prepareToPlay(48000.0, 512);
+    p2->setStateInformation(mb.getData(), (int) mb.getSize());
+    auto val = [&](juce::AudioProcessor& p, const char* id) -> float {
+        if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(byId(p, id)))
+            return (float) c->getIndex();
+        if (auto* f = dynamic_cast<juce::AudioParameterFloat*>(byId(p, id)))
+            return f->get();
+        return -999.f;
+    };
+    const bool stateOk = val(*p2, "o1wave") == 1.f
+                         && std::abs(val(*p2, "o1det") - 22.f) < 0.01f
+                         && std::abs(val(*p2, "fltcut") - 3000.f) < 1.f;
+    ok = ok && stateOk;
+
+    // Preset bank: every patch must sound (non-silent, not clipping).
+    const int nPresets = ezsynth::presetCountForTest();
+    int presetsOk = 0;
+    for (int i = 0; i < nPresets; ++i)
+    {
+        ezsynth::applyPresetForTest(proc.get(), i);
+        juce::AudioBuffer<float> buf(2, 512);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.9f), 0);
+        float peak = 0.f;
+        // Long window: slow-attack patches (pads, risers) need time to bloom.
+        for (int b = 0; b < 240; ++b)
+        {
+            buf.clear();
+            proc->processBlock(buf, midi);
+            midi.clear();
+            peak = juce::jmax(peak, buf.getMagnitude(0, buf.getNumSamples()));
+        }
+        if (peak > 1e-3f && peak < 4.f)
+            ++presetsOk;
+        else
+            std::printf("ezsynthuitest: preset %d peak=%.4f BAD\n", i, peak);
+    }
+    ok = ok && presetsOk == nPresets;
+
+    std::printf("ezsynthuitest: editor %dx%d params=%d state=%s presets=%d/%d "
+                "-> %s\n",
+                ed->getWidth(), ed->getHeight(), nparams,
+                stateOk ? "ok" : "LOST", presetsOk, nPresets,
+                ok ? "UI OK" : "BROKEN");
+    proc->editorBeingDeleted(ed.get());
+    ed.reset();
+    return ok ? 0 : 1;
+}
+
+int cmdEzSynthTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Keys", 0,
+                                       cadence::Track::Type::Instrument);
+
+    int idx = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (engine.pluginNameAt(i) == juce::String("EZSynth"))
+        {
+            idx = i;
+            break;
+        }
+    if (idx < 0)
+    {
+        std::printf("ezsynthtest: EZSynth not registered\n");
+        return 1;
+    }
+    if (engine.setTrackInstrumentPlugin(track, idx).failed())
+    {
+        std::printf("ezsynthtest: setTrackInstrumentPlugin failed\n");
+        return 1;
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    engine.addMidiClip(track, 0.0, 2.5);
+    auto clip = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip, 60, 0.8, 0.1, 1.0);
+    engine.renderToFileEx(juce::File("/tmp/cadence_ezsynth_single.wav"), 999, 16);
+    const float singleRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_ezsynth_single.wav"), 0.2, 0.9);
+    const float tailRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_ezsynth_single.wav"), 1.4, 1.9);
+
+    engine.removeClip(clip);
+    engine.addMidiClip(track, 0.0, 2.5);
+    clip = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip, 60, 0.8, 0.1, 1.0);
+    engine.midiClipAddNote(clip, 64, 0.8, 0.1, 1.0);
+    engine.midiClipAddNote(clip, 67, 0.8, 0.1, 1.0);
+    engine.renderToFileEx(juce::File("/tmp/cadence_ezsynth_chord.wav"), 999, 16);
+    const float chordRms = rmsInRange(formats,
+        juce::File("/tmp/cadence_ezsynth_chord.wav"), 0.2, 0.9);
+
+    // Vel-0 note-off regression through the direct processor.
+    bool vel0Ok = false;
+    {
+        std::unique_ptr<juce::AudioProcessor> proc(ezsynth::create());
+        proc->prepareToPlay(44100, 512);
+        juce::AudioBuffer<float> buf(2, 512);
+        juce::MidiBuffer midi;
+        auto runBlocks = [&](double secs) {
+            const int n = (int) (secs * 44100.0 / 512.0 + 0.5);
+            float peak = 0.f;
+            for (int i = 0; i < n; ++i)
+            {
+                buf.clear();
+                proc->processBlock(buf, midi);
+                if (midi.getNumEvents() > 0)
+                    midi.clear();
+                peak = juce::jmax(peak, buf.getMagnitude(0, 512));
+            }
+            return peak;
+        };
+        // Default motor = Synth.
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.9f), 0);
+        const float sring = runBlocks(0.5);
+        midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.0f), 0);
+        runBlocks(0.8); // 0.3 s synth release + margin
+        const float stail = runBlocks(1.0);
+        const bool synthOk = sring > 0.01f && stail < sring * 0.15f;
+        std::printf("ezsynthtest: vel0off(synth) ring=%.4f tail=%.4f -> %s\n",
+                    sring, stail, synthOk ? "RELEASES ok" : "STUCK!");
+
+        // Piano engine: switch motor, same release contract.
+        auto* motor = dynamic_cast<juce::AudioParameterChoice*>(
+            proc->getParameters()[0]);
+        bool pianoOk = false;
+        if (motor != nullptr)
+        {
+            motor->setValueNotifyingHost(motor->convertTo0to1(0.f));
+            midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.9f), 0);
+            const float ring = runBlocks(0.5);
+            midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.0f), 0);
+            runBlocks(0.4); // ~150 ms damper release + margin
+            const float tail = runBlocks(1.5);
+            pianoOk = ring > 0.01f && tail < ring * 0.15f;
+            std::printf("ezsynthtest: vel0off(piano) ring=%.4f tail=%.4f -> %s\n",
+                        ring, tail, pianoOk ? "RELEASES ok" : "STUCK!");
+        }
+        vel0Ok = synthOk && pianoOk;
+    }
+
+    // ---- LINES: polyphonic warp (per-voice pitch pull) ----
+    bool warpOk = false;
+    {
+        const std::vector<std::pair<float, float>> curve = { { 0.f, 72.f },
+                                                             { 2.f, 72.f } };
+        auto makeProc = [] {
+            auto p = std::unique_ptr<juce::AudioProcessor>(ezsynth::create());
+            p->prepareToPlay(48000.0, 512);
+            auto set = [&](const char* id, float v) {
+                for (auto* q : p->getParameters())
+                {
+                    auto* wid =
+                        dynamic_cast<juce::AudioProcessorParameterWithID*>(q);
+                    if (wid == nullptr || wid->paramID != juce::String(id))
+                        continue;
+                    if (auto* f = dynamic_cast<juce::AudioParameterFloat*>(q))
+                        f->setValueNotifyingHost(f->convertTo0to1(v));
+                    else if (auto* c =
+                                 dynamic_cast<juce::AudioParameterChoice*>(q))
+                        c->setValueNotifyingHost(c->convertTo0to1(v));
+                    else if (auto* n =
+                                 dynamic_cast<juce::AudioParameterInt*>(q))
+                        n->setValueNotifyingHost(n->convertTo0to1(v));
+                    return;
+                }
+            };
+            set("motor", 1.f); set("o1wave", 0.f); set("o1lvl", 0.9f);
+            set("o2lvl", 0.f); set("o3lvl", 0.f); set("sublvl", 0.f);
+            set("noise", 0.f); set("uni", 1.f); set("flttype", 0.f);
+            set("fltcut", 16000.f); set("fltres", 0.f); set("fltdrive", 1.f);
+            set("aenvA", 0.001f); set("aenvD", 4.f); set("aenvS", 1.f);
+            set("aenvR", 0.2f); set("vel", 0.f); set("level", 1.f);
+            set("glide", 0.f); set("l1depth", 0.f); set("l2depth", 0.f);
+            return p;
+        };
+        auto hzOf = [](juce::AudioProcessor& proc, int note) {
+            const int blocks = 24; // ~0.256 s
+            juce::AudioBuffer<float> buf(2, 512), acc(2, blocks * 512);
+            acc.clear();
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::noteOn(1, note, 1.0f), 0);
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                proc.processBlock(buf, midi);
+                midi.clear();
+                for (int ch = 0; ch < 2; ++ch)
+                    acc.copyFrom(ch, b * 512, buf, ch, 0, 512);
+            }
+            const float* d = acc.getReadPointer(0);
+            const int n = acc.getNumSamples();
+            int zc = 0;
+            for (int i = n / 2 + 1; i < n; ++i)
+                if (d[i - 1] <= 0.f && d[i] > 0.f)
+                    ++zc;
+            return zc / ((n - n / 2) / 48000.0);
+        };
+        auto near = [](double a, double b) {
+            return std::abs(a - b) < b * 0.06;
+        };
+
+        auto p0 = makeProc();
+        const double base = hzOf(*p0, 69);          // A4 = 440 Hz
+        auto p1 = makeProc();
+        ezsynth::setWarpForTest(p1.get(), curve, 1.0, 1.0f, 12.f);
+        const double pulled = hzOf(*p1, 69);        // 69 -> toward 72
+        auto p2 = makeProc();
+        ezsynth::setWarpForTest(p2.get(), curve, 1.0, 1.0f, 12.f);
+        const double onCurve = hzOf(*p2, 72);       // 72 sits on the curve
+
+        // 69 (diff 3, R 12) shifts +2.25 st = 501.1 Hz; 72 stays 523.25 Hz —
+        // two notes under the SAME area move by DIFFERENT amounts.
+        const bool baseOk = near(base, 440.0);
+        const bool pulledOk = near(pulled, 501.1);
+        const bool curveOk = near(onCurve, 523.25);
+
+        // Simultaneous polyphony: a chord of 69 + 72 under the SAME area
+        // must keep BOTH warped pitches (501 & 523) and lose the raw 440 —
+        // the distortion is per voice, not a global transposition.
+        auto renderChord = [&]() {
+            auto p = makeProc();
+            ezsynth::setWarpForTest(p.get(), curve, 1.0, 1.0f, 12.f);
+            const int blocks = 32;
+            juce::AudioBuffer<float> buf(2, 512), acc(2, blocks * 512);
+            acc.clear();
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::noteOn(1, 69, 1.0f), 0);
+            midi.addEvent(juce::MidiMessage::noteOn(1, 72, 1.0f), 0);
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                p->processBlock(buf, midi);
+                midi.clear();
+                for (int ch = 0; ch < 2; ++ch)
+                    acc.copyFrom(ch, b * 512, buf, ch, 0, 512);
+            }
+            std::vector<float> x((size_t)(blocks * 512));
+            for (int i = 0; i < blocks * 512; ++i)
+                x[(size_t) i] = acc.getSample(0, i);
+            return x;
+        };
+        auto goertzel = [](const std::vector<float>& x, double f) {
+            const double sr = 48000.0;
+            const int n = (int) x.size();
+            double re = 0.0, im = 0.0;
+            for (int i = 0; i < n; ++i)
+            {
+                const double win =
+                    0.5 - 0.5 * std::cos(2.0 * M_PI * i / (n - 1));
+                const double w = 2.0 * M_PI * f * i / sr;
+                re += x[(size_t) i] * win * std::cos(w);
+                im += x[(size_t) i] * win * std::sin(w);
+            }
+            return std::sqrt(re * re + im * im) / n;
+        };
+        const auto chord = renderChord();
+        const double m440 = goertzel(chord, 440.0);
+        const double m501 = goertzel(chord, 501.1);
+        const double m523 = goertzel(chord, 523.25);
+        const bool chordOk = m501 > 3.0 * m440 && m523 > 3.0 * m440;
+
+        warpOk = baseOk && pulledOk && curveOk && chordOk;
+        std::printf("ezsynthtest: warp base=%.1fHz pulled=%.1fHz(exp 501) "
+                    "onCurve=%.1fHz(exp 523) chord 501/440=%.1f 523/440=%.1f "
+                    "-> %s\n",
+                    base, pulled, onCurve, m501 / juce::jmax(1e-9, m440),
+                    m523 / juce::jmax(1e-9, m440),
+                    warpOk ? "POLYPHONIC OK" : "BROKEN");
+    }
+
+    const float polyRatio = singleRms > 0 ? chordRms / singleRms : 0;
+    const float envRatio = singleRms > 0 ? tailRms / singleRms : 1;
+    // The normalized field-recording material is gentler than a 0.01 RMS.
+    const bool pass = singleRms > 0.003f && polyRatio > 1.5f && envRatio < 0.6f
+                      && vel0Ok && warpOk;
+    std::printf("ezsynthtest: singleRms=%.4f tailRms=%.4f chordRms=%.4f "
+                "poly=%.2f env=%.2f -> %s\n",
+                singleRms, tailRms, chordRms, polyRatio, envRatio,
+                pass ? "EZSYNTH WORKS" : "BROKEN");
+    return pass ? 0 : 1;
+}
+
+
+// EZOrquestra end-to-end: (1) synthesize an Alpine-style tree (brass names
+// C4_f.wav… + freesound-style strings without note names), (2) scan it into
+// the programs dir, (3) load EZOrquestra on a track, switch program, render
+// a note and check the audio. Cleans its program JSONs afterwards.
+int cmdEzorqTest()
+{
+    using juce::String;
+    const auto root = juce::File("/tmp/ezorq_lib");
+    root.deleteRecursively();
+    root.createDirectory();
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto writeSine = [&](const juce::File& f, double hz) {
+        f.getParentDirectory().createDirectory();
+        constexpr double sr = 44100.0;
+        const int n = (int) (sr * 1.2);
+        std::vector<float> samples((size_t) n);
+        for (int i = 0; i < n; ++i)
+        {
+            const double env = juce::jmin(1.0, (n - i) / (0.3 * sr));
+            samples[(size_t) i] =
+                (float) (0.5 * env
+                         * std::sin(juce::MathConstants<double>::twoPi * hz
+                                    * i / sr));
+        }
+        const float* chans[1] = { samples.data() };
+        f.deleteFile();
+        auto stream =
+            std::unique_ptr<juce::OutputStream>(f.createOutputStream());
+        juce::AudioFormatWriterOptions o;
+        o = o.withSampleRate(sr).withNumChannels(1).withBitsPerSample(16);
+        juce::WavAudioFormat wav;
+        auto writer = wav.createWriterFor(stream, o);
+        writer->writeFromFloatArrays(chans, 1, n);
+        writer.reset();
+        if (stream != nullptr)
+            stream->flush();
+    };
+
+    // Brass-style: C4/E4/G4 with dynamics (parseable names).
+    writeSine(root.getChildFile("Brass/Samples/ATestTrumpet Samples/atesttrumpet C4 f.wav"),
+              261.63);
+    writeSine(root.getChildFile("Brass/Samples/ATestTrumpet Samples/atesttrumpet C4 ff.wav"),
+              261.63);
+    writeSine(root.getChildFile("Brass/Samples/ATestTrumpet Samples/atesttrumpet E4 f.wav"),
+              329.63);
+    writeSine(root.getChildFile("Brass/Samples/ATestTrumpet Samples/atesttrumpet G4 ff.wav"),
+              392.0);
+    // Strings-style: freesound names, no note (pitch detection must nail it).
+    writeSine(root.getChildFile("Strings/Samples/ATestViolin/atestviolin 1.wav"),
+              293.66); // D4
+    writeSine(root.getChildFile("Strings/Samples/ATestViolin/atestviolin 2.wav"),
+              440.0);  // A4
+
+    const auto outDir = juce::File::getSpecialLocation(
+                            juce::File::userApplicationDataDirectory)
+                            .getChildFile("EZMusicProduction/Orchestra");
+    const int written = ezorq::scanLibrary(root, outDir);
+    std::printf("ezorqtest: scan wrote %d programas\n", written);
+    if (written < 2)
+    {
+        std::printf("ezorqtest: FAIL (expected >= 2 programs)\n");
+        return 1;
+    }
+
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Orq", 0,
+                                       cadence::Track::Type::Instrument);
+    int idx = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (engine.pluginNameAt(i) == juce::String("EZOrquestra"))
+        {
+            idx = i;
+            break;
+        }
+    if (idx < 0 || engine.setTrackInstrumentPlugin(track, idx).failed())
+    {
+        std::printf("ezorqtest: instrument setup failed\n");
+        return 1;
+    }
+    // Program decode is asynchronous now — give the loader time.
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    // First generated program (sorted): expect a Brass trumpet program.
+    engine.addMidiClip(track, 0.0, 2.0);
+    const auto clip = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip, 60, 0.8, 0.1, 1.0); // C4
+    engine.renderToFileEx(juce::File("/tmp/cadence_ezorq.wav"), 999, 16);
+    const float rms = rmsInRange(formats,
+        juce::File("/tmp/cadence_ezorq.wav"), 0.15, 0.9);
+
+    const bool pass = rms > 0.004f;
+    std::printf("ezorqtest: rms=%.4f -> %s\n", rms,
+                pass ? "EZORQ WORKS" : "BROKEN");
+    // Editor paint smoke-test: the ADSR canvas bound a dangling member
+    // reference once (declaration order) — crashing only on PAINT, which
+    // no CLI test exercised until now.
+    {
+        std::unique_ptr<juce::AudioProcessor> proc(ezorq::create());
+        std::unique_ptr<juce::AudioProcessorEditor> ed(proc->createEditor());
+        ed->setSize(940, 560);
+        auto snap = ed->createComponentSnapshot(ed->getLocalBounds(), false);
+        float peak = 0.f;
+        for (int y = 0; y < snap.getHeight(); y += 7)
+            for (int x = 0; x < snap.getWidth(); x += 7)
+                peak = juce::jmax(peak, std::abs(snap.getPixelAt(x, y)
+                                                     .getFloatRed()));
+        std::printf("ezorqtest: editor snapshot pico=%.2f %s\n", peak,
+                    peak > 0.01f ? "(pinta OK)" : "(VACIO!)");
+    }
+    // Cleanup ONLY the synthetic programs (never the user's real ones).
+    for (const auto& f : outDir.findChildFiles(juce::File::findFiles, false,
+                                               "*ATestViolin*.json"))
+        f.deleteFile();
+    for (const auto& f : outDir.findChildFiles(juce::File::findFiles, false,
+                                               "*ATestTrumpet*.json"))
+        f.deleteFile();
+    return pass ? 0 : 1;
+}
+
+
+// Reproduces the app flow on a real project: load, drain plugin jobs,
+// inspect track 4's instrument, arm + live MIDI + meter.
+int cmdOrqLive(const char* path)
+{
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+        std::fprintf(stderr, "warn: device: %s\n", engine.lastErrorUtf8());
+    const auto r = engine.loadProject(juce::File(path));
+    std::printf("load: %s\n", r.failed() ? "FAIL" : "ok");
+    while (engine.hasPendingPluginJobs())
+        engine.pumpOnePluginJob();
+
+    const int n = engine.trackCount();
+    std::printf("pistas: %d\n", n);
+    for (int i = 0; i < n; ++i)
+    {
+        const auto id = engine.trackIdAt(i);
+        std::printf("  pista %d: %s tipo=%d inst=%s live=%d\n", i + 1,
+                    engine.trackName(id), engine.trackType(id),
+                    engine.trackInstrumentName(id),
+                    (int) engine.trackInstrumentLive(id));
+    }
+
+    // Track 4: arm + live MIDI + meter.
+    const auto t4 = engine.trackIdAt(3);
+    engine.setTrackArmed(t4, true);
+    engine.debugPushLiveMidi(60, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    const float p1 = engine.meterTrackPeak(3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const float p2 = engine.meterTrackPeak(3);
+    engine.debugPushLiveMidi(60, false);
+    std::printf("orqlive: track4 live peaks %.4f / %.4f %s\n", p1, p2,
+                p1 > 0.001f ? "SUENA" : "SILENCIO");
+
+    // Playback of the clip through the transport.
+    engine.setTrackSolo(t4, true);
+    engine.seek(0.0);
+    engine.play();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    const float pb = engine.meterTrackPeak(3);
+    engine.stop();
+    std::printf("orqlive: track4 playback peak %.4f %s\n", pb,
+                pb > 0.001f ? "SUENA" : "SILENCIO");
+    return 0;
+}
+
+
+// Chromatic pitch audit: renders every semitone in the instrument range,
+// measures the ACTUAL output frequency via autocorrelation, and reports
+// any note that's off by >= 1 semitone from what was pressed.
+// AUDIT MEASUREMENT — hypothesis test, not pitch estimation. Renders of
+// real instruments have weak fundamentals (flutes: f0 at 17%, 2f0
+// dominant) and formant bumps; generic pitch detectors lock onto 2f0 or
+// the formant and report phantom octaves. But the audit KNOWS the
+// expected pitch: test the three hypotheses k = -1,0,+1 (the render
+// contains the harmonic series of expected×2^k) against the measured
+// peak list, and require k=0 to win. Returns measured milli-Hz of the
+// k=0 series, or 0/negative codes when a wrong octave wins.
+static double auditMeasureHz(const float* d, int nSmp, double sr,
+                             double expectedHz)
+{
+    // ADAPTIVE window on the NOTE'S RING: spiccato/staccato renders decay
+    // in ~0.15 s while sustains run long — a fixed 0.4 s window lands on
+    // silence+attack noise for short takes. Find the highest-energy 25 ms
+    // hop, then extend while the ring lives (cap 0.5 s, floor 0.12 s).
+    const int hop = (int) (0.025 * sr);
+    const int scanEnd = juce::jmin(nSmp, (int) (1.4 * sr));
+    int peakHop = -1;
+    double peakR = 0.0;
+    for (int s = 0; s + hop <= scanEnd; s += hop)
+    {
+        double r = 0.0;
+        for (int i = s; i < s + hop; ++i)
+            r += (double) d[i] * d[i];
+        if (r > peakR)
+        {
+            peakR = r;
+            peakHop = s;
+        }
+    }
+    if (peakHop < 0 || peakR <= 0.0)
+        return 0.0; // true silence
+    int start = peakHop;
+    int len = hop;
+    {
+        const double keep = peakR * 0.15;
+        for (int s = peakHop + hop; s + hop <= scanEnd; s += hop)
+        {
+            double r = 0.0;
+            for (int i = s; i < s + hop; ++i)
+                r += (double) d[i] * d[i];
+            if (r < keep)
+                break;
+            len += hop;
+            if (len >= (int) (0.5 * sr))
+                break;
+        }
+        const int minLen = (int) (0.12 * sr);
+        if (len < minLen)
+            len = juce::jmin(minLen, nSmp - start);
+    }
+    if (len < 2048)
+        return 0.0;
+
+    // Goertzel power scan, 2 Hz steps, 150..2600 Hz.
+    constexpr int kFlo = 150, kFhi = 2600, kStep = 2;
+    const int nFreq = (kFhi - kFlo) / kStep + 1;
+    std::vector<double> pw((size_t) nFreq, 0.0);
+    for (int fi = 0; fi < nFreq; ++fi)
+    {
+        const double f = (double) (kFlo + fi * kStep);
+        const double coeff = 2.0 * std::cos(2.0 * 3.14159265358979 * f / sr);
+        double s1 = 0.0, s2 = 0.0;
+        for (int i = 0; i < len; ++i)
+        {
+            const double s0 = (double) d[start + i] + coeff * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        pw[(size_t) fi] = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    }
+
+    // Top-5 peaks, deduped ±50 Hz (vibrato spreads one partial over bins).
+    std::vector<std::pair<double, double>> peaks; // (Hz, power)
+    {
+        std::vector<size_t> order((size_t) nFreq);
+        for (size_t i = 0; i < order.size(); ++i)
+            order[i] = i;
+        std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return pw[a] > pw[b];
+        });
+        for (const size_t idx : order)
+        {
+            const double f = (double) (kFlo + (int) idx * kStep);
+            bool dup = false;
+            for (const auto& pk : peaks)
+                if (std::abs(pk.first - f) < 50.0)
+                {
+                    dup = true;
+                    break;
+                }
+            if (! dup)
+                peaks.push_back({ f, pw[idx] });
+            if (peaks.size() >= 5)
+                break;
+        }
+    }
+    if (peaks.empty())
+        return 0.0;
+
+    // Diagnostics: remember the dominant peak for the failure message.
+    const double domHz = peaks[0].first;
+
+    // Score the two FALSIFIABLE octave hypotheses. The sub-octave (k=-1)
+    // is unfalsifiable by coverage — every harmonic of f0 is one of f0/2
+    // — so it is not tested: a pure upper-series tie means the render is
+    // an octave UP; any odd-harmonic energy keeps k=0 winning.
+    double explained[2];
+    for (int k = 0; k < 2; ++k)
+    {
+        const double f0 = expectedHz * std::pow(2.0, (double) k);
+        const double tol = juce::jmax(6.0, f0 * 0.02);
+        double cov = 0.0;
+        for (const auto& pk : peaks)
+        {
+            const double h = juce::jmax(1.0, std::round(pk.first / f0));
+            if (std::abs(pk.first - h * f0) <= tol)
+                cov += pk.second;
+        }
+        explained[k] = cov;
+    }
+    if (explained[1] > explained[0] * 1.05)
+        return -2.0; // the render's series is the UPPER octave: real error
+
+    // Refine: power-weighted mean of peak/h over the k=0 series.
+    const double f0 = expectedHz;
+    const double tol = juce::jmax(6.0, f0 * 0.02);
+    double num = 0.0, den = 0.0;
+    for (const auto& pk : peaks)
+    {
+        const double h = juce::jmax(1.0, std::round(pk.first / f0));
+        if (std::abs(pk.first - h * f0) <= tol)
+        {
+            num += (pk.first / h) * pk.second;
+            den += pk.second;
+        }
+    }
+    if (den <= 0.0)
+    {
+        // Peaks exist but match neither octave: the render plays
+        // something unrelated (report dominant peak via fractional part).
+        const double domNote = 69.0 + 12.0 * std::log2(domHz / 440.0);
+        return -(3000.0 + domNote) / 1000.0; // e.g. -3.079 → note 79
+    }
+    return num / den;
+}
+
+static int auditNoteOnTrack(cadence::Engine& engine, int track,
+                            juce::AudioFormatManager& formats, int note)
+{
+    engine.addMidiClip(track, 0.0, 1.5);
+    const auto clip = engine.clipIdAt(track, 0);
+    engine.midiClipAddNote(clip, note, 0.8, 0.05, 0.8);
+    engine.renderToFileEx(juce::File("/tmp/cadence_audit_note.wav"), 999, 16);
+    engine.removeClip(clip);
+
+    juce::AudioFormatReader* r = formats.createReaderFor(
+        juce::File("/tmp/cadence_audit_note.wav"));
+    if (r == nullptr)
+        return -1;
+    const int sr = (int) r->sampleRate;
+    const int nSmp = (int) juce::jmin((juce::int64) (sr * 1),
+                                      r->lengthInSamples);
+    juce::AudioBuffer<float> buf(1, nSmp);
+    r->read(&buf, 0, nSmp, 0, true, true);
+    delete r;
+
+    const double expectedHz = 440.0 * std::pow(2.0, (note - 69) / 12.0);
+    const double hz = auditMeasureHz(buf.getReadPointer(0), nSmp,
+                                     (double) sr, expectedHz);
+    if (hz <= 0.0)
+        return (int) std::lround(hz * 1000.0); // diagnostic codes pass through
+    return (int) std::lround(hz * 1000.0);
+}
+
+static int auditRunProgram(cadence::Engine& engine, int track,
+                           juce::AudioFormatManager& formats,
+                           const int* notes, int nNotes)
+{
+    int wrong = 0;
+    for (int ni = 0; ni < nNotes; ++ni)
+    {
+        const int note = notes[ni];
+        const int mHz = auditNoteOnTrack(engine, track, formats, note);
+        const double expectedHz = 440.0 * std::pow(2.0, (note - 69) / 12.0);
+        if (mHz <= 0)
+        {
+            if (mHz == 0)
+                std::printf("audit nota %d: SILENCIO (rms sin picos) ✗\n",
+                            note);
+            else if (mHz <= -3000)
+                std::printf("audit nota %d: suena OTRO PITCH (~nota %.1f) "
+                            "✗\n",
+                            note, (double) (-(mHz) - 3000));
+            else if (mHz == -2000)
+                std::printf("audit nota %d: suena la OCTAVA SUPERIOR "
+                            "(%.0f Hz) ✗\n",
+                            note, expectedHz * 2.0);
+            else
+                std::printf("audit nota %d: serie no encontrada ✗\n", note);
+            wrong++;
+            continue;
+        }
+        const double measuredHz = mHz / 1000.0;
+        const double cents = 1200.0 * std::log2(measuredHz / expectedHz);
+        const bool ok = std::abs(cents) < 60;
+        if (! ok)
+        {
+            std::printf("audit nota %d: expected %.1f Hz, got %.1f Hz "
+                        "(%+.0f cents) ✗\n",
+                        note, expectedHz, measuredHz, cents);
+            wrong++;
+        }
+    }
+    return wrong;
+}
+
+int cmdChromaticAudit(int argc = 0, char** argv = nullptr)
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Audit", 0,
+                                       cadence::Track::Type::Instrument);
+    int idx = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (engine.pluginNameAt(i) == juce::String("EZOrquestra"))
+        {
+            idx = i;
+            break;
+        }
+    if (idx < 0)
+    {
+        std::printf("audit: EZOrquestra not found\n");
+        return 1;
+    }
+    engine.setTrackInstrumentPlugin(track, idx);
+    ezorq::waitProgramsLoaded();
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    int wrong = 0, total = 0;
+    const int loNote = argc > 2 ? std::atoi(argv[2]) : 55;
+    const int hiNote = argc > 3 ? std::atoi(argv[3]) : 84;
+    for (int note = loNote; note <= hiNote; ++note)
+    {
+        if (auditRunProgram(engine, track, formats, &note, 1) > 0)
+            wrong++;
+        total++;
+    }
+    std::printf("audit: %d/%d notas correctas\n", total - wrong, total);
+    return wrong > 0 ? 1 : 0;
+}
+
+// Full per-instrument validation: every program in the orchestra library,
+// 5 notes spanning its range each. This is the guarantee that pressing a
+// note produces that note on EVERY instrument, not just the flute.
+int cmdChromaticAll(int from = 0, int to = -1)
+{
+    const auto dir = juce::File::getSpecialLocation(
+                         juce::File::userApplicationDataDirectory)
+                         .getChildFile("EZMusicProduction/Orchestra");
+    juce::Array<juce::File> progFiles
+        = dir.findChildFiles(juce::File::findFiles, false, "*.json");
+    if (progFiles.isEmpty())
+    {
+        std::printf("chromaticall: sin programas en %s\n",
+                    dir.getFullPathName().toRawUTF8());
+        return 1;
+    }
+    juce::StringArray names;
+    for (const auto& f : progFiles)
+        names.add(f.getFileNameWithoutExtension());
+    names.sort(true);
+
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Audit", 0,
+                                       cadence::Track::Type::Instrument);
+    int idx = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (engine.pluginNameAt(i) == juce::String("EZOrquestra"))
+        {
+            idx = i;
+            break;
+        }
+    if (idx < 0)
+    {
+        std::printf("chromaticall: EZOrquestra not found\n");
+        return 1;
+    }
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    int totalWrong = 0, programsOk = 0;
+    if (to < 0 || to >= names.size())
+        to = names.size() - 1;
+    for (int p = from; p <= to && p < names.size(); ++p)
+    {
+        ezorq::setProbeProgram(p);
+        ezorq::clearProgramCache(); // bound memory: one program at a time
+        engine.clearTrackInstrument(track);
+        engine.setTrackInstrumentPlugin(track, idx);
+        ezorq::waitProgramsLoaded();
+        // Test notes WITHIN the instrument's real root range — pressing a
+        // bass two octaves above its top key says nothing about tuning.
+        int notes[5];
+        int lo = 48, hi = 84;
+        if (! ezorq::probeRange(&lo, &hi))
+        {
+            std::printf("chromaticall [%2d/%2d] %s: SIN RANGO\n",
+                        p + 1, names.size(), names[p].toRawUTF8());
+            totalWrong += 5;
+            continue;
+        }
+        // Below note 34 (<55 Hz) the FFT detector can't measure the
+        // fundamental — auditing there measures harmonics, not the engine.
+        lo = juce::jmax(lo, 34);
+        for (int k = 0; k < 5; ++k)
+            notes[k] = lo + (int) std::lround(
+                k * (double) (hi - lo) / 4.0);
+        const int wrong = auditRunProgram(engine, track, formats, notes, 5);
+        if (wrong == 0)
+            programsOk++;
+        else
+            totalWrong += wrong;
+        std::printf("chromaticall [%2d/%2d] %s [%d-%d]: %d/%d notas %s\n",
+                    p + 1, names.size(), names[p].toRawUTF8(), lo, hi,
+                    5 - wrong, 5, wrong > 0 ? "✗ ← REVISAR" : "✓");
+        std::fflush(stdout);
+    }
+    std::printf("chromaticall: %d/%d programas correctos "
+                "(%d notas mal en total)\n",
+                programsOk, names.size(), totalWrong);
+    return totalWrong > 0 ? 1 : 0;
+}
+
+int cmdPlugTest(const char* spec, bool asInstrument, bool demoVariant,
+                bool recVariant, bool monVariant = false)
+{
+    cadence::Engine::setDebugLoopback(true);
+
+    cadence::Engine engine;
+    if (demoVariant)
+        engine.loadDeviceSettings(juce::File(
+            "/Users/ivan/Music/Cadence/settings.json")); // app-identical device
+    if (engine.initialise().failed())
+    {
+        std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());
+        cadence::Engine::setDebugLoopback(false);
+        return 1;
+    }
+
+    engine.newProject(48000);
+    if (const char* iq = std::getenv("CADENCE_IQ"))
+        engine.setInputQuantize(std::atof(iq));
+    const auto track = engine.addTrack(
+        asInstrument ? "Inst" : "Fx", 0,
+        asInstrument ? cadence::Track::Type::Instrument
+                     : cadence::Track::Type::Audio);
+
+    // The transport auto-stops at the end of an empty project — give it a
+    // clip so playback actually runs through the plugin. The "rec" variant
+    // instead records loopback MIDI through the instrument plugin.
+    juce::File toneFile("/tmp/cadence_plugtest_tone.wav");
+    if (recVariant)
+    {
+        engine.setTrackArmed(track, true);
+        if (engine.startRecord().failed())
+        {
+            std::fprintf(stderr, "error: record failed\n");
+            cadence::Engine::setDebugLoopback(false);
+            return 1;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        engine.stopRecord();
+        engine.seek(0.0); // replay the take from the top
+        std::printf("plugtest: recorded %d note(s)\n",
+                    engine.trackClipCount(track) > 0
+                        ? engine.clipNoteCount(engine.clipIdAt(track, 0))
+                        : 0);
+        if (engine.trackClipCount(track) > 0)
+        {
+            const auto cid = engine.clipIdAt(track, 0);
+            for (int n = 0; n < engine.clipNoteCount(cid) && n < 6; ++n)
+            {
+                int pitch = 0;
+                float vel = 0;
+                double start = 0, len = 0;
+                engine.clipNoteAt(cid, n, &pitch, &vel, &start, &len);
+                std::printf("plugtest: note %d start %.4f\n", n, start);
+            }
+        }
+    }
+    else if (monVariant)
+    {
+        // Live monitoring with the transport STOPPED: hold one note via the
+        // debug injection and require SUSTAINED output across reads — the
+        // old gating rendered only blocks that carried new MIDI events, so
+        // notes died after one block (~10 ms).
+        engine.setTrackArmed(track, true);
+        std::printf("mon: instrument live=%d\n",
+                    (int) engine.trackInstrumentLive(track));
+        engine.debugPushLiveMidi(64, true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        const float p1 = engine.meterTrackPeak(0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        const float p2 = engine.meterTrackPeak(0);
+        engine.debugPushLiveMidi(64, false);
+        std::printf("plugtest: monitoring peaks %.4f / %.4f (sustained: %s)\n",
+                    p1, p2, (p1 > 0.001f && p2 > 0.001f) ? "yes" : "NO");
+        return (p1 > 0.001f && p2 > 0.001f) ? 0 : 1;
+    }
+    else if (writeToneWav(toneFile, 3.0, 440.0) != 0
+             || engine.addClip(track, toneFile, 0.0, 1.0) < 0)
+    {
+        std::fprintf(stderr, "error: could not build test clip\n");
+        cadence::Engine::setDebugLoopback(false);
+        return 1;
+    }
+
+    // Demo-like variant: two more audio tracks like the app's demo project.
+    if (demoVariant)
+    {
+        const auto t2 = engine.addTrack("Extra1", 3);
+        engine.addClip(t2, toneFile, 2.0, 0.8);
+        const auto t3 = engine.addTrack("Extra2", 5);
+        engine.addClip(t3, toneFile, 4.0, 0.9);
+    }
+
+    engine.scanPluginsNow();
+    int pluginIndex;
+    if (spec[0] == ':')
+    {
+        // ":Name" — list order shifts between processes; names are stable.
+        const auto wanted = juce::String::fromUTF8(spec + 1);
+        pluginIndex = -1;
+        int fallback = -1;
+        for (int i = 0; i < engine.pluginCount(); ++i)
+        {
+            if (juce::String(engine.pluginNameAt(i)).containsIgnoreCase(wanted))
+            {
+                // Prefer the VST3 flavour when a name exists in both formats.
+                if (std::strcmp(engine.pluginFormatAt(i), "VST3") == 0)
+                {
+                    pluginIndex = i;
+                    break;
+                }
+                if (fallback < 0)
+                    fallback = i;
+            }
+        }
+        if (pluginIndex < 0)
+            pluginIndex = fallback;
+        if (pluginIndex < 0)
+        {
+            std::fprintf(stderr, "error: no plugin matching '%s'\n", spec + 1);
+            cadence::Engine::setDebugLoopback(false);
+            return 1;
+        }
+    }
+    else
+    {
+        pluginIndex = std::atoi(spec);
+        if (pluginIndex < 0 || pluginIndex >= engine.pluginCount())
+        {
+            std::fprintf(stderr, "error: plugin index %d out of range (%d found)\n",
+                         pluginIndex, engine.pluginCount());
+            cadence::Engine::setDebugLoopback(false);
+            return 1;
+        }
+    }
+    const std::string pname = engine.pluginNameAt(pluginIndex);
+    const std::string pformat = engine.pluginFormatAt(pluginIndex);
+    std::printf("plugtest: [%d] %s (%s%s) as %s\n", pluginIndex,
+                pname.c_str(), pformat.c_str(),
+                engine.pluginIsInstrumentAt(pluginIndex) ? ",inst" : "",
+                asInstrument ? "instrument" : "fx");
+
+    const juce::Result r = asInstrument
+        ? engine.setTrackInstrumentPlugin(track, pluginIndex)
+        : engine.addTrackFx(track, pluginIndex);
+    if (r.failed())
+    {
+        std::fprintf(stderr, "error: could not add plugin: %s\n",
+                     r.getErrorMessage().toRawUTF8());
+        cadence::Engine::setDebugLoopback(false);
+        return 1;
+    }
+
+    engine.play();
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    engine.pause();
+    cadence::Engine::setDebugLoopback(false);
+
+    const double pos = engine.positionSeconds();
+    const float peak = engine.meterTrackPeak(0); // read-and-reset, post-fx
+    std::printf("plugtest: %s — %.2f s rendered, track0 peak %.4f\n",
+                pos > 0.1 ? "ok" : "NO PROGRESS", pos, peak);
+    if (recVariant)
+    {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        engine.renderToFileEx(juce::File("/tmp/cadence_plugtest_16.wav"),
+                              999, 16);
+        engine.renderToFileEx(juce::File("/tmp/cadence_plugtest_24.wav"),
+                              999, 24);
+        std::printf("plugtest: export rms16=%.4f rms24=%.4f\n",
+                    rmsInRange(formats, juce::File("/tmp/cadence_plugtest_16.wav"),
+                               0.05, 1.0),
+                    rmsInRange(formats, juce::File("/tmp/cadence_plugtest_24.wav"),
+                               0.05, 1.0));
+    }
+    if (demoVariant)
+        std::printf("plugtest: track1 peak %.4f, track2 peak %.4f\n",
+                    engine.meterTrackPeak(1), engine.meterTrackPeak(2));
+    return (pos > 0.1 && peak > 0.001f) ? 0 : 1;
+}
+
+// EZDrums end-to-end: arm a track hosting the drum machine, record, and
+// verify the plugin's OWN pattern landed as a normal (editable) MIDI clip
+// — the "the machine records itself" contract.
+int cmdEzDrumsTest()
+{
+    // NO debug loopback: the loopback synthesizes its own notes into every
+    // armed MIDI capture — this test must measure ONLY what EZDrums
+    // generated. The relaxed record gate lets an armed EZDrums track
+    // record without any MIDI input.
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+    {
+        std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    engine.newProject(48000);
+    const auto track = engine.addTrack("Drums", 0,
+                                       cadence::Track::Type::Instrument);
+    int idx = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (engine.pluginNameAt(i) == juce::String("EZDrums"))
+        {
+            idx = i;
+            break;
+        }
+    if (idx < 0)
+    {
+        std::printf("ezdrmtest: EZDrums no encontrado\n");
+        return 1;
+    }
+    engine.setTrackInstrumentPlugin(track, idx);
+    engine.setTrackArmed(track, true);
+
+    if (engine.startRecord().failed())
+    {
+        std::printf("ezdrmtest: startRecord FALLÓ (¿gate?): %s\n",
+                    engine.lastErrorUtf8());
+        return 1;
+    }
+    // 120 bpm: a bar = 2 s. Record 2.5 bars.
+    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    engine.stopRecord();
+    engine.seek(0.0);
+
+    if (engine.trackClipCount(track) < 1)
+    {
+        std::printf("ezdrmtest: FAIL — ningún clip tras grabar\n");
+        return 1;
+    }
+    const auto clip = engine.clipIdAt(track, 0);
+    const int notes = engine.clipNoteCount(clip);
+    std::printf("ezdrmtest: clip nuevo con %d notas\n", notes);
+    if (notes < 20)
+    {
+        std::printf("ezdrmtest: FAIL — pocas notas (Rock 1 × 2.5 compases "
+                    "≈ 37)\n");
+        return 1;
+    }
+
+    // Notes must be GM drums and land ON the sixteenth grid (swing 0):
+    // 120 bpm → sixteenth = 0.125 s. Tolerance 25 ms (block rounding).
+    const std::array<int, 9> gm = { 36, 38, 39, 42, 46, 41, 48, 51, 49 };
+    int badPitch = 0, offGrid = 0;
+    for (int i = 0; i < notes; ++i)
+    {
+        int pitch = 0;
+        float vel = 0.f;
+        double startS = 0.0, lenS = 0.0;
+        engine.clipNoteAt(clip, i, &pitch, &vel, &startS, &lenS);
+        bool known = false;
+        for (const int p : gm)
+            if (p == pitch)
+                known = true;
+        if (! known)
+            badPitch++;
+        const double mod = std::fmod(startS, 0.125);
+        const double dist = std::min(mod, 0.125 - mod);
+        if (dist > 0.025)
+            offGrid++;
+    }
+    if (badPitch > 0 || offGrid > 2)
+    {
+        std::printf("ezdrmtest: FAIL — %d notas fuera del mapa GM, %d fuera "
+                    "de la rejilla\n",
+                    badPitch, offGrid);
+        for (int i = 0; i < juce::jmin(notes, 24); ++i)
+        {
+            int pitch = 0;
+            float vel = 0.f;
+            double startS = 0.0, lenS = 0.0;
+            engine.clipNoteAt(clip, i, &pitch, &vel, &startS, &lenS);
+            std::printf("  nota[%02d] pitch=%d vel=%.2f t=%.3f len=%.3f\n",
+                        i, pitch, vel, startS, lenS);
+        }
+        return 1;
+    }
+
+    // Audible: offline render of the clip has real energy.
+    engine.renderToFileEx(juce::File("/tmp/ezdrums_render.wav"), 20, 16);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    juce::AudioFormatReader* r = formats.createReaderFor(
+        juce::File("/tmp/ezdrums_render.wav"));
+    if (r == nullptr)
+    {
+        std::printf("ezdrmtest: FAIL — render ilegible\n");
+        return 1;
+    }
+    const int n = (int) juce::jmin<std::int64_t>(r->lengthInSamples,
+                                                 (std::int64_t) r->sampleRate * 3);
+    juce::AudioBuffer<float> buf(2, n);
+    r->read(&buf, 0, n, 0, true, true);
+    delete r;
+    float peak = 0.f;
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < n; ++i)
+            peak = juce::jmax(peak, std::abs(buf.getSample(c, i)));
+    std::printf("ezdrmtest: pico render %.3f\n", peak);
+    if (peak < 0.05f)
+    {
+        std::printf("ezdrmtest: FAIL — el render está mudo\n");
+        return 1;
+    }
+    std::printf("EZDRUMS OK\n");
+    return 0;
+}
+
+
+// EZArpeggio end-to-end: a sustained chord clip arpeggiated at 1/16 by the
+// MIDI insert — the offline render must contain ~32 onsets (vs the single
+// chord attack without the insert).
+int cmdEzArpTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Arp", 0,
+                                       cadence::Track::Type::Instrument);
+    int synth = -1, arp = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+    {
+        const juce::String n = engine.pluginNameAt(i);
+        if (n == juce::String("EZSynth"))
+            synth = i;
+        if (n == juce::String("EZArpeggio"))
+            arp = i;
+    }
+    if (synth < 0 || arp < 0)
+    {
+        std::printf("ezarptest: plugins no encontrados\n");
+        return 1;
+    }
+    engine.setTrackInstrumentPlugin(track, synth);
+    engine.addMidiClip(track, 0.0, 4.0);
+    const auto clip = engine.clipIdAt(track, 0);
+    for (const int p : { 60, 64, 67 }) // C major, held the whole clip
+        engine.midiClipAddNote(clip, p, 0.9, 0.0, 4.0);
+
+    auto countOnsets = [&](const char* path) {
+        engine.renderToFileEx(juce::File(path), 10, 16);
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        juce::AudioFormatReader* r = formats.createReaderFor(juce::File(path));
+        if (r == nullptr)
+            return -1;
+        const int n = (int) r->lengthInSamples;
+        juce::AudioBuffer<float> buf(1, n);
+        r->read(&buf, 0, n, 0, true, false);
+        delete r;
+        // RMS over 25 ms hops; onset = hop rising above 4x the noise floor.
+        const int hop = (int) (0.025 * 44100);
+        std::vector<float> rms;
+        for (int s = 0; s + hop <= n; s += hop)
+        {
+            double e = 0.0;
+            for (int i = s; i < s + hop; ++i)
+                e += (double) buf.getSample(0, i) * buf.getSample(0, i);
+            rms.push_back((float) std::sqrt(e / hop));
+        }
+        float floor_ = 1e9f;
+        for (const float v : rms)
+            floor_ = juce::jmin(floor_, v);
+        int onsets = 0;
+        bool inOnset = false;
+        for (const float v : rms)
+        {
+            const bool hot = v > juce::jmax(0.004f, floor_ * 4.f);
+            if (hot && ! inOnset)
+                ++onsets;
+            inOnset = hot;
+        }
+        return onsets;
+    };
+
+    const int plain = countOnsets("/tmp/ezarp_plain.wav");
+
+    if (engine.setTrackMidiFx(track, arp).failed())
+    {
+        std::printf("ezarptest: FAIL — setTrackMidiFx\n");
+        return 1;
+    }
+    const int arpOnsets = countOnsets("/tmp/ezarp_on.wav");
+
+    // THE REAL PROOF OF ARPEGGIATION: score each chord tone by its FULL
+    // harmonic family (f, 2f, 3f) in consecutive 1/16-aligned windows —
+    // the dominant note must CYCLE (C-E-G-C-E-G...) with the arp; a plain
+    // sustained chord keeps one dominant.
+    auto pitchTransitions = [&](const char* path) {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        juce::AudioFormatReader* r = formats.createReaderFor(juce::File(path));
+        if (r == nullptr)
+            return -1;
+        const int n = (int) r->lengthInSamples;
+        juce::AudioBuffer<float> buf(1, n);
+        r->read(&buf, 0, n, 0, true, false);
+        delete r;
+        constexpr double base[3] = { 261.63, 329.63, 392.0 }; // C4 E4 G4
+        const int win = (int) (0.125 * 44100);
+        int last = -1, transitions = 0;
+        for (int s = (int) (0.125 * 44100); s + win < n; s += win)
+        {
+            int best = 0;
+            double bestP = -1.0, total = 0.0;
+            double scores[3] = { 0, 0, 0 };
+            for (int k = 0; k < 3; ++k)
+            {
+                double fam = 0.0;
+                for (int h = 1; h <= 3; ++h)
+                {
+                    const double f = base[k] * h;
+                    const double coeff = 2.0 * std::cos(
+                        2.0 * 3.14159265358979 * f / 44100.0);
+                    double s1 = 0.0, s2 = 0.0;
+                    for (int i = s; i < s + win; ++i)
+                    {
+                        const double x = (double) buf.getSample(0, i);
+                        const double s0 = x + coeff * s1 - s2;
+                        s2 = s1;
+                        s1 = s0;
+                    }
+                    fam += s1 * s1 + s2 * s2 - coeff * s1 * s2;
+                }
+                scores[k] = fam;
+                total += fam;
+                if (fam > bestP)
+                {
+                    bestP = fam;
+                    best = k;
+                }
+            }
+            (void) total;
+            // Confidence: the winner must own most of the family energy.
+            if (bestP < total * 0.5)
+                continue;
+            if (last >= 0 && best != last)
+                ++transitions;
+            last = best;
+        }
+        return transitions;
+    };
+    const int transitions = pitchTransitions("/tmp/ezarp_on.wav");
+    const int transitionsPlain = pitchTransitions("/tmp/ezarp_plain.wav");
+
+    std::printf("ezarptest: onsets sin arp=%d con arp=%d · transiciones de "
+                "pitch: sin arp=%d con arp=%d (se esperan muchas)\n",
+                plain, arpOnsets, transitionsPlain, transitions);
+    {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        for (const char* path : { "/tmp/ezarp_plain.wav", "/tmp/ezarp_on.wav" })
+            if (auto* r = formats.createReaderFor(juce::File(path)))
+            {
+                const int n = (int) r->lengthInSamples;
+                juce::AudioBuffer<float> b(1, n);
+                r->read(&b, 0, n, 0, true, false);
+                delete r;
+                float peak = 0.f;
+                for (int i = 0; i < n; ++i)
+                    peak = juce::jmax(peak, std::abs(b.getSample(0, i)));
+                std::printf("  %s pico=%.4f\n", path, peak);
+            }
+    }
+    const bool ok = transitions >= 20 && transitions > transitionsPlain * 2;
+    std::printf("%s\n", ok ? "EZARP OK" : "EZARP FAIL");
+    return ok ? 0 : 1;
+}
+
+
+// MIDI project import end-to-end: build a Type-1 SMF (tempo 90, 3/4, two
+// note tracks, one on channel 10), import it, verify tracks/tempo/notes;
+// then import a stems folder and verify the audio tracks appear.
+int cmdMidImportTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+
+    // 1) Write a test SMF.
+    {
+        juce::MidiFile mf;
+        mf.setTicksPerQuarterNote(480);
+
+        juce::MidiMessageSequence meta;
+        meta.addEvent(juce::MidiMessage::tempoMetaEvent(60.0 / 90.0 * 1e6)); // 90 bpm
+        meta.addEvent(juce::MidiMessage::timeSignatureMetaEvent(3, 4));
+        meta.addEvent(juce::MidiMessage::textMetaEvent(3, "Conductor"));
+        meta.updateMatchedPairs();
+        mf.addTrack(meta);
+
+        juce::MidiMessageSequence melody; // "Melodia": C-D-E, one per bar
+        const int ppq = 480;
+        for (int bar = 0; bar < 3; ++bar)
+        {
+            const int pitch = 60 + bar * 2;
+            melody.addEvent(juce::MidiMessage::noteOn(1, pitch, 0.9f),
+                            bar * 3 * ppq);
+            melody.addEvent(juce::MidiMessage::noteOff(1, pitch),
+                            bar * 3 * ppq + (int) (2.5 * ppq));
+        }
+        melody.addEvent(juce::MidiMessage::textMetaEvent(3, "Melodia"));
+        melody.updateMatchedPairs();
+        mf.addTrack(melody);
+
+        juce::MidiMessageSequence drums; // ch 10: kick per bar
+        for (int bar = 0; bar < 3; ++bar)
+        {
+            drums.addEvent(juce::MidiMessage::noteOn(10, 36, 1.0f),
+                           bar * 3 * ppq);
+            drums.addEvent(juce::MidiMessage::noteOff(10, 36),
+                           bar * 3 * ppq + ppq / 2);
+        }
+        drums.updateMatchedPairs();
+        mf.addTrack(drums);
+
+        juce::File out("/tmp/midimport_test.mid");
+        out.deleteFile();
+        juce::FileOutputStream os(out);
+        mf.writeTo(os, 1);
+        os.flush();
+    }
+
+    if (engine.importMidiProject(juce::File("/tmp/midimport_test.mid")).failed())
+    {
+        std::printf("midimporttest: FAIL — importMidiProject: %s\n",
+                    engine.lastErrorUtf8());
+        return 1;
+    }
+    const int tracks = engine.trackCount();
+    double bpm = engine.tempoBpm();
+    const int num = engine.timeSigNumerator(), den = engine.timeSigDenominator();
+    std::printf("midimporttest: %d pistas, %.0f bpm, %d/%d\n", tracks, bpm,
+                num, den);
+    if (tracks != 2 || std::abs(bpm - 90.0) > 1.0 || num != 3 || den != 4)
+    {
+        std::printf("midimporttest: FAIL — proyecto mal importado\n");
+        return 1;
+    }
+    int totalNotes = 0, drumTracks = 0;
+    for (int t = 0; t < tracks; ++t)
+    {
+        const auto id = engine.trackIdAt(t);
+        const int clips = engine.trackClipCount(id);
+        if (clips < 1)
+        {
+            std::printf("midimporttest: FAIL — pista sin clip\n");
+            return 1;
+        }
+        totalNotes += engine.clipNoteCount(engine.clipIdAt(id, 0));
+        if (juce::String(engine.trackName(id))
+                .containsIgnoreCase("bater"))
+            ++drumTracks;
+    }
+    std::printf("midimporttest: %d notas, %d pista(s) de batería\n",
+                totalNotes, drumTracks);
+    if (totalNotes != 6 || drumTracks != 1)
+    {
+        std::printf("midimporttest: FAIL — notas/batería\n");
+        return 1;
+    }
+
+    // 2) Stems folder.
+    {
+        juce::File dir("/tmp/midimport_stems");
+        dir.deleteRecursively();
+        dir.createDirectory();
+        juce::WavAudioFormat wav;
+        for (const char* name : { "Bajo", "Pad" })
+        {
+            juce::File f(dir.getChildFile(juce::String(name) + ".wav"));
+            f.deleteFile();
+            // createWriterFor TAKES OWNERSHIP of the stream (deletes it
+            // with the writer) — the stream must be heap-allocated.
+            std::unique_ptr<juce::AudioFormatWriter> w(
+                wav.createWriterFor(new juce::FileOutputStream(f), 44100.0,
+                                    1, 16, {}, 0));
+            juce::AudioBuffer<float> b(1, 44100);
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                b.setSample(0, i, 0.2f * std::sin(2.0 * 3.14159265358979
+                                                  * 220.0 * i / 44100.0));
+            w->writeFromAudioSampleBuffer(b, 0, b.getNumSamples());
+            w.reset();
+        }
+        if (engine.importStemsFolder(dir).failed())
+        {
+            std::printf("midimporttest: FAIL — importStemsFolder\n");
+            return 1;
+        }
+        const int after = engine.trackCount();
+        std::printf("midimporttest: %d pistas tras los stems\n", after);
+        if (after != tracks + 2)
+        {
+            std::printf("midimporttest: FAIL — stems\n");
+            return 1;
+        }
+    }
+    std::printf("MIDIMPORT OK\n");
+    return 0;
 }
 
 int cmdRecTest()
@@ -594,6 +2792,105 @@ int main(int argc, char** argv)
     if (cmd == "devices")
         return cmdDevices();
 
+    if (cmd == "plugins")
+        return cmdPlugins();
+
+    if (cmd == "devplay")
+    {
+        // Switch to UR22 + play a tone in the SAME process to verify
+        // the audio actually routes through the UR22.
+        cadence::Engine engine;
+        engine.initialise();
+        engine.newProject(48000);
+        const auto track = engine.addTrack("Tone", 0);
+        writeToneWav(juce::File("/tmp/cadence_devplay.wav"), 3.0, 440.0);
+        engine.addClip(track, juce::File("/tmp/cadence_devplay.wav"), 0.0, 1.0);
+
+        engine.setDeviceConfig("Steinberg UR22", "", 48000, 256);
+        std::printf("output: %s buffer: %d\n",
+                    engine.currentOutputDeviceName().toRawUTF8(),
+                    engine.currentBufferSizeSamples());
+
+        engine.play();
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        engine.stop();
+        std::printf("devplay: done — did you hear the tone through the UR22?\n");
+        return 0;
+    }
+
+    if (cmd == "devswitch")
+        return cmdTestDeviceSwitch();
+
+    if (cmd == "chordtest")
+        return cmdChordTest();
+
+    if (cmd == "notetest")
+        return cmdNoteTest();
+
+    if (cmd == "polytest")
+        return cmdPolyTest();
+
+    if (cmd == "chordrectest")
+        return cmdChordRecTest();
+
+    if (cmd == "ezqtest")
+        return cmdEzQTest();
+
+    if (cmd == "ezinsttest")
+        return cmdEzInstTest();
+
+    if (cmd == "ezsynthtest")
+        return cmdEzSynthTest();
+    if (cmd == "ezsynthuitest")
+        return cmdEzSynthUiTest();
+
+    if (cmd == "ezorqtest")
+        return cmdEzorqTest();
+
+    if (cmd == "ezorqtest")
+        return cmdEzorqTest();
+
+    if (cmd == "orqlive" && argc >= 3)
+        return cmdOrqLive(argv[2]);
+
+    if (cmd == "chromatic" && argc >= 2)
+        return cmdChromaticAudit(argc, argv);
+
+    if (cmd == "chromaticall")
+        return cmdChromaticAll(argc > 2 ? std::atoi(argv[2]) : 0,
+                               argc > 3 ? std::atoi(argv[3]) : -1);
+
+    if (cmd == "ezorqscan" && argc >= 3)
+    {
+        const auto out = juce::File::getSpecialLocation(
+                             juce::File::userApplicationDataDirectory)
+                             .getChildFile("EZMusicProduction/Orchestra");
+        const int n = ezorq::scanLibrary(
+            juce::File(juce::String::fromUTF8(argv[2])), out);
+        std::printf("ezorqscan: %d programas en %s\n", n,
+                    out.getFullPathName().toRawUTF8());
+        return n > 0 ? 0 : 1;
+    }
+
+    if (cmd == "qcapture" && argc >= 4)
+        return cmdQCapture(argv[2], argv[3]);
+
+    if (cmd == "midifixtest")
+        return cmdMidiFixTest();
+
+    if (cmd == "loaddiag" && argc >= 3)
+        return cmdLoadDiag(argv[2]);
+
+    if (cmd == "plugtest")
+    {
+        const bool asInstrument = argc > 3 && std::strcmp(argv[3], "inst") == 0;
+        const bool demo = argc > 4 && std::strcmp(argv[4], "demo") == 0;
+        const bool rec = argc > 4 && std::strcmp(argv[4], "rec") == 0;
+        const bool mon = argc > 5 && std::strcmp(argv[5], "mon") == 0;
+        return cmdPlugTest(argc > 2 ? argv[2] : const_cast<char*>("0"),
+                           asInstrument, demo, rec, mon);
+    }
+
     if (cmd == "tone")
     {
         if (argc < 3)
@@ -653,6 +2950,84 @@ int main(int argc, char** argv)
 
     if (cmd == "rectest")
         return cmdRecTest();
+
+    if (cmd == "ezdrmtest")
+        return cmdEzDrumsTest();
+
+    if (cmd == "midimporttest")
+        return cmdMidImportTest();
+
+    if (cmd == "ezarptest")
+        return cmdEzArpTest();
+
+    if (cmd == "ezdrmkit")
+    {
+        // Sample-kit probe: instantiate EZDrums, pick the first sample kit
+        // (index = synth kits + 0), prepare, hit the kick manually, render.
+        auto* proc = ezdrums::create();
+        juce::AudioParameterChoice* kit =
+            dynamic_cast<juce::AudioParameterChoice*>(proc->getParameters()[0]);
+        std::printf("kits: %d\n", kit->choices.size());
+        const int sampleFirst = 8; // 8 synth kits precede the sample kits
+        kit->setValueNotifyingHost(kit->convertTo0to1((float) sampleFirst));
+        proc->prepareToPlay(44100.0, 512);
+        juce::AudioBuffer<float> buf(2, 44100);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, 36, 1.0f), 0);
+        midi.addEvent(juce::MidiMessage::noteOn(1, 38, 0.9f), 2205);
+        proc->processBlock(buf, midi);
+        float peak = 0.f;
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+                peak = juce::jmax(peak, std::abs(buf.getSample(c, i)));
+        std::printf("ezdrmkit: pico con kit de samples = %.4f %s\n", peak,
+                    peak > 0.05f ? "OK" : "FAIL (mudo)");
+
+        // Kit character check: kick decay time to -24 dB across synth kits.
+        auto kickDecayMs = [&](int kitIdx) {
+            kit->setValueNotifyingHost(kit->convertTo0to1((float) kitIdx));
+            proc->prepareToPlay(44100.0, 512);
+            juce::AudioBuffer<float> b(2, 88200);
+            juce::MidiBuffer m;
+            m.addEvent(juce::MidiMessage::noteOn(1, 36, 1.0f), 0);
+            proc->processBlock(b, m);
+            // RMS over 10 ms hops; find where the envelope falls under
+            // -24 dB of the loudest hop (raw-sample thresholds cross zero
+            // every half period — useless for decay).
+            float loudest = 0.f;
+            int loudHop = 0;
+            for (int h = 0; h < 88; ++h)
+            {
+                double r = 0.0;
+                for (int i = h * 441; i < (h + 1) * 441; ++i)
+                    r += (double) b.getSample(0, i) * b.getSample(0, i);
+                r /= 441.0;
+                if (r > loudest)
+                {
+                    loudest = r;
+                    loudHop = h;
+                }
+            }
+            const double thr = loudest * 0.063 * 0.063;
+            for (int h = loudHop; h < 88; ++h)
+            {
+                double r = 0.0;
+                for (int i = h * 441; i < (h + 1) * 441; ++i)
+                    r += (double) b.getSample(0, i) * b.getSample(0, i);
+                if (r / 441.0 < thr)
+                    return (double) (h * 441) / 44100.0 * 1000.0;
+            }
+            return 2000.0;
+        };
+        const double d909 = kickDecayMs(1), dTrap = kickDecayMs(4);
+        std::printf("ezdrmkit: kick -24dB 909=%.0f ms vs trap=%.0f ms "
+                    "(%s)\n",
+                    d909, dTrap,
+                    dTrap > d909 * 1.4 ? "kits diferenciados OK"
+                                       : "FAIL: suenan igual");
+        delete proc;
+        return (peak > 0.05f && dTrap > d909 * 1.4) ? 0 : 1;
+    }
 
     if (cmd == "rectest2")
     {

@@ -554,7 +554,13 @@ Render en background con barra de progreso y tiempo estimado; se puede seguir tr
 
 ### 7.14 Preferencias y audio setup
 
-Pestañas: **Audio** (device CoreAudio, sample rate, buffer 32–2048 con indicador de latencia redondeo→ms, test de configuración con tono, medidor de xruns) · **MIDI** (inputs on/off, thru,MMC... v1: inputs + thru) · **UI** (idioma v1.5, tema v1.5, densidad compacta v1.5) · **Plugins** (carpetas de scan AU/VST3, rescan, lista con estado y blacklist, abrir carpeta de VST3) · **Key Commands** (editor v1.5, hoy: tabla fija §8.5).
+Pestañas: **Audio** (device CoreAudio, sample rate, buffer 32–2048 con indicador de latencia redondeo→ms, test de configuración con tono, medidor de xruns) · **MIDI** (inputs on/off, thru,MMC... v1: inputs + thru) · **UI** (idioma **v1: hecho** — ver `docs/design/i18n.md`; tema v1.5, densidad compacta v1.5) · **Plugins** (carpetas de scan AU/VST3, rescan, lista con estado y blacklist, abrir carpeta de VST3) · **Key Commands** (editor v1.5, hoy: tabla fija §8.5).
+
+Idioma: el selector vive **dentro** del diálogo de Preferencias (sección "Idioma"), con
+"Seguir al sistema" por defecto y Español/English/日本語. El nombre de cada idioma se
+muestra siempre en su propio idioma. La elección se guarda en
+`~/Music/Cadence/ui_settings.json` (fichero solo de interfaz: no toca el `settings.json`
+de audio/MIDI).
 
 Cambiar buffer/sample rate en caliente: reapertura del device con fade-out de 50 ms; si el device falla, banner persistente con botón "Open Audio Preferences" (nunca modal bloqueante).
 
@@ -627,6 +633,7 @@ Propuesta — pendiente de validación de conflicto con convenciones macOS (`⌘
 
 ### 8.6 Estados de error y límites
 
+- **Errores y avisos:** los fallos de una acción del usuario (abrir/guardar/exportar, grabar, añadir sonido, plugin, dispositivo de audio…) salen en un **cuadro de alerta modal** (icono + título traducido + mensaje), nunca como texto suelto en la barra ni como SnackBar. Los SnackBar quedan solo para confirmaciones breves ("Clip copiado"). Un error técnico del engine se muestra como "Detalles técnicos" plegables dentro del propio cuadro (v1: texto del engine sin traducir; el título y el envoltorio sí van traducidos). Implementación: `ui/lib/ui/app_alert.dart` (`showAppError` / `showAppAlert`).
 - **Device de audio perdido:** banner superior persistente + reproducción se detiene con fade 20 ms.
 - **Disco lleno durante grabación:** stop de grabación, el clip se conserva hasta el último bloque escrito, banner con explicación.
 - **Plugin crashea:** el aislamiento de proceso de plugin es v2 (en v1, crash del plugin = crash del proceso: documentado como riesgo conocido; mitigación: blacklist al reiniciar).

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../engine/project_snapshot.dart';
+import '../l10n/l10n.dart';
 
 class AddTrackResult {
   const AddTrackResult(this.name, this.colorIndex, this.type);
@@ -40,7 +41,8 @@ class _AddTrackBodyState extends State<_AddTrackBody> {
   void initState() {
     super.initState();
     _colorIndex = widget.nextColorIndex % kTrackPalette.length;
-    _name = TextEditingController(text: 'Pista ${widget.nextColorIndex + 1}');
+    _name = TextEditingController(
+        text: L10n.current.addTrackDefaultName('${widget.nextColorIndex + 1}'));
   }
 
   @override
@@ -57,19 +59,19 @@ class _AddTrackBodyState extends State<_AddTrackBody> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Añadir pista',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+          Text(context.l10n.addTrackTitle,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
           const SizedBox(height: 16),
-          const Text('Nombre',
-              style: TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
+          Text(context.l10n.addTrackName,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
           TextField(
             controller: _name,
             autofocus: true,
             style: const TextStyle(fontSize: 13),
           ),
           const SizedBox(height: 16),
-          const Text('Color',
-              style: TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
+          Text(context.l10n.addTrackColor,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
@@ -95,15 +97,15 @@ class _AddTrackBodyState extends State<_AddTrackBody> {
             ],
           ),
           const SizedBox(height: 16),
-          const Text('Tipo',
-              style: TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
+          Text(context.l10n.addTrackType,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
           const SizedBox(height: 6),
           Row(
             children: [
               Expanded(
                 child: _TypeButton(
                   icon: Icons.mic,
-                  label: 'Audio',
+                  label: context.l10n.addTrackAudio,
                   selected: _type == 0,
                   onTap: () => setState(() => _type = 0),
                 ),
@@ -112,7 +114,7 @@ class _AddTrackBodyState extends State<_AddTrackBody> {
               Expanded(
                 child: _TypeButton(
                   icon: Icons.piano,
-                  label: 'MIDI',
+                  label: context.l10n.addTrackMidi,
                   selected: _type == 1,
                   onTap: () => setState(() => _type = 1),
                 ),
@@ -125,7 +127,7 @@ class _AddTrackBodyState extends State<_AddTrackBody> {
             children: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Cancelar'),
+                child: Text(context.l10n.addTrackCancel),
               ),
               const SizedBox(width: 8),
               FilledButton(
@@ -133,11 +135,11 @@ class _AddTrackBodyState extends State<_AddTrackBody> {
                     context,
                     AddTrackResult(
                         _name.text.trim().isEmpty
-                            ? 'Pista'
+                            ? context.l10n.addTrackTrack
                             : _name.text.trim(),
                         _colorIndex,
                         _type)),
-                child: const Text('Crear pista'),
+                child: Text(context.l10n.addTrackCreate),
               ),
             ],
           ),

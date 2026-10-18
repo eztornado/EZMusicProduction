@@ -30,15 +30,10 @@ if(error_code)
   message(FATAL_ERROR "Failed to remove directory: '/Users/ivan/daw/build/_deps/juce-src'")
 endif()
 
-# try the clone 1 + N times in case there is an odd git clone issue
+# try the clone 3 times in case there is an odd git clone issue
 set(error_code 1)
 set(number_of_tries 0)
-math(EXPR max_tries "1 + 2")
-while(error_code AND number_of_tries LESS ${max_tries})
-  if(number_of_tries GREATER 0 AND 0 GREATER 0)
-    message(STATUS "Retry #${number_of_tries}, waiting 0 seconds before next attempt...")
-    execute_process(COMMAND ${CMAKE_COMMAND} -E sleep 0)
-  endif()
+while(error_code AND number_of_tries LESS 3)
   execute_process(
     COMMAND "/usr/bin/git"
             clone --no-checkout --depth 1 --no-single-branch --config "advice.detachedHead=false" "https://github.com/juce-framework/JUCE.git" "juce-src"
@@ -52,7 +47,7 @@ if(number_of_tries GREATER 1)
   message(NOTICE "Had to git clone more than once: ${number_of_tries} times.")
 endif()
 if(error_code)
-  message(FATAL_ERROR "Failed to clone repository:\n  'https://github.com/juce-framework/JUCE.git'")
+  message(FATAL_ERROR "Failed to clone repository: 'https://github.com/juce-framework/JUCE.git'")
 endif()
 
 execute_process(

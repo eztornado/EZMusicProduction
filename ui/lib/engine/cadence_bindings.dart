@@ -49,14 +49,24 @@ abstract final class CadenceResult {
 
 /// High-level handle around one CadenceEngine instance.
 final class CadenceEngine {
-  CadenceEngine({String? dylibPath})
+  /// [attachHandleAddress]: wraps an engine created in ANOTHER isolate of
+  /// this process (sub-windows attach to the main window's engine — the
+  /// dylib and its globals are process-wide).
+  CadenceEngine({String? dylibPath, int? attachHandleAddress})
       : _lib = DynamicLibrary.open(resolveEngineDylib(dylibPath)) {
+
     _create = _lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>(
         'cadence_engine_create');
     _destroy = _lib.lookupFunction<Void Function(Pointer<Void>),
         void Function(Pointer<Void>)>('cadence_engine_destroy');
     _initialise = _lib.lookupFunction<Int32 Function(Pointer<Void>),
         int Function(Pointer<Void>)>('cadence_engine_initialise');
+    _restartAudio = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_restart_audio');
+    _initialiseAudioBg = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_initialise_audio_background');
+    _audioInitialised = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_audio_initialised');
     _newProject = _lib.lookupFunction<Int32 Function(Pointer<Void>, Double),
         int Function(Pointer<Void>, double)>('cadence_engine_new_project');
     _addTrack = _lib.lookupFunction<
@@ -125,6 +135,81 @@ final class CadenceEngine {
         double Function(Pointer<Void>)>('cadence_engine_record_start_seconds');
     _setDebugLoopback = _lib.lookupFunction<Void Function(Int32),
         void Function(int)>('cadence_engine_set_debug_loopback');
+    _rescanPlugins = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_rescan_plugins');
+    _scanPluginsNow = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_scan_plugins_now');
+    _pluginScanActive = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_plugin_scan_active');
+    _pluginCount = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_plugin_count');
+    _pluginNameAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_plugin_name_at');
+    _pluginUidAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_plugin_uid_at');
+    _pluginIsInstrumentAt = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)>('cadence_engine_plugin_is_instrument_at');
+    _pluginFormatAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_plugin_format_at');
+    _trackAddFx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_track_add_fx');
+    _trackRemoveFx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_track_remove_fx');
+    _trackSetFxBypass = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32, Int32),
+        int Function(Pointer<Void>, int, int, int)>('cadence_engine_track_set_fx_bypass');
+    _trackFxCount = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_track_fx_count');
+    _trackFxNameAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int64, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int)>('cadence_engine_track_fx_name_at');
+    _trackFxBypassAt = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_track_fx_bypass_at');
+    _trackSetInstrumentPlugin = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_track_set_instrument_plugin');
+    _trackClearInstrument = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_track_clear_instrument');
+    _trackSetFxState = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Pointer<Uint8>, Int32,
+            Pointer<Uint8>, Int32),
+        int Function(Pointer<Void>, int, int, Pointer<Uint8>, int,
+            Pointer<Uint8>, int)>('cadence_engine_track_set_fx_state');
+    _trackSetInstrumentState = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Pointer<Uint8>, Int32,
+            Pointer<Uint8>, Int32),
+        int Function(Pointer<Void>, int, Pointer<Uint8>, int,
+            Pointer<Uint8>, int)>('cadence_engine_track_set_instrument_state');
+    _pluginStateBase64 = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int, int)>(
+        'cadence_engine_plugin_state_base64');
+    _openPluginEditor = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_open_plugin_editor');
+    _openInstrumentEditor = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_open_instrument_editor');
+    _openInstrumentEditorWithClip = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int64),
+        int Function(Pointer<Void>, int, int)>(
+        'cadence_engine_open_instrument_editor_with_clip');
+    _trackInstrumentName = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int64),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_track_instrument_name');
+    _trackSetMidifx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_track_set_midifx');
+    _trackClearMidifx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_track_clear_midifx');
+    _trackMidifxName = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int64),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_track_midifx_name');
+    _masterAddFx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)>('cadence_engine_master_add_fx');
+    _masterRemoveFx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)>('cadence_engine_master_remove_fx');
+    _masterSetFxBypass = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_master_set_fx_bypass');
+    _masterFxCount = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_master_fx_count');
+    _masterFxNameAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_master_fx_name_at');
+    _masterFxBypassAt = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)>('cadence_engine_master_fx_bypass_at');
     _currentOutputDeviceName = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
         Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_current_output_device_name');
     _currentInputDeviceName = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
@@ -201,6 +286,127 @@ final class CadenceEngine {
             Pointer<Double>, Pointer<Double>),
         void Function(Pointer<Void>, int, int, Pointer<Int32>, Pointer<Float>,
             Pointer<Double>, Pointer<Double>)>('cadence_engine_clip_note_at');
+    _clipNoteOrigStartAt = _lib.lookupFunction<Double Function(Pointer<Void>, Int64, Int32),
+        double Function(Pointer<Void>, int, int)>('cadence_engine_clip_note_orig_start_at');
+    _recordingNoteCount = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_recording_note_count');
+    _recordingNoteAt = _lib.lookupFunction<
+        Void Function(Pointer<Void>, Int64, Int32, Pointer<Int32>, Pointer<Float>,
+            Pointer<Double>, Pointer<Double>),
+        void Function(Pointer<Void>, int, int, Pointer<Int32>, Pointer<Float>,
+            Pointer<Double>, Pointer<Double>)>('cadence_engine_recording_note_at');
+    _tempoBpm = _lib.lookupFunction<Double Function(Pointer<Void>),
+        double Function(Pointer<Void>)>('cadence_engine_tempo_bpm');
+    _setTempoBpm = _lib.lookupFunction<Int32 Function(Pointer<Void>, Double),
+        int Function(Pointer<Void>, double)>('cadence_engine_set_tempo_bpm');
+    _timeSigNum = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_time_sig_numerator');
+    _timeSigDen = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_time_sig_denominator');
+    _setTimeSig = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Int32),
+        int Function(Pointer<Void>, int, int)>('cadence_engine_set_time_sig');
+    _setTrackVolumeAutomation = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Pointer<Double>, Pointer<Double>, Int32),
+        int Function(Pointer<Void>, int, Pointer<Double>, Pointer<Double>,
+            int)>('cadence_engine_set_track_volume_automation');
+    _trackVolumeAutoCount = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_track_volume_auto_count');
+    _setTrackLaneAutomation = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Pointer<Double>,
+            Pointer<Double>, Int32),
+        int Function(Pointer<Void>, int, int, Pointer<Double>, Pointer<Double>,
+            int)>('cadence_engine_set_track_lane_automation');
+    _trackLaneAutoCount = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int,
+            int)>('cadence_engine_track_lane_auto_count');
+    _setTrackParamAutomation = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32, Int32, Pointer<Utf8>,
+            Pointer<Double>, Pointer<Double>, Int32),
+        int Function(Pointer<Void>, int, int, int, int, Pointer<Utf8>,
+            Pointer<Double>, Pointer<Double>,
+            int)>('cadence_engine_set_track_param_automation');
+    _trackParamLaneCount = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_track_param_lane_count');
+    _trackParamLaneInfo = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Pointer<Int32>, Pointer<Int32>,
+            Pointer<Int32>),
+        int Function(Pointer<Void>, int, int, Pointer<Int32>, Pointer<Int32>,
+            Pointer<Int32>)>('cadence_engine_track_param_lane_info');
+    _trackParamLaneName = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int,
+            int)>('cadence_engine_track_param_lane_name');
+    _trackParamLanePointCount = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int,
+            int)>('cadence_engine_track_param_lane_point_count');
+    _trackParamLanePointAt = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32, Pointer<Double>,
+            Pointer<Double>),
+        int Function(Pointer<Void>, int, int, int, Pointer<Double>,
+            Pointer<Double>)>('cadence_engine_track_param_lane_point_at');
+    _removeTrackParamLane = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32),
+        int Function(Pointer<Void>, int,
+            int)>('cadence_engine_remove_track_param_lane');
+    _pluginParamCount = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32),
+        int Function(Pointer<Void>, int, int,
+            int)>('cadence_engine_plugin_param_count');
+    _pluginParamName = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_name');
+    _trackLaneAutoAt = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32, Pointer<Double>,
+            Pointer<Double>),
+        int Function(Pointer<Void>, int, int, int, Pointer<Double>,
+            Pointer<Double>)>('cadence_engine_track_lane_auto_at');
+    _setTrackVolumeAutoPointAt = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Double, Double),
+        int Function(Pointer<Void>, int, double,
+            double)>('cadence_engine_set_track_volume_auto_point_at');
+    _inputQuantize = _lib.lookupFunction<Double Function(Pointer<Void>),
+        double Function(Pointer<Void>)>('cadence_engine_input_quantize');
+    _setInputQuantize = _lib.lookupFunction<Int32 Function(Pointer<Void>, Double),
+        int Function(Pointer<Void>, double)>('cadence_engine_set_input_quantize');
+    _midiInputLatency = _lib.lookupFunction<Double Function(Pointer<Void>),
+        double Function(Pointer<Void>)>('cadence_engine_midi_input_latency');
+    _setMidiInputLatency = _lib.lookupFunction<Int32 Function(Pointer<Void>, Double),
+        int Function(Pointer<Void>, double)>('cadence_engine_set_midi_input_latency');
+    _copyClip = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_copy_clip');
+    _hasPendingPluginJobs = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_has_pending_plugin_jobs');
+    _pumpOnePluginJob = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_pump_one_plugin_job');
+    _pasteClip = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Double),
+        int Function(Pointer<Void>, int, double)>('cadence_engine_paste_clip');
+    _moveClipToTrack = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int64, Double),
+        int Function(Pointer<Void>, int, int,
+            double)>('cadence_engine_move_clip_to_track');
+    _splitClip = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Double),
+        int Function(Pointer<Void>, int,
+            double)>('cadence_engine_split_clip');
+    _trackVolumeEffectiveAt = _lib.lookupFunction<
+        Float Function(Pointer<Void>, Int64, Double),
+        double Function(Pointer<Void>, int,
+            double)>('cadence_engine_track_volume_effective_at');
+    _trackVolumeAutoAt = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Pointer<Double>, Pointer<Double>),
+        int Function(Pointer<Void>, int, int, Pointer<Double>,
+            Pointer<Double>)>('cadence_engine_track_volume_auto_at');
+    _quantizeClipNotes = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Double, Double, Double, Double, Int32,
+            Int32, Double),
+        int Function(Pointer<Void>, int, double, double, double, double, int, int,
+            double)>('cadence_engine_quantize_clip_notes');
+    _resetClipQuantize = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_reset_clip_quantize');
+    _freezeClipQuantize = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
+        int Function(Pointer<Void>, int)>('cadence_engine_freeze_clip_quantize');
     _meterTrackPeak = _lib.lookupFunction<Float Function(Pointer<Void>, Int32),
         double Function(Pointer<Void>, int)>('cadence_engine_meter_track_peak');
     _meterMasterPeak = _lib.lookupFunction<Float Function(Pointer<Void>, Int32),
@@ -236,6 +442,20 @@ final class CadenceEngine {
         int Function(Pointer<Void>, Pointer<Utf8>)>('cadence_engine_save_project');
     _loadProject = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>),
         int Function(Pointer<Void>, Pointer<Utf8>)>('cadence_engine_load_project');
+    _importMidiProject = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>),
+        int Function(Pointer<Void>, Pointer<Utf8>)>('cadence_engine_import_midi_project');
+    _importStemsFolder = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>),
+        int Function(Pointer<Void>, Pointer<Utf8>)>('cadence_engine_import_stems_folder');
+    _importAudioFile = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>),
+        int Function(Pointer<Void>, Pointer<Utf8>)>('cadence_engine_import_audio_file');
+    _previewSound = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>),
+        int Function(Pointer<Void>, Pointer<Utf8>)>('cadence_engine_preview_sound');
+    _stopPreview = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_stop_preview');
+    _isPreviewing = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_is_previewing');
+    _pickOpenFile = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>),
+        Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>)>('cadence_engine_pick_open_file');
     _loadFile = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>),
         int Function(Pointer<Void>, Pointer<Utf8>)>('cadence_engine_load_file');
     _play = _lib
@@ -261,23 +481,70 @@ final class CadenceEngine {
         double Function(Pointer<Void>)>('cadence_engine_sample_rate');
     _render = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>, Double),
         int Function(Pointer<Void>, Pointer<Utf8>, double)>('cadence_engine_render');
+    _renderEx = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Utf8>, Double, Int32),
+        int Function(Pointer<Void>, Pointer<Utf8>, double,
+            int)>('cadence_engine_render_ex');
     _lastError = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
         Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_last_error');
 
-    _handle = _create();
+    _handle = attachHandleAddress != null
+        ? Pointer<Void>.fromAddress(attachHandleAddress)
+        : _create();
   }
 
   final DynamicLibrary _lib;
   late final Pointer<Void> _handle;
 
+  /// Address of the wrapped engine (sub-windows attach to it).
+  int get handleAddress => _handle.address;
+
   late final Pointer<Void> Function() _create;
   late final void Function(Pointer<Void>) _destroy;
   late final int Function(Pointer<Void>) _initialise;
+  late final int Function(Pointer<Void>) _restartAudio;
+  late final void Function(Pointer<Void>) _initialiseAudioBg;
+  late final int Function(Pointer<Void>) _audioInitialised;
   late final int Function(Pointer<Void>, double) _newProject;
   late final int Function(Pointer<Void>, Pointer<Utf8>, int, int) _addTrack;
   late final int Function(Pointer<Void>, int) _trackType;
   late final void Function(Pointer<Void>, int) _selectMidiInput;
   late final void Function(Pointer<Void>, int) _setMetronome;
+  late final void Function(Pointer<Void>) _rescanPlugins;
+  late final void Function(Pointer<Void>) _scanPluginsNow;
+  late final int Function(Pointer<Void>) _pluginScanActive;
+  late final int Function(Pointer<Void>) _pluginCount;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _pluginNameAt;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _pluginUidAt;
+  late final int Function(Pointer<Void>, int) _pluginIsInstrumentAt;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _pluginFormatAt;
+  late final int Function(Pointer<Void>, int, int) _trackAddFx;
+  late final int Function(Pointer<Void>, int, int) _trackRemoveFx;
+  late final int Function(Pointer<Void>, int, int, int) _trackSetFxBypass;
+  late final int Function(Pointer<Void>, int) _trackFxCount;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int) _trackFxNameAt;
+  late final int Function(Pointer<Void>, int, int) _trackFxBypassAt;
+  late final int Function(Pointer<Void>, int, int) _trackSetInstrumentPlugin;
+  late final int Function(Pointer<Void>, int) _trackClearInstrument;
+  late final int Function(Pointer<Void>, int, int, Pointer<Uint8>, int,
+      Pointer<Uint8>, int) _trackSetFxState;
+  late final int Function(Pointer<Void>, int, Pointer<Uint8>, int,
+      Pointer<Uint8>, int) _trackSetInstrumentState;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int, int)
+      _pluginStateBase64;
+  late final int Function(Pointer<Void>, int, int) _openPluginEditor;
+  late final int Function(Pointer<Void>, int) _openInstrumentEditor;
+  late final int Function(Pointer<Void>, int, int) _openInstrumentEditorWithClip;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _trackInstrumentName;
+  late final int Function(Pointer<Void>, int, int) _trackSetMidifx;
+  late final int Function(Pointer<Void>, int) _trackClearMidifx;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _trackMidifxName;
+  late final int Function(Pointer<Void>, int) _masterAddFx;
+  late final int Function(Pointer<Void>, int) _masterRemoveFx;
+  late final int Function(Pointer<Void>, int, int) _masterSetFxBypass;
+  late final int Function(Pointer<Void>) _masterFxCount;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _masterFxNameAt;
+  late final int Function(Pointer<Void>, int) _masterFxBypassAt;
   late final int Function(Pointer<Void>, int, int) _midiClipRemoveNote;
   late final int Function(Pointer<Void>, int, int, int, double, double) _midiClipSetNote;
   late final int Function(Pointer<Void>) _selectedMidiInputIndex;
@@ -337,6 +604,57 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int) _clipNoteCount;
   late final void Function(Pointer<Void>, int, int, Pointer<Int32>, Pointer<Float>,
       Pointer<Double>, Pointer<Double>) _clipNoteAt;
+  late final double Function(Pointer<Void>) _tempoBpm;
+  late final int Function(Pointer<Void>, double) _setTempoBpm;
+  late final int Function(Pointer<Void>) _timeSigNum;
+  late final int Function(Pointer<Void>) _timeSigDen;
+  late final int Function(Pointer<Void>, int, int) _setTimeSig;
+  late final double Function(Pointer<Void>, int, int) _clipNoteOrigStartAt;
+  late final int Function(Pointer<Void>, int) _recordingNoteCount;
+  late final void Function(Pointer<Void>, int, int, Pointer<Int32>, Pointer<Float>,
+      Pointer<Double>, Pointer<Double>) _recordingNoteAt;
+  late final int Function(Pointer<Void>, int, Pointer<Double>, Pointer<Double>, int)
+      _setTrackVolumeAutomation;
+  late final int Function(Pointer<Void>, int) _trackVolumeAutoCount;
+  late final int Function(Pointer<Void>, int, double, double)
+      _setTrackVolumeAutoPointAt;
+  late final double Function(Pointer<Void>) _inputQuantize;
+  late final int Function(Pointer<Void>, double) _setInputQuantize;
+  late final double Function(Pointer<Void>) _midiInputLatency;
+  late final int Function(Pointer<Void>, double) _setMidiInputLatency;
+  late final int Function(Pointer<Void>, int) _copyClip;
+  late final int Function(Pointer<Void>) _hasPendingPluginJobs;
+  late final void Function(Pointer<Void>) _pumpOnePluginJob;
+  late final int Function(Pointer<Void>, int, double) _pasteClip;
+  late final int Function(Pointer<Void>, int, int, double) _moveClipToTrack;
+  late final int Function(Pointer<Void>, int, double) _splitClip;
+  late final double Function(Pointer<Void>, int, double)
+      _trackVolumeEffectiveAt;
+  late final int Function(Pointer<Void>, int, int, Pointer<Double>, Pointer<Double>, int)
+      _setTrackLaneAutomation;
+  late final int Function(Pointer<Void>, int, int) _trackLaneAutoCount;
+  late final int Function(Pointer<Void>, int, int, int, Pointer<Double>,
+      Pointer<Double>) _trackLaneAutoAt;
+  late final int Function(Pointer<Void>, int, int, int, int, Pointer<Utf8>,
+      Pointer<Double>, Pointer<Double>, int) _setTrackParamAutomation;
+  late final int Function(Pointer<Void>, int) _trackParamLaneCount;
+  late final int Function(Pointer<Void>, int, int, Pointer<Int32>, Pointer<Int32>,
+      Pointer<Int32>) _trackParamLaneInfo;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int) _trackParamLaneName;
+  late final int Function(Pointer<Void>, int, int) _trackParamLanePointCount;
+  late final int Function(Pointer<Void>, int, int, int, Pointer<Double>,
+      Pointer<Double>) _trackParamLanePointAt;
+  late final int Function(Pointer<Void>, int, int) _removeTrackParamLane;
+  late final int Function(Pointer<Void>, int, int, int) _pluginParamCount;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int)
+      _pluginParamName;
+
+  late final int Function(Pointer<Void>, int, int, Pointer<Double>, Pointer<Double>)
+      _trackVolumeAutoAt;
+  late final int Function(Pointer<Void>, int, double, double, double, double, int,
+      int, double) _quantizeClipNotes;
+  late final int Function(Pointer<Void>, int) _resetClipQuantize;
+  late final int Function(Pointer<Void>, int) _freezeClipQuantize;
   late final double Function(Pointer<Void>, int) _meterTrackPeak;
   late final double Function(Pointer<Void>, int) _meterMasterPeak;
   late final double Function(Pointer<Void>) _masterGain;
@@ -353,6 +671,13 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>) _redo;
   late final int Function(Pointer<Void>, Pointer<Utf8>) _saveProject;
   late final int Function(Pointer<Void>, Pointer<Utf8>) _loadProject;
+  late final int Function(Pointer<Void>, Pointer<Utf8>) _importMidiProject;
+  late final int Function(Pointer<Void>, Pointer<Utf8>) _importStemsFolder;
+  late final int Function(Pointer<Void>, Pointer<Utf8>) _importAudioFile;
+  late final int Function(Pointer<Void>, Pointer<Utf8>) _previewSound;
+  late final void Function(Pointer<Void>) _stopPreview;
+  late final int Function(Pointer<Void>) _isPreviewing;
+  late final Pointer<Utf8> Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>) _pickOpenFile;
   late final int Function(Pointer<Void>, Pointer<Utf8>) _loadFile;
   late final int Function(Pointer<Void>) _play;
   late final int Function(Pointer<Void>) _pause;
@@ -364,6 +689,7 @@ final class CadenceEngine {
   late final double Function(Pointer<Void>) _durationSeconds;
   late final double Function(Pointer<Void>) _sampleRate;
   late final int Function(Pointer<Void>, Pointer<Utf8>, double) _render;
+  late final int Function(Pointer<Void>, Pointer<Utf8>, double, int) _renderEx;
   late final Pointer<Utf8> Function(Pointer<Void>) _lastError;
 
   String get lastError => _lastError(_handle).toDartString();
@@ -419,6 +745,178 @@ final class CadenceEngine {
       _midiClipSetNote(_handle, clipId, noteIndex, pitch, startSeconds, lengthSeconds);
   bool clipIsMidi(int clipId) => _clipIsMidi(_handle, clipId) != 0;
   int clipNoteCount(int clipId) => _clipNoteCount(_handle, clipId);
+  double clipNoteOrigStartAt(int clipId, int index) =>
+      _clipNoteOrigStartAt(_handle, clipId, index);
+
+  /// Volume automation (§7.12): replaces the whole curve (empty clears).
+  bool setTrackVolumeAutomation(
+      int trackId, List<double> times, List<double> values) {
+    assert(times.length == values.length);
+    final timesPtr = calloc<Double>(times.length);
+    final valuesPtr = calloc<Double>(values.length);
+    try {
+      for (var i = 0; i < times.length; i++) {
+        timesPtr[i] = times[i];
+        valuesPtr[i] = values[i];
+      }
+      return _setTrackVolumeAutomation(
+              _handle, trackId, timesPtr, valuesPtr, times.length) ==
+          0;
+    } finally {
+      calloc.free(timesPtr);
+      calloc.free(valuesPtr);
+    }
+  }
+
+  int trackVolumeAutoCount(int trackId) =>
+      _trackVolumeAutoCount(_handle, trackId);
+  double trackVolumeEffectiveAt(int trackId, double timeSeconds) =>
+      _trackVolumeEffectiveAt(_handle, trackId, timeSeconds);
+  bool setTrackLaneAutomation(
+      int trackId, int lane, List<double> times, List<double> values) {
+    final timesPtr = calloc<Double>(times.length);
+    final valuesPtr = calloc<Double>(values.length);
+    try {
+      for (var i = 0; i < times.length; i++) {
+        timesPtr[i] = times[i];
+        valuesPtr[i] = values[i];
+      }
+      return _setTrackLaneAutomation(
+              _handle, trackId, lane, timesPtr, valuesPtr, times.length) ==
+          0;
+    } finally {
+      calloc.free(timesPtr);
+      calloc.free(valuesPtr);
+    }
+  }
+
+  int trackLaneAutoCount(int trackId, int lane) =>
+      _trackLaneAutoCount(_handle, trackId, lane);
+  bool setTrackParamAutomation(int trackId, int slotKind, int slotIndex,
+      int paramIndex, String name, List<double> times, List<double> values) {
+    final namePtr = name.toNativeUtf8();
+    final timesPtr = calloc<Double>(times.length);
+    final valuesPtr = calloc<Double>(values.length);
+    try {
+      for (var i = 0; i < times.length; i++) {
+        timesPtr[i] = times[i];
+        valuesPtr[i] = values[i];
+      }
+      return _setTrackParamAutomation(_handle, trackId, slotKind, slotIndex,
+              paramIndex, namePtr, timesPtr, valuesPtr, times.length) ==
+          0;
+    } finally {
+      malloc.free(namePtr);
+      calloc.free(timesPtr);
+      calloc.free(valuesPtr);
+    }
+  }
+
+  int trackParamLaneCount(int trackId) =>
+      _trackParamLaneCount(_handle, trackId);
+
+  /// (slotKind, slotIndex, paramIndex) of the param lane at [laneIndex].
+  (int, int, int) trackParamLaneInfo(int trackId, int laneIndex) {
+    final kind = calloc<Int32>();
+    final slot = calloc<Int32>();
+    final param = calloc<Int32>();
+    try {
+      _trackParamLaneInfo(_handle, trackId, laneIndex, kind, slot, param);
+      return (kind.value, slot.value, param.value);
+    } finally {
+      calloc.free(kind);
+      calloc.free(slot);
+      calloc.free(param);
+    }
+  }
+
+  String trackParamLaneName(int trackId, int laneIndex) =>
+      _trackParamLaneName(_handle, trackId, laneIndex).toDartString();
+  int trackParamLanePointCount(int trackId, int laneIndex) =>
+      _trackParamLanePointCount(_handle, trackId, laneIndex);
+
+  /// (time, value) of the point at [pointIndex] in the param [laneIndex].
+  (double, double) trackParamLanePointAt(
+      int trackId, int laneIndex, int pointIndex) {
+    final timePtr = calloc<Double>();
+    final valuePtr = calloc<Double>();
+    try {
+      _trackParamLanePointAt(
+          _handle, trackId, laneIndex, pointIndex, timePtr, valuePtr);
+      return (timePtr.value, valuePtr.value);
+    } finally {
+      calloc.free(timePtr);
+      calloc.free(valuePtr);
+    }
+  }
+
+  bool removeTrackParamLane(int trackId, int laneIndex) =>
+      _removeTrackParamLane(_handle, trackId, laneIndex) == 0;
+  int pluginParamCount(int trackId, int slotKind, int slotIndex) =>
+      _pluginParamCount(_handle, trackId, slotKind, slotIndex);
+  String pluginParamName(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamName(_handle, trackId, slotKind, slotIndex, paramIndex)
+          .toDartString();
+
+  /// (time, value) of the automation point at [index] in [lane].
+  (double, double) trackLaneAutoAt(int trackId, int lane, int index) {
+    final timePtr = calloc<Double>();
+    final valuePtr = calloc<Double>();
+    try {
+      _trackLaneAutoAt(_handle, trackId, lane, index, timePtr, valuePtr);
+      return (timePtr.value, valuePtr.value);
+    } finally {
+      calloc.free(timePtr);
+      calloc.free(valuePtr);
+    }
+  }
+  bool setTrackVolumeAutoPointAt(int trackId, double timeSeconds, double value) =>
+      _setTrackVolumeAutoPointAt(_handle, trackId, timeSeconds, value) == 0;
+  double get inputQuantizeSeconds => _inputQuantize(_handle);
+  bool setInputQuantize(double gridSeconds) =>
+      _setInputQuantize(_handle, gridSeconds) == 0;
+  double get midiInputLatencyMs => _midiInputLatency(_handle);
+  bool setMidiInputLatencyMs(double ms) =>
+      _setMidiInputLatency(_handle, ms) == 0;
+  bool copyClip(int clipId) => _copyClip(_handle, clipId) == 0;
+  bool get hasPendingPluginJobs => _hasPendingPluginJobs(_handle) != 0;
+  void pumpOnePluginJob() => _pumpOnePluginJob(_handle);
+  bool pasteClip(int trackId, double startSeconds) =>
+      _pasteClip(_handle, trackId, startSeconds) == 0;
+  bool moveClipToTrack(int clipId, int trackId, double startSeconds) =>
+      _moveClipToTrack(_handle, clipId, trackId, startSeconds) == 0;
+  bool splitClip(int clipId, double timeSeconds) =>
+      _splitClip(_handle, clipId, timeSeconds) == 0;
+
+  /// (time, value) of the automation point at [index].
+  (double, double) trackVolumeAutoAt(int trackId, int index) {
+    final timePtr = calloc<Double>();
+    final valuePtr = calloc<Double>();
+    try {
+      _trackVolumeAutoAt(_handle, trackId, index, timePtr, valuePtr);
+      return (timePtr.value, valuePtr.value);
+    } finally {
+      calloc.free(timePtr);
+      calloc.free(valuePtr);
+    }
+  }
+  int quantizeClipNotes(int clipId, double gridSeconds, double swing,
+          double catchRange, double maxMove, bool nonGridProtect, bool iterative,
+          double iterStrength) =>
+      _quantizeClipNotes(_handle, clipId, gridSeconds, swing, catchRange, maxMove,
+          nonGridProtect ? 1 : 0, iterative ? 1 : 0, iterStrength);
+  int resetClipQuantize(int clipId) => _resetClipQuantize(_handle, clipId);
+
+  // ---- tempo / time signature ----
+  double get tempoBpm => _tempoBpm(_handle);
+  bool setTempoBpm(double bpm) => _setTempoBpm(_handle, bpm) == 0;
+  int get timeSigNumerator => _timeSigNum(_handle);
+  int get timeSigDenominator => _timeSigDen(_handle);
+  bool setTimeSignature(int numerator, int denominator) =>
+      _setTimeSig(_handle, numerator, denominator) == 0;
+
+  int freezeClipQuantize(int clipId) => _freezeClipQuantize(_handle, clipId);
 
   /// (pitch, velocity, start, length) of the note at [index].
   (int, double, double, double) clipNoteAt(int clipId, int index) {
@@ -427,6 +925,26 @@ final class CadenceEngine {
     final start = calloc<Double>();
     final length = calloc<Double>();
     _clipNoteAt(_handle, clipId, index, pitch, vel, start, length);
+    final result = (pitch.value, vel.value, start.value, length.value);
+    calloc.free(pitch);
+    calloc.free(vel);
+    calloc.free(start);
+    calloc.free(length);
+    return result;
+  }
+
+  /// Live MIDI take of an armed track while recording (§7.11). The count
+  /// refreshes the engine-side cache, so read it once per frame and then use
+  /// [recordingNoteAt] for each index. Starts are relative to the record
+  /// start (like a MIDI clip's note starts). 0 when not recording.
+  int recordingNoteCount(int trackId) => _recordingNoteCount(_handle, trackId);
+
+  (int, double, double, double) recordingNoteAt(int trackId, int index) {
+    final pitch = calloc<Int32>();
+    final vel = calloc<Float>();
+    final start = calloc<Double>();
+    final length = calloc<Double>();
+    _recordingNoteAt(_handle, trackId, index, pitch, vel, start, length);
     final result = (pitch.value, vel.value, start.value, length.value);
     calloc.free(pitch);
     calloc.free(vel);
@@ -449,6 +967,96 @@ final class CadenceEngine {
   bool get isRecording => _isRecording(_handle) != 0;
   double get recordStartSeconds => _recordStartSeconds(_handle);
   void setDebugLoopback(bool enabled) => _setDebugLoopback(enabled ? 1 : 0);
+
+  // ---- plugins (§7.7) ----
+
+  void rescanPlugins() => _rescanPlugins(_handle);
+  void scanPluginsNow() => _scanPluginsNow(_handle);
+  bool get pluginScanActive => _pluginScanActive(_handle) != 0;
+  int get pluginCount => _pluginCount(_handle);
+  String pluginNameAt(int index) => _pluginNameAt(_handle, index).toDartString();
+  String pluginUidAt(int index) => _pluginUidAt(_handle, index).toDartString();
+  bool pluginIsInstrumentAt(int index) => _pluginIsInstrumentAt(_handle, index) != 0;
+  String pluginFormatAt(int index) => _pluginFormatAt(_handle, index).toDartString();
+
+  int trackAddFx(int trackId, int pluginIndex) =>
+      _trackAddFx(_handle, trackId, pluginIndex);
+  int trackRemoveFx(int trackId, int slotIndex) =>
+      _trackRemoveFx(_handle, trackId, slotIndex);
+  int trackSetFxBypass(int trackId, int slotIndex, bool bypass) =>
+      _trackSetFxBypass(_handle, trackId, slotIndex, bypass ? 1 : 0);
+  int trackFxCount(int trackId) => _trackFxCount(_handle, trackId);
+  String trackFxNameAt(int trackId, int slotIndex) =>
+      _trackFxNameAt(_handle, trackId, slotIndex).toDartString();
+  bool trackFxBypassAt(int trackId, int slotIndex) =>
+      _trackFxBypassAt(_handle, trackId, slotIndex) != 0;
+  int trackSetInstrumentPlugin(int trackId, int pluginIndex) =>
+      _trackSetInstrumentPlugin(_handle, trackId, pluginIndex);
+  int trackClearInstrument(int trackId) => _trackClearInstrument(_handle, trackId);
+
+  /// Restores a saved state on the live plug-in in insert [slotIndex].
+  /// [component] is the VST3 component state, [controller] the (often empty)
+  /// controller state, both exactly as a Cubase project stored them.
+  int trackSetFxState(int trackId, int slotIndex, Uint8List component,
+          Uint8List controller) =>
+      _withStateBlobs(component, controller,
+          (c, cs, k, ks) => _trackSetFxState(_handle, trackId, slotIndex, c, cs, k, ks));
+
+  /// Restores a saved state on the track's live instrument plug-in.
+  int trackSetInstrumentState(int trackId, Uint8List component, Uint8List controller) =>
+      _withStateBlobs(component, controller,
+          (c, cs, k, ks) => _trackSetInstrumentState(_handle, trackId, c, cs, k, ks));
+
+  /// Test hook: the state the live plug-in reports, base64-encoded (empty when
+  /// the slot holds no plug-in). [slotKind] 0 = fx chain, 1 = instrument.
+  String pluginStateBase64(int trackId, int slotKind, int slotIndex) =>
+      _pluginStateBase64(_handle, trackId, slotKind, slotIndex).toDartString();
+
+  /// Copies two optional byte blobs into native memory for one call, freeing
+  /// them afterwards. An empty blob is passed as a null pointer.
+  T _withStateBlobs<T>(
+      Uint8List component,
+      Uint8List controller,
+      T Function(Pointer<Uint8>, int, Pointer<Uint8>, int) body) {
+    final c = component.isEmpty ? nullptr : malloc<Uint8>(component.length);
+    final k = controller.isEmpty ? nullptr : malloc<Uint8>(controller.length);
+    try {
+      if (component.isNotEmpty) {
+        c.asTypedList(component.length).setAll(0, component);
+      }
+      if (controller.isNotEmpty) {
+        k.asTypedList(controller.length).setAll(0, controller);
+      }
+      return body(c, component.length, k, controller.length);
+    } finally {
+      if (c != nullptr) malloc.free(c);
+      if (k != nullptr) malloc.free(k);
+    }
+  }
+  int openPluginEditor(int trackId, int slotIndex) =>
+      _openPluginEditor(_handle, trackId, slotIndex);
+  int openInstrumentEditor(int trackId) =>
+      _openInstrumentEditor(_handle, trackId);
+
+  int openInstrumentEditorWithClip(int trackId, int clipId) =>
+      _openInstrumentEditorWithClip(_handle, trackId, clipId);
+  String trackInstrumentName(int trackId) =>
+      _trackInstrumentName(_handle, trackId).toDartString();
+
+  int trackSetMidifx(int trackId, int pluginIndex) =>
+      _trackSetMidifx(_handle, trackId, pluginIndex);
+  int trackClearMidifx(int trackId) => _trackClearMidifx(_handle, trackId);
+  String trackMidifxName(int trackId) =>
+      _trackMidifxName(_handle, trackId).toDartString();
+
+  int masterAddFx(int pluginIndex) => _masterAddFx(_handle, pluginIndex);
+  int masterRemoveFx(int slotIndex) => _masterRemoveFx(_handle, slotIndex);
+  int masterSetFxBypass(int slotIndex, bool bypass) =>
+      _masterSetFxBypass(_handle, slotIndex, bypass ? 1 : 0);
+  int get masterFxCount => _masterFxCount(_handle);
+  String masterFxNameAt(int slotIndex) =>
+      _masterFxNameAt(_handle, slotIndex).toDartString();
+  bool masterFxBypassAt(int slotIndex) => _masterFxBypassAt(_handle, slotIndex) != 0;
 
   // ---- device configuration ----
 
@@ -554,6 +1162,25 @@ final class CadenceEngine {
       _withUtf8(path, (p) => _saveProject(_handle, p));
   int loadProject(String path) =>
       _withUtf8(path, (p) => _loadProject(_handle, p));
+  int importMidiProject(String path) =>
+      _withUtf8(path, (p) => _importMidiProject(_handle, p));
+  int importStemsFolder(String path) =>
+      _withUtf8(path, (p) => _importStemsFolder(_handle, p));
+  int importAudioFile(String path) =>
+      _withUtf8(path, (p) => _importAudioFile(_handle, p));
+
+  /// Auditions one file on the engine's preview channel (project untouched).
+  /// Returns 0 on success. Stops by itself at EOF.
+  int previewSound(String path) =>
+      _withUtf8(path, (p) => _previewSound(_handle, p));
+
+  void stopPreview() => _stopPreview(_handle);
+
+  bool isPreviewing() => _isPreviewing(_handle) != 0;
+  String pickOpenFile(String startDir, String filters) => _withUtf8(
+      startDir,
+      (dir) => _withUtf8(
+          filters, (fl) => _pickOpenFile(_handle, dir, fl).toDartString()));
 
   /// Convenience: a one-track project holding the whole file.
   int loadFile(String path) => _withUtf8(path, (p) => _loadFile(_handle, p));
@@ -574,6 +1201,19 @@ final class CadenceEngine {
   int get currentBufferSizeSamples => _bufferSizeSamples(_handle);
 
   // ---- offline render ----
+
+  /// Offline export with a chosen bit depth (16 or 24), at the project
+  /// sample rate.
+  int renderEx(String outPath, double maxSeconds, int bitsPerSample) {
+    return _withUtf8(outPath,
+        (p) => _renderEx(_handle, p, maxSeconds, bitsPerSample));
+  }
+
+  /// Closes and re-opens the audio device: recovers from CoreAudio
+  /// client kills (overrun disabling) without restarting the app.
+  bool restartAudio() => _restartAudio(_handle) == 0;
+  void initialiseAudioInBackground() => _initialiseAudioBg(_handle);
+  bool get audioInitialised => _audioInitialised(_handle) != 0;
 
   int render(String outPath, double maxSeconds) =>
       _withUtf8(outPath, (p) => _render(_handle, p, maxSeconds));

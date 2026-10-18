@@ -15,6 +15,9 @@ drag & drop primero).
 
 - [`docs/design/ui-design.md`](docs/design/ui-design.md) — Especificación de diseño UI v0.1
   (arquitectura de información, sistema visual, subsistemas, keymap, contrato FFI, alcance v1/v1.5/v2)
+- [`docs/design/cubase-import.md`](docs/design/cubase-import.md) — Lector de proyectos
+  de Cubase (`.cpr`): formato, cobertura (pistas, mixer, tempo, notas MIDI) y
+  limitaciones (solo lectura, Dart puro)
 
 ## Estado
 
@@ -59,7 +62,26 @@ open build/macos/Build/Products/Debug/cadence_ui.app
 ```
 
 Estructura: `lib/engine/` (bindings FFI + snapshot + servicio), `lib/ui/`
-(timeline + transporte), `test/engine_smoke_test.dart`.
+(timeline + transporte), `lib/l10n/` (traducciones), `test/engine_smoke_test.dart`.
+
+### Idioma de la interfaz (es / en / ja)
+
+Los textos viven en `ui/lib/l10n/app_es.arb` (plantilla, fuente de verdad),
+`app_en.arb` y `app_ja.arb`; `gen-l10n` genera las clases al hacer
+`flutter pub get` (`generate: true` en `pubspec.yaml`). En el código:
+`context.l10n.<clave>` y, sin contexto, `L10n.current.<clave>`.
+
+```bash
+cd ui
+flutter gen-l10n               # regenera lib/l10n/app_localizations*.dart
+cat build/l10n_untranslated.txt   # debe ser {} (nada sin traducir)
+```
+
+El idioma se elige en **Preferencias → Idioma** (por defecto, seguir al sistema) y
+se guarda en `~/Music/Cadence/ui_settings.json`. Cada sub-ventana es un proceso
+aparte y lee el idioma por su cuenta. Los **errores salen en cuadros de alerta**
+modales (`ui/lib/ui/app_alert.dart`), no como texto suelto ni SnackBar.
+Detalles: `docs/design/i18n.md`.
 
 ### Build y prueba
 
@@ -86,6 +108,7 @@ $CLI doc-test assets/test/doc                # undo/redo + save/load round-trip
 - `ui/` — app Flutter (bindings FFI, timeline, transporte)
 - `bindings/dart/` — puntero a los bindings canónicos (ahora viven en `ui/lib/engine/`)
 - `docs/design/ui-design.md` — especificación UI v0.1
+- `docs/design/i18n.md` — idioma de la interfaz (es/en/ja) y avisos de error
 
 Nota de arquitectura (Fase 2): las fuentes de audio se decodifican a memoria
 (resampleadas a la tasa del proyecto) al añadir el clip — cero I/O de disco en el

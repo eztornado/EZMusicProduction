@@ -1,0 +1,12 @@
+# Configuracion de gen-l10n (se ejecuta solo con `flutter pub get` / `flutter build`
+# porque pubspec.yaml lleva `generate: true`).
+#
+# Plantilla: espanol (idioma de referencia del proyecto); el resto de idiomas
+# solo tienen que aportar las claves nuevas.
+arb-dir: lib/l10n
+template-arb-file: app_es.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+output-dir: lib/l10n
+nullable-getter: false
+untranslated-messages-file: build/l10n_untranslated.txt

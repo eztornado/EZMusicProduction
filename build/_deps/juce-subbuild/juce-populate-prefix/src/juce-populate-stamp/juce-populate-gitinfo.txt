@@ -3,7 +3,7 @@
 # No other meaning or use of this file is supported.
 
 method=git
-command=/usr/local/bin/cmake;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;/Users/ivan/daw/build/_deps/juce-subbuild/juce-populate-prefix/tmp/juce-populate-gitclone.cmake
+command=/usr/local/Cellar/cmake/4.3.1/bin/cmake;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;/Users/ivan/daw/build/_deps/juce-subbuild/juce-populate-prefix/tmp/juce-populate-gitclone.cmake
 source_dir=/Users/ivan/daw/build/_deps/juce-src
 work_dir=/Users/ivan/daw/build/_deps
 repository=https://github.com/juce-framework/JUCE.git

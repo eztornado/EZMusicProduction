@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/ivan/daw/build/_deps/fluidsynth-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

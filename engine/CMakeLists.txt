@@ -11,15 +11,49 @@ FetchContent_Declare(JUCE
 
 FetchContent_MakeAvailable(JUCE)
 
+# FluidSynth (LGPL 2.1+, dynamic) backs EZInstruments. System zlib powers
+# SF3 sample decompression; no libsndfile, no utility binary, no glib.
+set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+# libsndfile (brew) enables SF3 (Ogg Vorbis) sample loading.
+set(LIBSNDFILE_SUPPORT ON CACHE BOOL "" FORCE)
+set(LADSPA_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ENABLE_COVERAGE OFF CACHE BOOL "" FORCE)
+# READLINE adds -isystem <SDK>/usr/include/readline/.. which puts the whole
+# SDK include dir ahead of libc++ and breaks <cstddef> on this toolchain.
+set(enable-readline OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(fluidsynth
+    GIT_REPOSITORY https://github.com/FluidSynth/fluidsynth.git
+    GIT_TAG v2.6.1
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(fluidsynth)
+
 # Core library. In phase 1 it is linked statically into the CLI; a SHARED
 # target with the same sources will back the Dart/Flutter FFI binding.
+enable_language(OBJCXX)
 add_library(cadence_engine STATIC
+    src/native_dialogs.mm
     src/model.cpp
     src/engine.cpp
+    src/ezq4.cpp
+    src/ezinst.cpp
+    src/ezsynth.cpp
+    src/ezorq.cpp
+    src/ezdrums.cpp
+    src/ezarp.cpp
     src/c_api.cpp)
 
 target_include_directories(cadence_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(cadence_engine PUBLIC cxx_std_20)
+
+# Plugin hosting: VST3 + AU. VST2 is intentionally not hosted.
+# CoreAudioKit provides AUGenericView, referenced by the AU host path.
+target_compile_definitions(cadence_engine PUBLIC
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=1
+    JUCE_USE_MP3AUDIOFORMAT=1)
+target_link_libraries(cadence_engine PUBLIC "-framework CoreAudioKit")
+target_link_libraries(cadence_engine PUBLIC "-framework UniformTypeIdentifiers")
 
 target_link_libraries(cadence_engine
     PUBLIC
@@ -28,7 +62,9 @@ target_link_libraries(cadence_engine
         juce::juce_audio_basics
         juce::juce_audio_formats
         juce::juce_audio_devices
-        juce::juce_audio_processors)
+        juce::juce_audio_processors
+        juce::juce_dsp
+        libfluidsynth)
 
 # Console-app test harness: devices / tone / play.
 juce_add_console_app(cadence_cli PRODUCT_NAME "cadence-cli")
@@ -37,11 +73,26 @@ target_link_libraries(cadence_cli PRIVATE cadence_engine)
 
 # Shared engine for the Dart/Flutter FFI binding (libcadence_engine.dylib).
 add_library(cadence_engine_shared SHARED
+    src/native_dialogs.mm
     src/model.cpp
     src/engine.cpp
+    src/ezq4.cpp
+    src/ezinst.cpp
+    src/ezsynth.cpp
+    src/ezorq.cpp
+    src/ezdrums.cpp
+    src/ezarp.cpp
     src/c_api.cpp)
 target_include_directories(cadence_engine_shared PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(cadence_engine_shared PRIVATE cxx_std_20)
+
+# Keep hosting flags in sync with the static engine (see above).
+target_compile_definitions(cadence_engine_shared PRIVATE
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=1
+    JUCE_USE_MP3AUDIOFORMAT=1)
+target_link_libraries(cadence_engine_shared PRIVATE "-framework CoreAudioKit")
+target_link_libraries(cadence_engine_shared PRIVATE "-framework UniformTypeIdentifiers")
 target_link_libraries(cadence_engine_shared
     PRIVATE
         juce::juce_core
@@ -49,5 +100,7 @@ target_link_libraries(cadence_engine_shared
         juce::juce_audio_basics
         juce::juce_audio_formats
         juce::juce_audio_devices
-        juce::juce_audio_processors)
+        juce::juce_audio_processors
+        juce::juce_dsp
+        libfluidsynth)
 set_target_properties(cadence_engine_shared PROPERTIES OUTPUT_NAME cadence_engine)

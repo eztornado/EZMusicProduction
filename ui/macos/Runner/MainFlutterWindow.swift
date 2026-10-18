@@ -13,6 +13,19 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    // Dynamic window title from Dart: 'project - EZMusicProduction'.
+    let channel = FlutterMethodChannel(
+        name: "com.ezmusicproduction/window",
+        binaryMessenger: flutterViewController.engine.binaryMessenger)
+    channel.setMethodCallHandler { (call, result) in
+      if call.method == "setWindowTitle" {
+        self.title = (call.arguments as? String) ?? "EZMusicProduction"
+        result(nil)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
     super.awakeFromNib()
   }
 }

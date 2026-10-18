@@ -31,6 +31,10 @@ struct MidiNote {
     double lengthSeconds = 0.0;
     int pitch = 60;
     float velocity = 0.8f;      // 0..1
+    // Pre-quantize reference (§7.5.2 non-destructive model): quantize moves
+    // startSeconds and keeps the original here; Reset restores it, Freeze
+    // bakes (origStart = start). Equal values = not quantized.
+    double origStartSeconds = 0.0;
 };
 
 // Note data of a MIDI clip (audio clips have a source instead).
@@ -38,6 +42,16 @@ struct MidiClipData {
     std::vector<MidiNote> notes;
 };
 using MidiClipDataPtr = std::shared_ptr<const MidiClipData>;
+
+// One volume-automation breakpoint (§7.12): value 0..1, project seconds.
+struct AutomationPoint {
+    double timeSeconds = 0.0;
+    double value = 1.0;
+};
+struct AutomationCurve {
+    std::vector<AutomationPoint> points; // sorted by time
+};
+using AutomationCurvePtr = std::shared_ptr<const AutomationCurve>;
 
 struct Clip {
     ClipId id = -1;
@@ -64,6 +78,17 @@ struct FxSlot {
     juce::String state; // base64 plugin state (optional)
 };
 
+// An automation lane targeting one plugin parameter (§7.12 v1.5).
+// slotKind: 0 = fx chain slot, 1 = instrument. The display name is captured
+// at creation so the UI can label the lane without instantiating the plugin.
+struct ParamAutomationLane {
+    int slotKind = 0;
+    int slotIndex = 0;
+    int paramIndex = 0;
+    juce::String name;
+    AutomationCurvePtr curve;
+};
+
 struct Track {
     enum class Type { Audio, Instrument };
 
@@ -79,7 +104,18 @@ struct Track {
     bool armed = false;             // transient: not persisted, not undoable
     std::vector<FxSlot> fx;         // insert chain, in order
     FxSlot instrument;              // instrument plugin (Instrument tracks); empty = internal synth
+    // MIDI insert (v1: the arpeggiator). Transforms the clip/live MIDI
+    // stream BEFORE the instrument plays it; persisted like the others.
+    FxSlot midiFx;
     std::vector<Clip> clips;
+    // Automation lanes (§7.12): sorted points, linear between. When the
+    // volume lane has points it REPLACES the static volume (Read mode).
+    // The sustain lane is CC64 (values 0..1; >= 0.5 = pedal down) and is
+    // converted to MIDI CC events for plugins/synth during playback.
+    AutomationCurvePtr volumeAutomation;
+    AutomationCurvePtr panAutomation;
+    AutomationCurvePtr sustainAutomation;
+    std::vector<ParamAutomationLane> paramLanes; // plugin-parameter lanes
 };
 
 // Immutable project snapshot: edits build a modified copy and publish it
@@ -92,6 +128,7 @@ struct Project {
     int timeSigNumerator = 4;
     int timeSigDenominator = 4;
     float masterGain = 1.0f;
+    double inputQuantizeSeconds = 0.0; // 0 = off; MIDI takes snap to this grid
     std::vector<Track> tracks;
     std::vector<FxSlot> masterFx;
     std::map<SourceId, juce::String> sourceFiles; // absolute paths (engine form)
