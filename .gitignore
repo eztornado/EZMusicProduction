@@ -1,0 +1,4 @@
+.DS_Store
+dist/
+build-universal/
+build/_deps/*-src/

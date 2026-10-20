@@ -142,6 +142,14 @@ open ui/build/macos/Build/Products/Release/EZMusicProduction.app
 
 このスクリプトはFlutter SDKが`~/development/flutter`にある前提です。別の場所にある場合は`PATH`の行を調整してください。環境変数`CADENCE_ENGINE_DYLIB`で別のエンジンライブラリを指定することもできます。
 
+Apple SiliconとIntelの両方でネイティブに動作するユニバーサルビルドを作るには：
+
+```bash
+UNIVERSAL=1 ./build_app.sh
+```
+
+このモードではFluidSynthを静的リンクし、SF3を無効にします（SF2は利用可能）。エンジンはHomebrewのライブラリに依存しません。
+
 ### テストとCLI
 
 ```bash

@@ -11,12 +11,14 @@ FetchContent_Declare(JUCE
 
 FetchContent_MakeAvailable(JUCE)
 
-# FluidSynth (LGPL 2.1+, dynamic) backs EZInstruments. System zlib powers
-# SF3 sample decompression; no libsndfile, no utility binary, no glib.
+# FluidSynth (LGPL 2.1+) backs EZInstruments. libsndfile adds SF3 support;
+# it is optional, so a build can stay free of Homebrew dependencies.
 set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-# libsndfile (brew) enables SF3 (Ogg Vorbis) sample loading.
-set(LIBSNDFILE_SUPPORT ON CACHE BOOL "" FORCE)
+# libsndfile (brew) enables SF3 (Ogg Vorbis) sample loading. Turn it off for
+# a self-contained build without Homebrew dependencies (SF2 only).
+option(CADENCE_SF3 "Enable SF3 SoundFont support through libsndfile" ON)
+set(enable-libsndfile ${CADENCE_SF3} CACHE BOOL "" FORCE)
 set(LADSPA_SUPPORT OFF CACHE BOOL "" FORCE)
 set(ENABLE_COVERAGE OFF CACHE BOOL "" FORCE)
 # READLINE adds -isystem <SDK>/usr/include/readline/.. which puts the whole

@@ -8,8 +8,23 @@ cd "$(dirname "$0")"
 # hung on this network; the gem install needed the stdckdint shim — done).
 export PATH="$HOME/.local/bin:$HOME/development/flutter/bin:$PATH"
 
+BUILD_DIR="${CADENCE_BUILD_DIR:-build}"
+if [ "${UNIVERSAL:-0}" = "1" ]; then
+  BUILD_DIR="build-universal"
+  echo "=== 0/3 Configure universal engine (arm64 + x86_64) ==="
+  # Static FluidSynth and no libsndfile: the engine is self-contained and
+  # runs on both Apple Silicon and Intel without Homebrew dependencies.
+  # SF3 SoundFonts are not available in this build (SF2 is).
+  cmake -S . -B "$BUILD_DIR" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCADENCE_SF3=OFF
+fi
+
 echo "=== 1/3 Engine (C++/JUCE) ==="
-cmake --build build -j $(sysctl -n hw.ncpu)
+cmake --build "$BUILD_DIR" -j $(sysctl -n hw.ncpu)
 
 echo "=== 2/3 Flutter (UI) ==="
 cd ui
@@ -51,13 +66,13 @@ sign_bundle() { # $1 = ruta del .app
   codesign -v "$1"
 }
 APP=build/macos/Build/Products/Release/EZMusicProduction.app
-cp ../build/engine/libcadence_engine.dylib "$APP/Contents/MacOS/"
+cp "../$BUILD_DIR/engine/libcadence_engine.dylib" "$APP/Contents/MacOS/"
 sign_bundle "$APP"
 # The Debug bundle (left over from `flutter run` sessions) must not keep a
 # stale engine: launching it would silently run old code.
 DEBUG_APP=build/macos/Build/Products/Debug/EZMusicProduction.app
 if [ -d "$DEBUG_APP" ]; then
-  cp ../build/engine/libcadence_engine.dylib "$DEBUG_APP/Contents/MacOS/"
+  cp "../$BUILD_DIR/engine/libcadence_engine.dylib" "$DEBUG_APP/Contents/MacOS/"
   sign_bundle "$DEBUG_APP"
 fi
 

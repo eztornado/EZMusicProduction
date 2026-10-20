@@ -142,6 +142,14 @@ open ui/build/macos/Build/Products/Release/EZMusicProduction.app
 
 The script expects the Flutter SDK in `~/development/flutter`; adjust its `PATH` line if yours lives elsewhere. The built app can also point at another engine library with the `CADENCE_ENGINE_DYLIB` environment variable.
 
+For a universal build that runs natively on both Apple Silicon and Intel:
+
+```bash
+UNIVERSAL=1 ./build_app.sh
+```
+
+That variant links FluidSynth statically and disables SF3 support (SF2 still works), so the engine does not depend on Homebrew libraries.
+
 ### Tests and CLI
 
 ```bash
