@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">EZMusicProduction app icon</title>
+  <defs>
+    <linearGradient id="bar" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#d9160b"/>
+      <stop offset="0.55" stop-color="#ff2d20"/>
+      <stop offset="1" stop-color="#ff9d94"/>
+    </linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <filter id="barGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="#0b0b0d"/>
+    <rect x="101" y="101" width="822" height="822" rx="184" fill="none"
+          stroke="#ffffff" stroke-opacity="0.10" stroke-width="2"/>
+  </g>
+
+  <g fill="#ff2d20" opacity="0.55" filter="url(#barGlow)">
+    <rect x="320" y="530" width="60" height="160" rx="30"/>
+    <rect x="428" y="340" width="60" height="350" rx="30"/>
+    <rect x="536" y="440" width="60" height="250" rx="30"/>
+    <rect x="644" y="270" width="60" height="420" rx="30"/>
+  </g>
+
+  <g fill="url(#bar)">
+    <rect x="320" y="530" width="60" height="160" rx="30"/>
+    <rect x="428" y="340" width="60" height="350" rx="30"/>
+    <rect x="536" y="440" width="60" height="250" rx="30"/>
+    <rect x="644" y="270" width="60" height="420" rx="30"/>
+  </g>
+</svg>
