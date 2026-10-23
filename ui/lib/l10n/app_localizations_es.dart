@@ -205,7 +205,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get pianoRollHint =>
-      'click: añadir · arrastrar: mover · borde: largo · Supr: borrar';
+      'arrastrar en vacío: seleccionar · arrastrar: mover · borde: largo · Supr: borrar';
 
   @override
   String get pianoRollUndock => 'Desacoplar en su propia ventana';

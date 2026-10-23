@@ -84,6 +84,12 @@ final class CadenceEngine {
         Int32 Function(Pointer<Void>, Int64, Int32, Int32, Double, Double),
         int Function(Pointer<Void>, int, int, int, double, double)>(
         'cadence_engine_midi_clip_set_note');
+    _midiClipSetNotes = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Pointer<Int32>, Pointer<Int32>,
+            Pointer<Double>, Pointer<Double>, Int32),
+        int Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Int32>,
+            Pointer<Double>, Pointer<Double>, int)>(
+        'cadence_engine_midi_clip_set_notes');
     _selectedMidiInputIndex = _lib.lookupFunction<Int32 Function(Pointer<Void>),
         int Function(Pointer<Void>)>('cadence_engine_selected_midi_input_index');
     _addClip = _lib.lookupFunction<
@@ -547,6 +553,8 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int) _masterFxBypassAt;
   late final int Function(Pointer<Void>, int, int) _midiClipRemoveNote;
   late final int Function(Pointer<Void>, int, int, int, double, double) _midiClipSetNote;
+  late final int Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Int32>,
+      Pointer<Double>, Pointer<Double>, int) _midiClipSetNotes;
   late final int Function(Pointer<Void>) _selectedMidiInputIndex;
   late final int Function(Pointer<Void>, int, Pointer<Utf8>, double, double) _addClip;
   late final int Function(Pointer<Void>, int, double) _setTrackVolume;
@@ -743,6 +751,35 @@ final class CadenceEngine {
   int midiClipSetNote(int clipId, int noteIndex, int pitch, double startSeconds,
           double lengthSeconds) =>
       _midiClipSetNote(_handle, clipId, noteIndex, pitch, startSeconds, lengthSeconds);
+
+  /// Applies several note edits as one undoable engine command.
+  bool midiClipSetNotes(int clipId, List<int> noteIndices, List<int> pitches,
+      List<double> startSeconds, List<double> lengthSeconds) {
+    assert(noteIndices.length == pitches.length &&
+        noteIndices.length == startSeconds.length &&
+        noteIndices.length == lengthSeconds.length);
+    final indicesPtr = calloc<Int32>(noteIndices.length);
+    final pitchesPtr = calloc<Int32>(pitches.length);
+    final startsPtr = calloc<Double>(startSeconds.length);
+    final lengthsPtr = calloc<Double>(lengthSeconds.length);
+    try {
+      for (var i = 0; i < noteIndices.length; i++) {
+        indicesPtr[i] = noteIndices[i];
+        pitchesPtr[i] = pitches[i];
+        startsPtr[i] = startSeconds[i];
+        lengthsPtr[i] = lengthSeconds[i];
+      }
+      return _midiClipSetNotes(_handle, clipId, indicesPtr, pitchesPtr,
+              startsPtr, lengthsPtr, noteIndices.length) ==
+          0;
+    } finally {
+      calloc.free(indicesPtr);
+      calloc.free(pitchesPtr);
+      calloc.free(startsPtr);
+      calloc.free(lengthsPtr);
+    }
+  }
+
   bool clipIsMidi(int clipId) => _clipIsMidi(_handle, clipId) != 0;
   int clipNoteCount(int clipId) => _clipNoteCount(_handle, clipId);
   double clipNoteOrigStartAt(int clipId, int index) =>

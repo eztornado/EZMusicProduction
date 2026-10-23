@@ -205,6 +205,13 @@ CadenceResult cadence_engine_midi_clip_remove_note(CadenceEngine* engine, Cadenc
 CadenceResult cadence_engine_midi_clip_set_note(CadenceEngine* engine, CadenceClipId clip_id,
                                                 int note_index, int pitch,
                                                 double start_seconds, double length_seconds);
+/* Applies several note edits in one undo entry (multi-note move/resize). */
+CadenceResult cadence_engine_midi_clip_set_notes(CadenceEngine* engine, CadenceClipId clip_id,
+                                                 const int* note_indices,
+                                                 const int* pitches,
+                                                 const double* start_seconds,
+                                                 const double* length_seconds,
+                                                 int count);
 int cadence_engine_clip_is_midi(CadenceEngine* engine, CadenceClipId clip_id);
 int cadence_engine_clip_note_count(CadenceEngine* engine, CadenceClipId clip_id);
 void cadence_engine_clip_note_at(CadenceEngine* engine, CadenceClipId clip_id, int index,

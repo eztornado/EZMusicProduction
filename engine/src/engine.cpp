@@ -3100,6 +3100,45 @@ juce::Result Engine::midiClipSetNote(ClipId clipId, int noteIndex, int pitch,
     });
 }
 
+juce::Result Engine::midiClipSetNotes(ClipId clipId,
+                                      const std::vector<MidiNoteEdit>& edits)
+{
+    return editProject([&] (Project& project) {
+        Clip* clip = project.findClip(clipId);
+        if (clip == nullptr || ! clip->isMidi() || clip->midi == nullptr)
+        {
+            fail("midi clip not found");
+            return false;
+        }
+        for (const auto& edit : edits)
+        {
+            if (edit.index < 0
+                || edit.index >= (int) clip->midi->notes.size())
+            {
+                fail("note index out of range");
+                return false;
+            }
+            if (! std::isfinite(edit.startSeconds)
+                || ! std::isfinite(edit.lengthSeconds))
+            {
+                fail("invalid note position");
+                return false;
+            }
+        }
+        auto midi = std::make_shared<MidiClipData>(*clip->midi); // copy-on-write
+        for (const auto& edit : edits)
+        {
+            auto& note = midi->notes[(size_t) edit.index];
+            note.pitch = juce::jlimit(0, 127, edit.pitch);
+            note.startSeconds = std::max(0.0, edit.startSeconds);
+            note.lengthSeconds = std::max(0.01, edit.lengthSeconds);
+            note.origStartSeconds = note.startSeconds; // manual move bakes the reference
+        }
+        clip->midi = std::move(midi);
+        return true;
+    });
+}
+
 juce::Result Engine::quantizeClipNotes(ClipId clipId, double gridSeconds,
                                        double swing, double catchRange,
                                        double maxMove, bool nonGridProtect,

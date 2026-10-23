@@ -526,6 +526,18 @@ class EngineService extends ChangeNotifier {
     refresh();
   }
 
+  /// Moves/resizes several notes as one undoable engine command (one refresh
+  /// and one undo entry, so dragging a multi-note selection is atomic).
+  void midiClipSetNotes(int clipId, List<int> noteIndices, List<int> pitches,
+      List<double> startSeconds, List<double> lengthSeconds) {
+    assert(noteIndices.length == pitches.length &&
+        noteIndices.length == startSeconds.length &&
+        noteIndices.length == lengthSeconds.length);
+    _engine.midiClipSetNotes(
+        clipId, noteIndices, pitches, startSeconds, lengthSeconds);
+    refresh();
+  }
+
   /// Quantize (§7.5.2): moves note starts toward the nearest grid position.
   /// [swing]/[catchRange]/[maxMove] in 0..1; iterative applies one strength
   /// step from the current position instead of the full move.

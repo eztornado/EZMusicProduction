@@ -1,7 +1,7 @@
 // Piano roll v0 (§7.5 subset): view and edit the notes of a MIDI clip.
 // Tap empty grid = add note (snapped, one beat long) · drag = move ·
-// drag right edge = resize · Delete = remove. Every edit commits one
-// engine command (one undo entry).
+// drag right edge = resize · drag empty grid = select an area · Delete =
+// remove. Every edit commits one engine command (one undo entry).
 
 import 'dart:math' as math;
 
@@ -34,6 +34,16 @@ enum _PrTool { select, draw, eraser }
 bool _isBlackKey(int pitch) {
   const set = {1, 3, 6, 8, 10};
   return set.contains(pitch % 12);
+}
+
+/// Immutable snapshot of one note at the start of a drag gesture.
+class _NoteEdit {
+  const _NoteEdit(this.index, this.pitch, this.start, this.length);
+
+  final int index;
+  final int pitch;
+  final double start;
+  final double length;
 }
 
 class PianoRoll extends StatefulWidget {
@@ -148,15 +158,24 @@ class _PianoRollState extends State<PianoRoll> {
     }
     return 0.0;
   }
-  int? _dragNoteIndex;
+  // Notes selected by click or rubber-band. Indices refer to the snapshot
+  // order, which the engine keeps stable across note edits.
+  final Set<int> _selectedNotes = <int>{};
+  // Drag: one note (move/resize) or the whole selection moved together.
+  int? _dragNoteIndex; // reference note under the pointer
   bool _resizing = false;
   double _origStart = 0, _origLen = 0;
   int _origPitch = 0;
   double _previewStart = 0, _previewLen = 0;
-  int _previewPitch = 0;
-  int? _selectedNoteIndex;
   double _grabOffsetSeconds = 0;
   bool _didEdit = false;
+  List<_NoteEdit> _dragGroup = const [];
+  Map<int, (double, double, int)> _dragPreviews = const {};
+  // Rubber-band selection rectangle, in grid content pixels.
+  bool _marqueeActive = false;
+  Offset? _marqueeStart;
+  Offset? _marqueeCurrent;
+  Set<int> _marqueeBase = const {};
 
   ClipInfo? get _clip {
     for (final track in widget.service.snapshot.tracks) {
@@ -186,12 +205,16 @@ class _PianoRollState extends State<PianoRoll> {
   int _drawPitch = 60;
   double _drawStart = 0, _drawLen = 0;
 
-  int? _hitNoteIndex(ClipInfo clip, double seconds) {
+  int? _hitNoteIndex(ClipInfo clip, double seconds, int pitch) {
     // All in SECONDS — comparing seconds against pixels here silently
-    // matched nothing (the reason note drags never registered).
+    // matched nothing (the reason note drags never registered). The pitch
+    // row matters too: without it every note sharing a time column was hit
+    // no matter which key row the pointer was on.
     for (var i = clip.notes.length - 1; i >= 0; i--) {
       final note = clip.notes[i];
-      if (seconds >= note.start && seconds <= note.start + note.length) {
+      if (note.pitch == pitch &&
+          seconds >= note.start &&
+          seconds <= note.start + note.length) {
         return i;
       }
     }
@@ -203,29 +226,31 @@ class _PianoRollState extends State<PianoRoll> {
   // compete with the scroll arena and lose. Raw Listener events always
   // arrive, so note drags are deterministic. Scroll drag is disabled
   // (NeverScrollable) and scrolling happens via wheel + the scrollbar.
-  bool _pendingDeselect = false;
-
   void _onPointerDown(PointerDownEvent event, ClipInfo clip) {
     if (event.buttons != kPrimaryButton) return;
+    _focusNode.requestFocus();
     // Content coords: x is viewport-relative (this box wraps the h-scroll),
     // y is already content-relative (the box spans the grid height).
-    final seconds =
-        (event.localPosition.dx + _hOffset) / kPrPixelsPerSecond;
+    final contentX = event.localPosition.dx + _hOffset;
+    final seconds = contentX / kPrPixelsPerSecond;
     final pitch = _yToPitch(event.localPosition.dy, 0)
         .clamp(kPrBottomPitch, kPrTopPitch);
-    final hit = _hitNoteIndex(clip, seconds);
-    _pendingDeselect = false;
+    final hit = _hitNoteIndex(clip, seconds, pitch);
+    // Shift or ⌘ extends/toggles the selection (DAW convention).
+    final keyboard = HardwareKeyboard.instance;
+    final additive = keyboard.isShiftPressed || keyboard.isMetaPressed;
 
     switch (_tool) {
       case _PrTool.eraser:
         if (hit != null) {
           widget.service.midiClipRemoveNote(widget.clipId, hit);
-          _selectedNoteIndex = null;
+          _selectedNotes.clear();
           setState(() {});
         }
         return;
       case _PrTool.draw:
         if (hit != null) {
+          _selectOnly(hit);
           _beginNoteDrag(clip, hit, seconds);
           return;
         }
@@ -235,32 +260,76 @@ class _PianoRollState extends State<PianoRoll> {
         _drawStart = _snapPos(seconds);
         _drawLen = _snapUnit;
         _drawing = true;
-        _selectedNoteIndex = null;
+        _selectedNotes.clear();
         setState(() {});
         return;
       case _PrTool.select:
         if (hit != null) {
+          // Shift toggles a note in/out of the selection without dragging.
+          if (additive) {
+            setState(() {
+              if (!_selectedNotes.remove(hit)) _selectedNotes.add(hit);
+            });
+            return;
+          }
+          if (!_selectedNotes.contains(hit)) _selectOnly(hit);
           _beginNoteDrag(clip, hit, seconds);
-        } else {
-          _pendingDeselect = true;
+          return;
         }
+        // Empty space: rubber-band selection. Shift keeps the current
+        // selection and adds every note the rectangle touches.
+        if (!additive) _selectedNotes.clear();
+        _marqueeBase = Set<int>.of(_selectedNotes);
+        _marqueeActive = true;
+        _marqueeStart = Offset(contentX, event.localPosition.dy);
+        _marqueeCurrent = _marqueeStart;
+        setState(() {});
         return;
     }
+  }
+
+  void _selectOnly(int index) {
+    _selectedNotes
+      ..clear()
+      ..add(index);
   }
 
   void _onPointerMove(PointerMoveEvent event) {
     if (event.buttons & kPrimaryButton == 0) return;
     final clip = _clip;
     if (clip == null) return;
-    if (_pendingDeselect) return; // dragging on empty space: nothing yet
+    if (_marqueeActive) {
+      final contentX = event.localPosition.dx + _hOffset;
+      _marqueeCurrent = Offset(contentX, event.localPosition.dy);
+      final rect = Rect.fromPoints(_marqueeStart!, _marqueeCurrent!);
+      final hits = <int>{};
+      for (var i = 0; i < clip.notes.length; i++) {
+        final note = clip.notes[i];
+        final noteRect = Rect.fromLTWH(
+          note.start * kPrPixelsPerSecond,
+          _pitchToY(note.pitch, 0),
+          math.max(1.0, note.length * kPrPixelsPerSecond),
+          kPrRowHeight,
+        );
+        if (rect.overlaps(noteRect)) hits.add(i);
+      }
+      _selectedNotes
+        ..clear()
+        ..addAll(_marqueeBase)
+        ..addAll(hits);
+      setState(() {});
+      return;
+    }
     // Eraser: keep deleting notes the pointer passes over.
     if (_tool == _PrTool.eraser) {
       final seconds =
           (event.localPosition.dx + _hOffset) / kPrPixelsPerSecond;
-      final hit = _hitNoteIndex(clip, seconds);
+      final pitch = _yToPitch(event.localPosition.dy, 0)
+          .clamp(kPrBottomPitch, kPrTopPitch);
+      final hit = _hitNoteIndex(clip, seconds, pitch);
       if (hit != null) {
         widget.service.midiClipRemoveNote(widget.clipId, hit);
-        _selectedNoteIndex = null;
+        _selectedNotes.clear();
       }
       return;
     }
@@ -272,7 +341,7 @@ class _PianoRollState extends State<PianoRoll> {
       setState(() => _drawLen = end - _drawStart);
       return;
     }
-    if (_dragNoteIndex == null) return;
+    if (_dragGroup.isEmpty) return;
     final seconds =
         (event.localPosition.dx + _hOffset) / kPrPixelsPerSecond;
     const minLen = 0.05;
@@ -281,23 +350,51 @@ class _PianoRollState extends State<PianoRoll> {
       final end = math.max(_origStart + minLen, _snapPos(seconds));
       _previewStart = _origStart;
       _previewLen = end - _origStart;
+      _dragPreviews = {
+        _dragNoteIndex!: (_previewStart, _previewLen, _origPitch)
+      };
+      _didEdit = _previewStart != _origStart || _previewLen != _origLen;
     } else {
+      final ref = _dragGroup.firstWhere((s) => s.index == _dragNoteIndex,
+          orElse: () => _dragGroup.first);
       // grabOffset = press - origStart, so this is origStart + delta.
       // (Adding _origStart here as well doubled it: notes far from the
       // clip head jumped 2x their position on the first move — the
       // "dragged notes disappear" bug.)
-      _previewStart = math.max(0.0, _snapPos(seconds - _grabOffsetSeconds));
-      _previewLen = _origLen;
-      _previewPitch = _yToPitch(event.localPosition.dy, 0)
+      final start = math.max(0.0, _snapPos(seconds - _grabOffsetSeconds));
+      // One delta for every note: clamping each note independently would
+      // collapse the rhythm at the clip start.
+      var delta = start - ref.start;
+      final minStart = _dragGroup.map((s) => s.start).reduce(math.min);
+      if (delta < -minStart) delta = -minStart;
+
+      final pitch = _yToPitch(event.localPosition.dy, 0)
           .clamp(kPrBottomPitch, kPrTopPitch);
+      final minPitch = _dragGroup.map((s) => s.pitch).reduce(math.min);
+      final maxPitch = _dragGroup.map((s) => s.pitch).reduce(math.max);
+      var deltaPitch = pitch - ref.pitch;
+      deltaPitch = deltaPitch.clamp(
+          kPrBottomPitch - minPitch, kPrTopPitch - maxPitch);
+
+      _previewStart = ref.start + delta;
+      _dragPreviews = {
+        for (final s in _dragGroup)
+          s.index: (s.start + delta, s.length, s.pitch + deltaPitch)
+      };
+      _didEdit = delta.abs() > 1e-9 || deltaPitch != 0;
     }
-    _didEdit = _previewStart != _origStart ||
-        _previewLen != _origLen ||
-        _previewPitch != _origPitch;
     setState(() {});
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    if (_marqueeActive) {
+      _marqueeActive = false;
+      _marqueeStart = null;
+      _marqueeCurrent = null;
+      _marqueeBase = const {};
+      setState(() {});
+      return;
+    }
     if (_drawing) {
       // One undo entry per drawn note.
       widget.service.midiClipAddNote(
@@ -307,28 +404,53 @@ class _PianoRollState extends State<PianoRoll> {
       setState(() {});
       return;
     }
-    if (_pendingDeselect) {
-      _pendingDeselect = false;
-      _selectedNoteIndex = null;
-      setState(() {});
-      return;
-    }
-    final index = _dragNoteIndex;
-    if (index != null && _didEdit) {
-      widget.service.midiClipSetNote(
-          widget.clipId, index, _previewPitch, _previewStart, _previewLen);
-    }
+    if (_dragGroup.isNotEmpty && _didEdit) _commitDrag();
+    _dragGroup = const [];
+    _dragPreviews = const {};
     _dragNoteIndex = null;
+    _resizing = false;
     _didEdit = false;
     setState(() {});
+  }
+
+  /// Commits every note moved by the gesture (the engine records the whole
+  /// batch as one undo entry).
+  void _commitDrag() {
+    final indices = <int>[];
+    final pitches = <int>[];
+    final starts = <double>[];
+    final lengths = <double>[];
+    for (final edit in _dragGroup) {
+      final preview = _dragPreviews[edit.index];
+      if (preview == null) continue;
+      final (start, length, pitch) = preview;
+      if ((start - edit.start).abs() < 1e-9 &&
+          (length - edit.length).abs() < 1e-9 &&
+          pitch == edit.pitch) {
+        continue; // unchanged note: don't dirty the undo history
+      }
+      indices.add(edit.index);
+      pitches.add(pitch);
+      starts.add(start);
+      lengths.add(length);
+    }
+    if (indices.isEmpty) return;
+    widget.service.midiClipSetNotes(
+        widget.clipId, indices, pitches, starts, lengths);
   }
 
   void _onPointerCancel(PointerCancelEvent event) {
     _drawing = false;
     _drawLen = 0;
+    _dragGroup = const [];
+    _dragPreviews = const {};
     _dragNoteIndex = null;
+    _resizing = false;
     _didEdit = false;
-    _pendingDeselect = false;
+    _marqueeActive = false;
+    _marqueeStart = null;
+    _marqueeCurrent = null;
+    _marqueeBase = const {};
     setState(() {});
   }
 
@@ -350,11 +472,18 @@ class _PianoRollState extends State<PianoRoll> {
 
   void _beginNoteDrag(ClipInfo clip, int index, double seconds) {
     final note = clip.notes[index];
-    _selectedNoteIndex = index;
+    if (!_selectedNotes.contains(index)) _selectOnly(index);
+    _dragGroup = [
+      for (final i in _selectedNotes.toList()..sort())
+        if (i >= 0 && i < clip.notes.length)
+          _NoteEdit(i, clip.notes[i].pitch, clip.notes[i].start,
+              clip.notes[i].length),
+    ];
     _dragNoteIndex = index;
-    // Right-edge hot zone (6 px) — only on notes wide enough to have a
-    // body besides the edge: on short notes every grab would resize.
-    _resizing = note.length * kPrPixelsPerSecond >= 14 &&
+    // Right-edge hot zone (6 px) — only on a single note wide enough to
+    // have a body besides the edge: on short notes every grab would resize.
+    _resizing = _dragGroup.length == 1 &&
+        note.length * kPrPixelsPerSecond >= 14 &&
         seconds >= note.start + note.length - 6.0 / kPrPixelsPerSecond;
     _origStart = note.start;
     _origLen = note.length;
@@ -362,8 +491,24 @@ class _PianoRollState extends State<PianoRoll> {
     _grabOffsetSeconds = seconds - note.start;
     _previewStart = note.start;
     _previewLen = note.length;
-    _previewPitch = note.pitch;
+    _dragPreviews = {index: (note.start, note.length, note.pitch)};
     _didEdit = false;
+    setState(() {});
+  }
+
+  /// Deletes every selected note. Remove from the highest index down so the
+  /// remaining indices stay valid after each engine call.
+  void _deleteSelectedNotes() {
+    final clip = _clip;
+    if (clip == null) return;
+    final indices = _selectedNotes
+        .where((i) => i >= 0 && i < clip.notes.length)
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
+    for (final index in indices) {
+      widget.service.midiClipRemoveNote(widget.clipId, index);
+    }
+    _selectedNotes.clear();
     setState(() {});
   }
 
@@ -605,10 +750,8 @@ class _PianoRollState extends State<PianoRoll> {
                   if (event is KeyDownEvent &&
                       (event.logicalKey == LogicalKeyboardKey.delete ||
                           event.logicalKey == LogicalKeyboardKey.backspace) &&
-                      _selectedNoteIndex != null) {
-                    widget.service
-                        .midiClipRemoveNote(widget.clipId, _selectedNoteIndex!);
-                    _selectedNoteIndex = null;
+                      _selectedNotes.isNotEmpty) {
+                    _deleteSelectedNotes();
                   }
                 },
                 child: Column(children: [
@@ -688,8 +831,11 @@ class _PianoRollState extends State<PianoRoll> {
                                         size: Size(gridWidth, gridHeight),
                                         painter: _GridPainter(
                                           clip: clip,
-                                          selectedNoteIndex:
-                                              _selectedNoteIndex,
+                                          // Copy: the painter compares by
+                                          // identity, and the live set is
+                                          // mutated in place.
+                                          selectedNoteIndices:
+                                              Set<int>.of(_selectedNotes),
                                           snapSeconds: _prSnapSeconds(
                                               widget.service.tempoBpm),
                                           beatSeconds: widget
@@ -697,10 +843,13 @@ class _PianoRollState extends State<PianoRoll> {
                                           barSeconds: widget
                                               .service.snapshot.barSeconds,
                                           clipStartSeconds: clip.start,
-                                          dragIndex: _dragNoteIndex,
-                                          dragPreview: _dragNoteIndex != null
-                                              ? (_previewStart, _previewLen,
-                                                  _previewPitch)
+                                          dragPreviews: _dragPreviews,
+                                          marqueeRect: _marqueeActive &&
+                                                  _marqueeStart != null &&
+                                                  _marqueeCurrent != null
+                                              ? Rect.fromPoints(
+                                                  _marqueeStart!,
+                                                  _marqueeCurrent!)
                                               : null,
                                           drawPreview: _drawing
                                               ? (_drawStart, _drawLen,
@@ -866,24 +1015,24 @@ class _PrRulerPainter extends CustomPainter {
 class _GridPainter extends CustomPainter {
   _GridPainter({
     required this.clip,
-    required this.selectedNoteIndex,
+    required this.selectedNoteIndices,
     required this.snapSeconds,
     required this.beatSeconds,
     required this.barSeconds,
     required this.clipStartSeconds,
-    this.dragIndex,
-    this.dragPreview,
+    this.dragPreviews = const {},
+    this.marqueeRect,
     this.drawPreview,
   });
 
   final ClipInfo clip;
-  final int? selectedNoteIndex;
+  final Set<int> selectedNoteIndices;
   final double snapSeconds;
   final double beatSeconds;
   final double barSeconds;
   final double clipStartSeconds;
-  final int? dragIndex; // note being dragged
-  final (double, double, int)? dragPreview; // its live position
+  final Map<int, (double, double, int)> dragPreviews; // index -> live position
+  final Rect? marqueeRect; // rubber-band rectangle, content pixels
   final (double, double, int)? drawPreview; // start, length, pitch
 
   @override
@@ -934,16 +1083,16 @@ class _GridPainter extends CustomPainter {
 
     // Notes (pitch mapped to rows; black keys shaded). Quantized notes draw
     // a ghost outline at their pre-quantize position (§7.5.2 ghost display).
-    // The note being dragged draws at its LIVE preview position so it
-    // follows the pointer instead of jumping on release.
+    // Notes being dragged draw at their LIVE preview position so the whole
+    // group follows the pointer instead of jumping on release.
     for (var i = 0; i < clip.notes.length; i++) {
       final note = clip.notes[i];
-      final isDrag = i == dragIndex && dragPreview != null;
-      final left = (isDrag ? dragPreview!.$1 : note.start) * kPrPixelsPerSecond;
-      final width =
-          ((isDrag ? dragPreview!.$2 : note.length) * kPrPixelsPerSecond)
-              .clamp(3.0, size.width);
-      final top = _pitchToY(isDrag ? dragPreview!.$3 : note.pitch, 0);
+      final drag = dragPreviews[i];
+      final isDrag = drag != null;
+      final left = (drag?.$1 ?? note.start) * kPrPixelsPerSecond;
+      final width = ((drag?.$2 ?? note.length) * kPrPixelsPerSecond)
+          .clamp(3.0, size.width);
+      final top = _pitchToY(drag?.$3 ?? note.pitch, 0);
       if (!isDrag && note.origStart != null) {
         final gLeft = note.origStart! * kPrPixelsPerSecond;
         final gWidth = (note.length * kPrPixelsPerSecond).clamp(3.0, size.width);
@@ -962,29 +1111,49 @@ class _GridPainter extends CustomPainter {
           Paint()..color = const Color(0xFF7FB2F0));
     }
 
-    if (selectedNoteIndex != null &&
-        selectedNoteIndex! >= 0 &&
-        selectedNoteIndex! < clip.notes.length) {
-      final note = clip.notes[selectedNoteIndex!];
-      final left = note.start * kPrPixelsPerSecond;
-      final width = (note.length * kPrPixelsPerSecond).clamp(3.0, size.width);
-      final top = _pitchToY(note.pitch, 0);
+    // Selection outline, following the drag preview when the note is moving.
+    final selectionPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..color = const Color(0xFF4D9DF7);
+    for (final index in selectedNoteIndices) {
+      if (index < 0 || index >= clip.notes.length) continue;
+      final note = clip.notes[index];
+      final drag = dragPreviews[index];
+      final left = (drag?.$1 ?? note.start) * kPrPixelsPerSecond;
+      final width = ((drag?.$2 ?? note.length) * kPrPixelsPerSecond)
+          .clamp(3.0, size.width);
+      final top = _pitchToY(drag?.$3 ?? note.pitch, 0);
       canvas.drawRect(
           Rect.fromLTWH(left, top + 1, width, kPrRowHeight - 2),
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2
-            ..color = const Color(0xFF4D9DF7));
+          selectionPaint);
+    }
+
+    // Rubber-band rectangle for area selection.
+    final marquee = marqueeRect;
+    if (marquee != null && marquee.width > 0 && marquee.height > 0) {
+      final clipped = marquee.intersect(Offset.zero & size);
+      if (!clipped.isEmpty) {
+        canvas.drawRect(
+            clipped,
+            Paint()
+              ..color = const Color(0xFF4D9DF7).withValues(alpha: 0.12));
+        canvas.drawRect(
+            clipped,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1
+              ..color = const Color(0xFF4D9DF7));
+      }
     }
   }
 
   @override
-  @override
   bool shouldRepaint(_GridPainter oldDelegate) =>
       oldDelegate.clip != clip ||
-      oldDelegate.selectedNoteIndex != selectedNoteIndex ||
-      oldDelegate.dragIndex != dragIndex ||
-      oldDelegate.dragPreview != dragPreview ||
+      oldDelegate.selectedNoteIndices != selectedNoteIndices ||
+      oldDelegate.dragPreviews != dragPreviews ||
+      oldDelegate.marqueeRect != marqueeRect ||
       oldDelegate.drawPreview != drawPreview;
 }
 

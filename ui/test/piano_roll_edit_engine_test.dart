@@ -40,4 +40,33 @@ void main() {
     service.midiClipRemoveNote(clipId, 0);
     expect(service.snapshot.tracks.first.clips.first.notes, hasLength(1));
   });
+
+  test('engine: setNotes moves a group as one undo entry', () {
+    final service = EngineService();
+    addTearDown(service.dispose);
+
+    service.addTrack('Synth', 6, type: 1);
+    final trackId = service.snapshot.tracks.first.id;
+    service.addMidiClip(trackId, 0.0, 8.0);
+    final clipId = service.snapshot.tracks.first.clips.first.id;
+    service.midiClipAddNote(clipId, 64, 0.8, 0.1, 0.3);
+    service.midiClipAddNote(clipId, 67, 0.8, 0.5, 0.2);
+
+    // The piano roll commits a multi-note drag with one batch call.
+    service.midiClipSetNotes(
+        clipId, [0, 1], [65, 68], [1.1, 1.5], [0.3, 0.2]);
+    var notes = service.snapshot.tracks.first.clips.first.notes;
+    expect(notes[0].pitch, 65);
+    expect(notes[0].start, closeTo(1.1, 1e-9));
+    expect(notes[1].pitch, 68);
+    expect(notes[1].start, closeTo(1.5, 1e-9));
+
+    // Undo must revert BOTH notes (the batch is a single history entry).
+    service.undo();
+    notes = service.snapshot.tracks.first.clips.first.notes;
+    expect(notes[0].pitch, 64);
+    expect(notes[0].start, closeTo(0.1, 1e-9));
+    expect(notes[1].pitch, 67);
+    expect(notes[1].start, closeTo(0.5, 1e-9));
+  });
 }

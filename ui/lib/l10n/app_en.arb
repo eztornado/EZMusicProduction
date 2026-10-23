@@ -68,7 +68,7 @@
 
   "pianoRollClipUnavailable": "Clip unavailable",
   "pianoRollTitle": "Piano roll — {name}",
-  "pianoRollHint": "click: add · drag: move · edge: length · Del: delete",
+  "pianoRollHint": "drag empty: select · drag: move · edge: length · Del: delete",
   "pianoRollUndock": "Undock into its own window",
   "pianoRollToolMove": "Move/resize notes",
   "pianoRollToolDraw": "Draw notes",

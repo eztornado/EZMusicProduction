@@ -72,7 +72,7 @@
   "pianoRollClipUnavailable": "Clip no disponible",
   "pianoRollTitle": "Piano roll — {name}",
   "@pianoRollTitle": { "placeholders": { "name": { "type": "String" } } },
-  "pianoRollHint": "click: añadir · arrastrar: mover · borde: largo · Supr: borrar",
+  "pianoRollHint": "arrastrar en vacío: seleccionar · arrastrar: mover · borde: largo · Supr: borrar",
   "pianoRollUndock": "Desacoplar en su propia ventana",
   "pianoRollToolMove": "Mover/estirar notas",
   "pianoRollToolDraw": "Dibujar notas",

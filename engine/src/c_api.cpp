@@ -788,6 +788,36 @@ CadenceResult cadence_engine_midi_clip_set_note(CadenceEngine* engine, CadenceCl
                ? kCadenceErrorNotFound : kCadenceOk;
 }
 
+CadenceResult cadence_engine_midi_clip_set_notes(CadenceEngine* engine, CadenceClipId clip_id,
+                                                 const int* note_indices,
+                                                 const int* pitches,
+                                                 const double* start_seconds,
+                                                 const double* length_seconds,
+                                                 int count)
+{
+    if (engine == nullptr || count < 0)
+        return kCadenceErrorNullArgument;
+    if (count > 0 && (note_indices == nullptr || pitches == nullptr
+                      || start_seconds == nullptr || length_seconds == nullptr))
+        return kCadenceErrorNullArgument;
+
+    std::vector<cadence::MidiNoteEdit> edits;
+    edits.reserve((size_t) count);
+    for (int i = 0; i < count; ++i)
+    {
+        if (! std::isfinite(start_seconds[i]) || ! std::isfinite(length_seconds[i]))
+            return kCadenceErrorInvalidArgument;
+        cadence::MidiNoteEdit edit;
+        edit.index = note_indices[i];
+        edit.pitch = pitches[i];
+        edit.startSeconds = start_seconds[i];
+        edit.lengthSeconds = length_seconds[i];
+        edits.push_back(edit);
+    }
+    return asEngine(engine)->midiClipSetNotes(clip_id, edits).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
 double cadence_engine_clip_note_orig_start_at(CadenceEngine* engine, CadenceClipId clip_id,
                                               int index)
 {
