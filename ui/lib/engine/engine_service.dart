@@ -333,7 +333,9 @@ class EngineService extends ChangeNotifier {
   /// Closes and re-opens the audio device: recovers from CoreAudio
   /// client kills (overrun disabling) without restarting the app.
   String? restartAudio() {
-    stop();
+    // The engine preserves the playhead/playing state and finalizes any
+    // active take. Do NOT stop() first: that would rewind to 0 and lose the
+    // user's position on a device hiccup.
     final result = _engine.restartAudio();
     if (!result) {
       statusMessage = L10n.current.serviceAudioDeviceError(_engine.lastError);
@@ -361,13 +363,16 @@ class EngineService extends ChangeNotifier {
   }
 
   bool get audioInitialised => _engine.audioInitialised;
-
-  bool _audioOpened = false;
+  bool get audioDeviceRunning => _engine.audioDeviceRunning;
+  int get audioXRunCount => _engine.audioXRunCount;
+  int get audioRecoveryCount => _engine.audioRecoveryCount;
+  String get lastAudioError => _engine.lastAudioError;
 
   /// Opens the audio device on first use. Returns the error (or null).
+  /// A failed open is retried on the next Play instead of being cached
+  /// forever: UR22 can be busy for a few seconds after another app releases it.
   String? _ensureAudio() {
-    if (_audioOpened) return null;
-    _audioOpened = true;
+    if (_engine.audioInitialised) return null;
     return initialiseDevice();
   }
 
@@ -1002,6 +1007,12 @@ class EngineService extends ChangeNotifier {
   String? openTrackInstrumentEditor(int trackId) {
     final result = _engine.openInstrumentEditorWithClip(
         trackId, editorClipId ?? 0);
+    return result == CadenceResult.ok ? null : _engine.lastError;
+  }
+
+  /// Opens a master insert's native editor (double-click in the mixer).
+  String? openMasterFxEditor(int slotIndex) {
+    final result = _engine.openMasterFxEditor(slotIndex);
     return result == CadenceResult.ok ? null : _engine.lastError;
   }
 
@@ -1828,6 +1839,7 @@ class EngineService extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
     _engine.dispose();
     super.dispose();

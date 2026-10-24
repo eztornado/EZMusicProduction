@@ -53,7 +53,8 @@ final class CadenceEngine {
   /// this process (sub-windows attach to the main window's engine — the
   /// dylib and its globals are process-wide).
   CadenceEngine({String? dylibPath, int? attachHandleAddress})
-      : _lib = DynamicLibrary.open(resolveEngineDylib(dylibPath)) {
+      : _lib = DynamicLibrary.open(resolveEngineDylib(dylibPath)),
+        _ownsHandle = attachHandleAddress == null {
 
     _create = _lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>(
         'cadence_engine_create');
@@ -67,6 +68,14 @@ final class CadenceEngine {
         void Function(Pointer<Void>)>('cadence_engine_initialise_audio_background');
     _audioInitialised = _lib.lookupFunction<Int32 Function(Pointer<Void>),
         int Function(Pointer<Void>)>('cadence_engine_audio_initialised');
+    _audioDeviceRunning = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_audio_device_running');
+    _audioXRunCount = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_audio_xrun_count');
+    _audioRecoveryCount = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_audio_recovery_count');
+    _lastAudioError = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
+        Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_last_audio_error');
     _newProject = _lib.lookupFunction<Int32 Function(Pointer<Void>, Double),
         int Function(Pointer<Void>, double)>('cadence_engine_new_project');
     _addTrack = _lib.lookupFunction<
@@ -216,6 +225,8 @@ final class CadenceEngine {
         Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_master_fx_name_at');
     _masterFxBypassAt = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
         int Function(Pointer<Void>, int)>('cadence_engine_master_fx_bypass_at');
+    _masterOpenFxEditor = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)>('cadence_engine_open_master_fx_editor');
     _currentOutputDeviceName = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
         Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_current_output_device_name');
     _currentInputDeviceName = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
@@ -547,6 +558,8 @@ final class CadenceEngine {
   }
 
   final DynamicLibrary _lib;
+  final bool _ownsHandle;
+  bool _disposed = false;
   late final Pointer<Void> _handle;
 
   /// Address of the wrapped engine (sub-windows attach to it).
@@ -558,6 +571,10 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>) _restartAudio;
   late final void Function(Pointer<Void>) _initialiseAudioBg;
   late final int Function(Pointer<Void>) _audioInitialised;
+  late final int Function(Pointer<Void>) _audioDeviceRunning;
+  late final int Function(Pointer<Void>) _audioXRunCount;
+  late final int Function(Pointer<Void>) _audioRecoveryCount;
+  late final Pointer<Utf8> Function(Pointer<Void>) _lastAudioError;
   late final int Function(Pointer<Void>, double) _newProject;
   late final int Function(Pointer<Void>, Pointer<Utf8>, int, int) _addTrack;
   late final int Function(Pointer<Void>, int) _trackType;
@@ -598,6 +615,7 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>) _masterFxCount;
   late final Pointer<Utf8> Function(Pointer<Void>, int) _masterFxNameAt;
   late final int Function(Pointer<Void>, int) _masterFxBypassAt;
+  late final int Function(Pointer<Void>, int) _masterOpenFxEditor;
   late final int Function(Pointer<Void>, int, int) _midiClipRemoveNote;
   late final int Function(Pointer<Void>, int, int, int, double, double) _midiClipSetNote;
   late final int Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Int32>,
@@ -1253,6 +1271,8 @@ final class CadenceEngine {
   String masterFxNameAt(int slotIndex) =>
       _masterFxNameAt(_handle, slotIndex).toDartString();
   bool masterFxBypassAt(int slotIndex) => _masterFxBypassAt(_handle, slotIndex) != 0;
+  int openMasterFxEditor(int slotIndex) =>
+      _masterOpenFxEditor(_handle, slotIndex);
 
   // ---- device configuration ----
 
@@ -1410,12 +1430,20 @@ final class CadenceEngine {
   bool restartAudio() => _restartAudio(_handle) == 0;
   void initialiseAudioInBackground() => _initialiseAudioBg(_handle);
   bool get audioInitialised => _audioInitialised(_handle) != 0;
+  bool get audioDeviceRunning => _audioDeviceRunning(_handle) != 0;
+  int get audioXRunCount => _audioXRunCount(_handle);
+  int get audioRecoveryCount => _audioRecoveryCount(_handle);
+  String get lastAudioError => _lastAudioError(_handle).toDartString();
 
   int render(String outPath, double maxSeconds) =>
       _withUtf8(outPath, (p) => _render(_handle, p, maxSeconds));
 
   void dispose() {
-    _destroy(_handle);
+    if (_disposed) return;
+    _disposed = true;
+    // Sub-windows attach to the main window's engine: only the owner may
+    // destroy it. Closing an undocked mixer must not kill playback.
+    if (_ownsHandle) _destroy(_handle);
   }
 }
 
