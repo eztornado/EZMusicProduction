@@ -948,6 +948,11 @@ private:
 
     std::unique_ptr<OutputCallback> outputCallback_;
     std::unique_ptr<MidiInCallback> midiInCallback_;
+    // Remembered input device from the settings file. The app starts
+    // output-only; inputs are opened on demand when recording. Starting a
+    // wedged UR22 input can block AudioDeviceStart forever and wedge
+    // CoreAudio for every process, so launch must never touch it.
+    juce::String preferredInputDeviceName_;
     std::atomic<bool> messageLoopRunning_ { false };
     void startMessageLoop();
     void stopMessageLoop();
@@ -974,6 +979,10 @@ private:
         audioCallbackCount_.fetch_add(1, std::memory_order_relaxed);
     }
     void prepareTransportForDevice(juce::AudioIODevice* device);
+    // Reopen the current device with inputs when the user starts recording.
+    // The initial device open is output-only so a hung input driver cannot
+    // freeze the app at launch.
+    juce::Result openInputChannels();
     void handleAudioDeviceAboutToStart(juce::AudioIODevice* device);
     void handleAudioDeviceStopped(bool intentional);
     void handleAudioDeviceError(const juce::String& message);

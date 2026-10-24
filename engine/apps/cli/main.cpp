@@ -44,6 +44,8 @@ void printUsage()
         "      verifies the master bus fader and master insert chain.\n"
         "  cadence-cli devrestart\n"
         "      restarts the UR22 while playing and checks device/position.\n"
+        "  cadence-cli devswitchin <input> <buffer>\n"
+        "      opens UR22 input+output at 48 kHz (device diagnostic).\n"
         "  cadence-cli churntest\n"
         "      swaps instrument/fx snapshots while the audio thread renders.\n"
         "  cadence-cli editortest\n"
@@ -580,21 +582,23 @@ int cmdDocTest(const char* dirPath)
 }
 
 
-int cmdTestDeviceSwitch(int bufferSize)
+int cmdTestDeviceSwitch(int bufferSize, const char* inputName = "")
 {
     cadence::Engine engine;
     engine.initialise();
-    std::printf("BEFORE: output=%s buffer=%d\n",
+    std::printf("BEFORE: output=%s buffer=%d inputs=%d\n",
                 engine.currentOutputDeviceName().toRawUTF8(),
-                engine.currentBufferSizeSamples());
+                engine.currentBufferSizeSamples(),
+                engine.deviceInputChannelCount());
 
     const auto r = engine.setDeviceConfig(
-        "Steinberg UR22", "", 48000, bufferSize);
+        "Steinberg UR22", inputName, 48000, bufferSize);
     std::printf("setDeviceConfig: %s\n",
                 r.failed() ? r.getErrorMessage().toRawUTF8() : "ok");
-    std::printf("AFTER: output=%s buffer=%d\n",
+    std::printf("AFTER: output=%s buffer=%d inputs=%d\n",
                 engine.currentOutputDeviceName().toRawUTF8(),
-                engine.currentBufferSizeSamples());
+                engine.currentBufferSizeSamples(),
+                engine.deviceInputChannelCount());
     return 0;
 }
 
@@ -959,6 +963,10 @@ int cmdRenderProject(const char* path, const char* outPath,
     {
         std::fprintf(stderr, "warn: device: %s\n", engine.lastErrorUtf8());
     }
+    std::fprintf(stderr, "device: output=%s buffer=%d inputs=%d\n",
+                 engine.currentOutputDeviceName().toRawUTF8(),
+                 engine.currentBufferSizeSamples(),
+                 engine.deviceInputChannelCount());
     const auto loaded = engine.loadProject(juce::File(juce::String::fromUTF8(path)));
     if (loaded.failed())
     {
@@ -3304,9 +3312,9 @@ int cmdRecTest()
     const auto track = engine.addTrack("Rec", 0);
     engine.setTrackArmed(track, true);
 
-    if (engine.startRecord().failed())
+    if (const auto rec = engine.startRecord(); rec.failed())
     {
-        std::fprintf(stderr, "error: %s\n", engine.lastErrorUtf8());
+        std::fprintf(stderr, "error: %s\n", rec.getErrorMessage().toRawUTF8());
         cadence::Engine::setDebugLoopback(false);
         return 1;
     }
@@ -3340,9 +3348,9 @@ int cmdRecTest()
     engine.seek(0.0);
     const auto midiTrack = engine.addTrack("Synth", 8, cadence::Track::Type::Instrument);
     engine.setTrackArmed(midiTrack, true);
-    if (engine.startRecord().failed())
+    if (const auto rec = engine.startRecord(); rec.failed())
     {
-        std::fprintf(stderr, "error: %s\n", engine.lastErrorUtf8());
+        std::fprintf(stderr, "error: %s\n", rec.getErrorMessage().toRawUTF8());
         cadence::Engine::setDebugLoopback(false);
         return 1;
     }
@@ -3818,6 +3826,9 @@ int main(int argc, char** argv)
 
     if (cmd == "devswitch")
         return cmdTestDeviceSwitch(argc > 2 ? std::atoi(argv[2]) : 256);
+
+    if (cmd == "devswitchin" && argc >= 4)
+        return cmdTestDeviceSwitch(std::atoi(argv[3]), argv[2]);
 
     if (cmd == "mastertest")
         return cmdMasterTest();

@@ -2811,14 +2811,19 @@ juce::Result Engine::initialise()
             return;
         }
 
-        const auto setup = deviceManager_.getAudioDeviceSetup();
-        if (setup.outputDeviceName.isNotEmpty()
-            || setup.inputDeviceName.isNotEmpty())
-            deviceManager_.restartLastAudioDevice();
+        // Open output-only at launch. Opening a wedged input device (UR22)
+        // can block forever in AudioDeviceStart and take CoreAudio down with
+        // it. Inputs are opened on demand by startRecord().
+        auto setup = deviceManager_.getAudioDeviceSetup();
+        setup.inputDeviceName = {};
+        setup.useDefaultInputChannels = false;
+        setup.inputChannels.clear();
+        if (setup.outputDeviceName.isNotEmpty())
+            deviceManager_.setAudioDeviceSetup(setup, true);
 
         if (deviceManager_.getCurrentAudioDevice() == nullptr)
         {
-            const auto err = deviceManager_.initialiseWithDefaultDevices(2, 2);
+            const auto err = deviceManager_.initialiseWithDefaultDevices(0, 2);
             if (err.isNotEmpty())
             {
                 error = juce::Result::fail(err);
@@ -3071,6 +3076,9 @@ juce::StringArray Engine::inputDeviceNames()
 
 juce::String Engine::currentInputDeviceName() const
 {
+    // Inputs are not opened at launch; show the remembered choice.
+    if (preferredInputDeviceName_.isNotEmpty())
+        return preferredInputDeviceName_;
     return currentOutputDeviceName(); // one CoreAudio device covers in+out
 }
 
@@ -3134,7 +3142,19 @@ juce::Result Engine::setDeviceConfig(const juce::String& outputDevice,
         if (outputDevice.isNotEmpty())
             setup.outputDeviceName = outputDevice;
         if (inputDevice.isNotEmpty())
+        {
             setup.inputDeviceName = inputDevice;
+            // The live device is normally output-only, so inputChannels is
+            // empty and numInputChansNeeded is 0. JUCE's
+            // useDefaultInputChannels keeps that stored 0, so set the first
+            // input pair explicitly; setAudioDeviceSetup then derives the
+            // needed channel count from the bitset.
+            setup.useDefaultInputChannels = false;
+            setup.inputChannels.clear();
+            setup.inputChannels.setBit(0);
+            setup.inputChannels.setBit(1);
+            preferredInputDeviceName_ = inputDevice;
+        }
         if (sampleRate > 0)
             setup.sampleRate = sampleRate;
         if (bufferSize > 0)
@@ -3164,6 +3184,38 @@ juce::Result Engine::setDeviceConfig(const juce::String& outputDevice,
             transport_->play();
     });
     return result;
+}
+
+juce::Result Engine::openInputChannels()
+{
+    if (deviceInputChannelCount() > 0)
+        return juce::Result::ok();
+
+    juce::String inputName = preferredInputDeviceName_;
+    if (inputName.isEmpty())
+    {
+        const auto inputs = inputDeviceNames();
+        const auto outputName = currentOutputDeviceName();
+        if (inputs.contains(outputName))
+            inputName = outputName;
+        else if (! inputs.isEmpty())
+            inputName = inputs[0];
+    }
+    if (inputName.isEmpty())
+        return juce::Result::fail("no audio input device available");
+
+    double rate = 0.0;
+    if (auto* device = deviceManager_.getCurrentAudioDevice())
+        rate = device->getCurrentSampleRate();
+
+    const auto result = setDeviceConfig(currentOutputDeviceName(), inputName,
+                                        rate, currentBufferSizeSamples());
+    if (result.failed())
+        return result;
+    preferredInputDeviceName_ = inputName;
+    if (deviceInputChannelCount() == 0)
+        return juce::Result::fail("audio input did not open: " + inputName);
+    return juce::Result::ok();
 }
 
 juce::Array<double> Engine::availableSampleRates() const
@@ -3277,9 +3329,21 @@ juce::Result Engine::saveDeviceSettings(const juce::File& file) const
 {
     auto* root = new juce::DynamicObject();
     if (auto state = deviceManager_.createStateXml())
+    {
+        // The live device is normally output-only (inputs open on demand),
+        // so put the remembered input device back into the saved XML.
+        if (preferredInputDeviceName_.isNotEmpty())
+            state->setAttribute("audioInputDeviceName",
+                                preferredInputDeviceName_);
+        // Do not persist the input channel mask: loadDeviceSettings() would
+        // use it to open inputs at launch, which is exactly what we avoid.
+        state->removeAttribute("audioDeviceInChans");
         root->setProperty("deviceState", state->createDocument(juce::String()));
+    }
     else
+    {
         root->setProperty("deviceState", "");
+    }
 
     juce::Array<juce::var> midiInputs;
     for (const auto& device : juce::MidiInput::getAvailableDevices())
@@ -3308,9 +3372,20 @@ juce::Result Engine::loadDeviceSettings(const juce::File& file)
     if (stateText.isNotEmpty())
     {
         if (auto xml = juce::parseXML(stateText))
-            deviceManager_.initialise(2, 2, xml.get(), true);
+        {
+            // Keep the user's input choice for when recording starts, but
+            // never open it during launch: a wedged UR22 input blocks
+            // AudioDeviceStart forever and wedges CoreAudio system-wide.
+            preferredInputDeviceName_ =
+                xml->getStringAttribute("audioInputDeviceName");
+            xml->removeAttribute("audioInputDeviceName");
+            xml->removeAttribute("audioDeviceInChans");
+            deviceManager_.initialise(0, 2, xml.get(), true);
+        }
         else
-            deviceManager_.initialiseWithDefaultDevices(2, 2);
+        {
+            deviceManager_.initialiseWithDefaultDevices(0, 2);
+        }
 
         // The settings file opens the device BEFORE the first Play. Attach
         // the callback now; otherwise the first Play used to call
@@ -4825,6 +4900,23 @@ juce::Result Engine::startRecord()
     auto project = std::atomic_load(&project_);
     if (project == nullptr)
         return fail("no project");
+
+    // The app launches output-only so a wedged input driver cannot freeze
+    // startup. Open the remembered input only when the user actually records
+    // an audio track.
+    bool anyAudioArmed = false;
+    for (const auto& track : project->tracks)
+        if (track.armed && track.type == Track::Type::Audio)
+        {
+            anyAudioArmed = true;
+            break;
+        }
+    if (anyAudioArmed)
+    {
+        const auto inputResult = openInputChannels();
+        if (inputResult.failed())
+            return inputResult;
+    }
 
     auto list = std::make_shared<CaptureList>();
     const int capacity = (int) (300.0 * project->sampleRate); // 5 min per track
