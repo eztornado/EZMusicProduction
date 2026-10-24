@@ -7,6 +7,7 @@
 #include <cadence/model.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -214,10 +215,14 @@ public:
     // host transport. Without this they idle forever.
     juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override;
 
-    // Queue an All-NOTES-OFF + sustain-off injection for the next audio
-    // blocks: kills stuck plugin voices on stop/pause/seek (the synth path
-    // had its own allNotesOff, but PLUGINS never received one).
-    void requestPanic() { panicRequested_.store(true); }
+    // Queue a full MIDI panic for the next audio block: sustain-off, explicit
+    // note-offs for every pitch, All-Sound-Off and All-Notes-Off. The audio
+    // thread compares a generation counter, so a request can never be lost
+    // between a block that started before stop/seek and the next one.
+    void requestPanic()
+    {
+        panicGeneration_.fetch_add(1, std::memory_order_release);
+    }
 
     // Metering: read-and-reset peaks (float bits in an atomic; the audio
     // thread is the only writer). trackIndex is the position in the snapshot.
@@ -245,7 +250,8 @@ private:
     std::map<TrackId, std::unique_ptr<juce::Synthesiser>> synths_;
     double synthsRate_ = 0.0;
     std::map<TrackId, int> lastSustainCc_; // audio thread only
-    std::atomic<bool> panicRequested_ { false };
+    std::atomic<std::uint64_t> panicGeneration_ { 0 };
+    std::uint64_t lastPanicGeneration_ = 0; // audio thread only
     juce::AudioBuffer<float> masterBuffer_;
     std::atomic<std::uint32_t> masterPeaks_[2] {{0}, {0}};
     std::atomic<std::uint32_t> trackPeaks_[kMeterTracks] {};
@@ -275,13 +281,18 @@ private:
     void applyPluginJob(const PluginJob& job, PluginHost& host);
 
     juce::Synthesiser* getOrCreateSynth(TrackId trackId, double rate);
+    void silenceSynthForTrack(TrackId trackId);
     TrackAudioNode* nodeFor(TrackId trackId);
     void processFxChain(TrackAudioNode& node, TrackId trackId, double rate,
                         int numSamples);
     void drainExternalMidi();
+    // Sends the full panic to EVERY instrument track (including muted,
+    // soloed and non-armed ones) even while the transport is stopped. Without
+    // this, a plugin on a non-armed track never sees the panic and its voices
+    // survive until the next play.
+    void panicAllInstrumentTracks(const Project& project, int numSamples);
     void renderArmedInstrumentMonitoring(const juce::AudioSourceChannelInfo& info,
-                                         const Project& project,
-                                         bool injectPanic);
+                                         const Project& project);
 };
 
 // Capture buffer for one armed track while recording. The audio thread

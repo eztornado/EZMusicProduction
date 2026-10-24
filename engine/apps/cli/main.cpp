@@ -627,6 +627,131 @@ using cadence::Project;
 using cadence::ProjectAudioSource;
 using cadence::Track;
 
+std::shared_ptr<const Project> makeStuckProject(const juce::String& instrumentUid,
+                                                bool withNote,
+                                                double clipLength)
+{
+    auto project = std::make_shared<Project>();
+    project->sampleRate = 44100.0;
+    project->nextClipId = 2;
+    Track t;
+    t.id = 1;
+    t.name = "Stuck";
+    t.type = Track::Type::Instrument;
+    t.instrument.pluginUid = instrumentUid;
+    t.instrument.name = "EZSynth";
+    Clip c;
+    c.id = 1;
+    c.startSeconds = 0.0;
+    c.lengthSeconds = clipLength;
+    auto midi = std::make_shared<MidiClipData>();
+    if (withNote)
+        midi->notes.push_back({ 0.0, 3.0, 48, 0.9f, 0.0 });
+    c.midi = midi;
+    t.clips.push_back(c);
+    project->tracks.push_back(t);
+    return project;
+}
+
+// Regression: stop (and the implicit stop at the project end) must silence
+// plugin voices on EVERY instrument track, including tracks that are not
+// armed. Before the panic pass, a note held on an unarmed plugin track was
+// never released while stopped, and sounded again on the next play even
+// though it was not part of the new clip.
+void renderSourceToFile(ProjectAudioSource& source, const juce::File& out,
+                        double seconds, int block);
+
+int cmdStuckTest()
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    constexpr int block = 512;
+
+    cadence::PluginHost host;
+    host.setup();
+    juce::String synthUid;
+    for (int i = 0; i < host.pluginCount(); ++i)
+        if (auto desc = host.descriptionAt(i);
+            desc != nullptr && desc->name == "EZSynth")
+        {
+            synthUid = desc->createIdentifierString();
+            break;
+        }
+    if (synthUid.isEmpty())
+    {
+        std::printf("stucktest: FAIL — EZSynth not registered\n");
+        return 1;
+    }
+
+    auto configure = [&](ProjectAudioSource& source,
+                         const std::shared_ptr<const Project>& project)
+    {
+        source.setPluginHost(&host);
+        source.prepareToPlay(block, 44100.0);
+        source.setProject(project);
+        source.reconcileNodes(*project, host, block, false);
+        // Pad Etéreo: long release and sustain, exactly the kind of voice
+        // that stays audible after a missed note-off.
+        if (auto proc = source.instrumentProcessorFor(1))
+            ezsynth::applyPresetForTest(proc.get(), 5);
+    };
+
+    auto render = [&](ProjectAudioSource& source, int blocks,
+                      juce::AudioBuffer<float>& sink)
+    {
+        for (int i = 0; i < blocks; ++i)
+        {
+            sink.clear();
+            const juce::AudioSourceChannelInfo info { &sink, 0, block };
+            source.getNextAudioBlock(info);
+        }
+    };
+
+    juce::AudioBuffer<float> sink(2, block);
+
+    // 1) Explicit stop while a long note is still held.
+    ProjectAudioSource source;
+    configure(source, makeStuckProject(synthUid, true, 3.0));
+    source.play();
+    render(source, 30, sink); // ~0.35 s: the note is still on
+    source.stop();
+    source.allNotesOff();
+    source.requestPanic();
+    render(source, 4, sink); // deliver the stopped panic pass
+
+    const auto silentProject = makeStuckProject(synthUid, false, 3.0);
+    source.setProject(silentProject);
+    source.reconcileNodes(*silentProject, host, block, false);
+    source.seek(0.0);
+    source.play();
+    const juce::File stopOut(juce::File::createTempFile("ez_stuck_stop.wav"));
+    renderSourceToFile(source, stopOut, 1.0, block);
+    const float stopRms = (float) rmsInRange(formats, stopOut, 0.0, 1.0);
+    stopOut.deleteFile();
+
+    // 2) Implicit stop at the project end: the note outlives the clip.
+    ProjectAudioSource ended;
+    configure(ended, makeStuckProject(synthUid, true, 0.4));
+    ended.play();
+    render(ended, 40, sink); // past the 0.4 s project end
+    const auto endedProject = makeStuckProject(synthUid, false, 3.0);
+    ended.setProject(endedProject);
+    ended.reconcileNodes(*endedProject, host, block, false);
+    ended.seek(0.0);
+    ended.play();
+    const juce::File endOut(juce::File::createTempFile("ez_stuck_end.wav"));
+    renderSourceToFile(ended, endOut, 1.0, block);
+    const float endRms = (float) rmsInRange(formats, endOut, 0.0, 1.0);
+    endOut.deleteFile();
+
+    const float threshold = 0.01f;
+    const bool ok = stopRms < threshold && endRms < threshold;
+    std::printf("stucktest: stop residual=%.5f end residual=%.5f (%s)\n",
+                stopRms, endRms,
+                ok ? "no stuck notes" : "STUCK NOTES!");
+    return ok ? 0 : 1;
+}
+
 std::shared_ptr<const Project> makeChordProject(bool armed, bool withClip,
                                                 int basePitch)
 {
@@ -3273,6 +3398,9 @@ int main(int argc, char** argv)
 
     if (cmd == "polytest")
         return cmdPolyTest();
+
+    if (cmd == "stucktest")
+        return cmdStuckTest();
 
     if (cmd == "chordrectest")
         return cmdChordRecTest();

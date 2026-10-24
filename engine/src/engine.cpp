@@ -133,6 +133,40 @@ float volumeAt(const Track& track, const AutomationCurve* curve,
     }
     return (float) pts.back().value;
 }
+
+// Full MIDI panic. CC123 alone is not enough: several hosted instruments
+// (including our own EZOrquestra) ignore it, and an instrument that only
+// handles note-offs keeps every voice alive after a stop. Sustain-off goes
+// first so the note-offs are not converted back into held notes.
+void addPanicMessages(juce::MidiBuffer& midi)
+{
+    for (int channel = 1; channel <= 16; ++channel)
+    {
+        midi.addEvent(juce::MidiMessage::controllerEvent(channel, 64, 0), 0);
+        for (int note = 0; note < 128; ++note)
+            midi.addEvent(juce::MidiMessage::noteOff(channel, note), 0);
+        midi.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0);
+        midi.addEvent(juce::MidiMessage::controllerEvent(channel, 123, 0), 0);
+    }
+}
+
+// Hard-stop every voice of an internal synth. allNotesOff(..., false) is not
+// enough for PianoVoice: it keeps the voice active while its short release
+// decays, which would be heard again when playback resumes.
+void silenceSynthVoices(juce::Synthesiser& synth)
+{
+    for (int channel = 1; channel <= 16; ++channel)
+        synth.allNotesOff(channel, false);
+    for (int v = 0; v < synth.getNumVoices(); ++v)
+    {
+        auto* voice = synth.getVoice(v);
+        if (voice == nullptr)
+            continue;
+        voice->controllerMoved(64, 0); // release the sustain pedal
+        if (auto* piano = dynamic_cast<PianoVoice*>(voice))
+            piano->hardStop();
+    }
+}
 } // namespace
 
 // Test hook definition (used by RecorderCallback; see setDebugLoopback).
@@ -666,6 +700,14 @@ juce::Synthesiser* ProjectAudioSource::getOrCreateSynth(TrackId trackId, double 
     return slot.get();
 }
 
+void ProjectAudioSource::silenceSynthForTrack(TrackId trackId)
+{
+    const juce::SpinLock::ScopedLockType lock(synthsLock_);
+    auto it = synths_.find(trackId);
+    if (it != synths_.end())
+        silenceSynthVoices(*it->second);
+}
+
 void ProjectAudioSource::pushExternalMidi(const juce::MidiMessage& m)
 {
     const std::scoped_lock lock(externalMutex_);
@@ -694,8 +736,7 @@ void ProjectAudioSource::setRecording(bool r, std::int64_t startSamples,
 // Live monitoring (§7.11): with the transport stopped, armed instrument
 // tracks still voice the incoming MIDI notes through their synth.
 void ProjectAudioSource::renderArmedInstrumentMonitoring(
-    const juce::AudioSourceChannelInfo& info, const Project& project,
-    bool injectPanic)
+    const juce::AudioSourceChannelInfo& info, const Project& project)
 {
     // NOTE: this must render EVERY block while a key is held — the noteOn
     // arrives in exactly one block, and held voices (synth or plugin) only
@@ -713,16 +754,6 @@ void ProjectAudioSource::renderArmedInstrumentMonitoring(
             continue;
 
         blockMidi_.clear();
-        if (injectPanic)
-        {
-            // Stop/pause/seek panic must also reach armed tracks being
-            // monitored with the transport stopped — otherwise a stuck
-            // sustained-loop voice rings forever after stop.
-            blockMidi_.addEvent(
-                juce::MidiMessage::allNotesOff(1), 0);
-            blockMidi_.addEvent(
-                juce::MidiMessage::controllerEvent(1, 64, 0), 0);
-        }
         for (const auto& m : pendingExternal_)
             blockMidi_.addEvent(m, 0);
 
@@ -766,6 +797,51 @@ void ProjectAudioSource::renderArmedInstrumentMonitoring(
         if (numOut > 1)
             info.buffer->addFrom(1, info.startSample, trackScratch_, 1, 0,
                                  info.numSamples, right);
+    }
+}
+
+// Stop/pause/seek panic. This deliberately walks EVERY instrument track,
+// not just armed ones: a plugin on an unarmed track never rendered a panic
+// while the transport was stopped, so its voices survived until the next
+// play and were then heard as notes that are not in the current clip.
+void ProjectAudioSource::panicAllInstrumentTracks(const Project& project,
+                                                  int numSamples)
+{
+    if (numSamples <= 0)
+        return;
+
+    juce::MidiBuffer panicMidi;
+    addPanicMessages(panicMidi);
+
+    for (const auto& track : project.tracks)
+    {
+        if (track.type != Track::Type::Instrument)
+            continue;
+
+        auto* node = nodeFor(track.id);
+        const int prepared =
+            node != nullptr
+                ? node->preparedBlock.load(std::memory_order_acquire)
+                : 0;
+        const bool hasInstrumentPlugin =
+            node != nullptr && node->instrument != nullptr
+            && ! node->instrumentBypass && prepared > 0;
+
+        if (hasInstrumentPlugin)
+        {
+            const int n = std::min(numSamples, prepared);
+            trackScratch_.setSize(2, numSamples, false, false, true);
+            trackScratch_.clear();
+            // Non-owning view: the plugin may have been prepared for a
+            // smaller block than the device is asking for right now.
+            juce::AudioBuffer<float> view(
+                trackScratch_.getArrayOfWritePointers(), 2, n);
+            node->instrument->processBlock(view, panicMidi);
+        }
+        else
+        {
+            silenceSynthForTrack(track.id);
+        }
     }
 }
 
@@ -1330,16 +1406,30 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     drainExternalMidi();
 
     const auto project = std::atomic_load(&project_);
-    // A queued panic (stop/pause/seek) injects All-NOTES-OFF + pedal-off for
-    // every track while audio runs — plugins (SINE Player, ZENOLOGY, LABS)
-    // otherwise keep a stuck voice sounding forever.
-    const bool injectPanic = panicRequested_.exchange(false);
+    // A queued panic (stop/pause/seek) sends a full MIDI panic to every
+    // instrument track while audio runs — plugins (SINE Player, ZENOLOGY,
+    // LABS) otherwise keep a stuck voice sounding forever. The generation
+    // counter is read (not exchanged) so a request made while a block is
+    // already running is guaranteed to be seen by the next block.
+    const auto panicGen = panicGeneration_.load(std::memory_order_acquire);
+    const bool injectPanic = panicGen != lastPanicGeneration_;
+    lastPanicGeneration_ = panicGen;
 
     if (! playing_.load() || project == nullptr)
     {
         info.clearActiveBufferRegion();
         if (project != nullptr)
-            renderArmedInstrumentMonitoring(info, *project, injectPanic);
+        {
+            if (injectPanic)
+            {
+                // Drop live notes queued before the stop; a key held after
+                // the stop arrives in a later block and still monitors.
+                pendingExternal_.clear();
+                lastSustainCc_.clear();
+                panicAllInstrumentTracks(*project, info.numSamples);
+            }
+            renderArmedInstrumentMonitoring(info, *project);
+        }
         return;
     }
 
@@ -1352,11 +1442,26 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     if (blockStart >= endSamples && ! recording_.load())
     {
         playing_.store(false);
+        // The project end is an implicit stop: notes that were still held
+        // must be released, not left frozen until the next play.
+        requestPanic();
         info.clearActiveBufferRegion();
         return;
     }
 
     info.clearActiveBufferRegion();
+
+    if (injectPanic)
+    {
+        pendingExternal_.clear();
+        lastSustainCc_.clear();
+        // Internal synths ignore CC64 through Synthesiser::renderNextBlock,
+        // so a pedal-held voice would survive the MIDI panic. Hard-stop them
+        // here; plugins get the full panic in their MIDI buffer below.
+        for (const auto& track : project->tracks)
+            if (track.type == Track::Type::Instrument)
+                silenceSynthForTrack(track.id);
+    }
 
     bool anySolo = false;
     for (const auto& track : project->tracks)
@@ -1384,12 +1489,9 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
             blockMidi_.clear();
             if (injectPanic)
             {
-                // CC123 all-notes-off + CC64 0: kills stuck/held voices on
-                // plugins and resets the internal synth's sustain state.
-                blockMidi_.addEvent(
-                    juce::MidiMessage::allNotesOff(1), 0);
-                blockMidi_.addEvent(
-                    juce::MidiMessage::controllerEvent(1, 64, 0), 0);
+                // Sustain-off + explicit note-offs + CC120/CC123. CC123
+                // alone is ignored by several hosted instruments.
+                addPanicMessages(blockMidi_);
             }
             if (track.armed)
                 for (const auto& m : pendingExternal_)
@@ -1808,14 +1910,7 @@ void ProjectAudioSource::allNotesOff()
 {
     const juce::SpinLock::ScopedLockType lock(synthsLock_);
     for (auto& [id, synth] : synths_)
-    {
-        synth->allNotesOff(1, true);
-        // A pedal left down (take ending pedaled, live CC) would hold every
-        // future noteOff — reset the voices' sustain state too.
-        for (int v = 0; v < synth->getNumVoices(); ++v)
-            if (auto* voice = synth->getVoice(v))
-                voice->controllerMoved(64, 0);
-    }
+        silenceSynthVoices(*synth);
 }
 
 // AudioPlayHead: report the real transport to plugins. iZotope (Ozone)
@@ -4954,22 +5049,29 @@ void Engine::play() { transport_->play(); }
 void Engine::pause()
 {
     finalizeRecording();
+    // Stop the transport FIRST: a block that starts after this point must
+    // see the panic in its stopped path, where every instrument track is
+    // flushed. Panicking before pausing left a window where the audio thread
+    // could still schedule notes after the panic.
+    transport_->pause();
     transport_->allNotesOff();
     transport_->requestPanic();
-    transport_->pause();
 }
 void Engine::stop()
 {
     finalizeRecording();
+    transport_->stop();
     transport_->allNotesOff();
     transport_->requestPanic();
-    transport_->stop();
 }
 void Engine::seek(double seconds)
 {
+    // Move first, then panic: the generation counter is sampled at the
+    // start of a block, so the panic is delivered with the new position
+    // (or by the next block) instead of racing the old one.
+    transport_->seek(seconds);
     transport_->allNotesOff();
     transport_->requestPanic();
-    transport_->seek(seconds);
 }
 
 double Engine::durationSeconds() const

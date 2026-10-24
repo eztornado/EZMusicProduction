@@ -104,6 +104,19 @@ struct PianoVoice : juce::SynthesiserVoice
 
     bool isVoiceActive() const override { return active; }
 
+    // Transport panic: unlike stopNote(allowTailOff=false), this also drops
+    // the voice claim and envelope immediately. A stopped pass must never
+    // leave a voice "active" to be heard again on the next play.
+    void hardStop()
+    {
+        env = 0.0;
+        active = false;
+        releasing = false;
+        sustained_ = false;
+        pedalDown_ = false;
+        clearCurrentNote();
+    }
+
     // EZSynth LINES: per-voice pitch offset in semitones (default 0 leaves
     // the engine's fallback piano untouched).
     void setWarpTarget(float semis) { warpTarget_ = semis; }
