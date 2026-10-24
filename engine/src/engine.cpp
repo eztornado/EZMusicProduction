@@ -2799,9 +2799,8 @@ juce::Result Engine::initialise()
 {
     juce::Result error = juce::Result::ok();
     runOnMessageThread([&] {
-        // loadDeviceSettings() may already have opened the configured device.
-        // Do NOT call initialiseWithDefaultDevices() here: it would discard
-        // the saved UR22 selection and buffer size on the first Play.
+        // loadDeviceSettings() only parses settings now; it must not start
+        // CoreAudio during Flutter boot (that can deadlock AudioDeviceStart).
         if (deviceManager_.getCurrentAudioDevice() != nullptr)
         {
             deviceManager_.addAudioCallback(outputCallback_.get());
@@ -2811,22 +2810,29 @@ juce::Result Engine::initialise()
             return;
         }
 
-        // Open output-only at launch. Opening a wedged input device (UR22)
-        // can block forever in AudioDeviceStart and take CoreAudio down with
-        // it. Inputs are opened on demand by startRecord().
-        auto setup = deviceManager_.getAudioDeviceSetup();
-        setup.inputDeviceName = {};
-        setup.useDefaultInputChannels = false;
-        setup.inputChannels.clear();
-        if (setup.outputDeviceName.isNotEmpty())
-            deviceManager_.setAudioDeviceSetup(setup, true);
+        // Open output-only: a wedged input device (UR22) can block forever
+        // in AudioDeviceStart. Inputs open on demand in startRecord().
+        juce::String openError;
+        if (savedDeviceState_ != nullptr)
+            openError = deviceManager_.initialise(
+                0, 2, savedDeviceState_.get(), true);
 
         if (deviceManager_.getCurrentAudioDevice() == nullptr)
         {
-            const auto err = deviceManager_.initialiseWithDefaultDevices(0, 2);
-            if (err.isNotEmpty())
+            auto setup = deviceManager_.getAudioDeviceSetup();
+            setup.inputDeviceName = {};
+            setup.useDefaultInputChannels = false;
+            setup.inputChannels.clear();
+            if (setup.outputDeviceName.isNotEmpty())
+                deviceManager_.setAudioDeviceSetup(setup, true);
+        }
+
+        if (deviceManager_.getCurrentAudioDevice() == nullptr)
+        {
+            openError = deviceManager_.initialiseWithDefaultDevices(0, 2);
+            if (openError.isNotEmpty())
             {
-                error = juce::Result::fail(err);
+                error = juce::Result::fail(openError);
                 return;
             }
         }
@@ -3328,7 +3334,12 @@ int Engine::deviceInputChannelCount() const
 juce::Result Engine::saveDeviceSettings(const juce::File& file) const
 {
     auto* root = new juce::DynamicObject();
-    if (auto state = deviceManager_.createStateXml())
+    // The device may not have been opened yet (lazy open). Fall back to the
+    // XML loaded at startup so saving settings does not erase it.
+    auto state = deviceManager_.createStateXml();
+    if (state == nullptr && savedDeviceState_ != nullptr)
+        state = std::make_unique<juce::XmlElement>(*savedDeviceState_);
+    if (state != nullptr)
     {
         // The live device is normally output-only (inputs open on demand),
         // so put the remembered input device back into the saved XML.
@@ -3369,33 +3380,30 @@ juce::Result Engine::loadDeviceSettings(const juce::File& file)
         return juce::Result::fail("invalid settings file");
 
     const auto stateText = root->getProperty("deviceState").toString();
+    savedDeviceState_.reset();
+    savedOutputDeviceName_.clear();
+    savedSampleRate_ = 0.0;
+    savedBufferSize_ = 0;
+    preferredInputDeviceName_.clear();
     if (stateText.isNotEmpty())
     {
         if (auto xml = juce::parseXML(stateText))
         {
-            // Keep the user's input choice for when recording starts, but
-            // never open it during launch: a wedged UR22 input blocks
-            // AudioDeviceStart forever and wedges CoreAudio system-wide.
+            // Remember the user's choices, but do NOT open the device here.
+            // Starting CoreAudio during Flutter boot can deadlock
+            // AudioDeviceStart on the main thread, and a wedged UR22 input
+            // can block forever. initialise() opens it on first play/record.
             preferredInputDeviceName_ =
                 xml->getStringAttribute("audioInputDeviceName");
+            savedOutputDeviceName_ =
+                xml->getStringAttribute("audioOutputDeviceName");
+            savedSampleRate_ =
+                xml->getDoubleAttribute("audioDeviceRate", 0.0);
+            savedBufferSize_ =
+                xml->getIntAttribute("audioDeviceBufferSize", 0);
             xml->removeAttribute("audioInputDeviceName");
             xml->removeAttribute("audioDeviceInChans");
-            deviceManager_.initialise(0, 2, xml.get(), true);
-        }
-        else
-        {
-            deviceManager_.initialiseWithDefaultDevices(0, 2);
-        }
-
-        // The settings file opens the device BEFORE the first Play. Attach
-        // the callback now; otherwise the first Play used to call
-        // initialiseWithDefaultDevices() and silently reset UR22 to the
-        // system default device/buffer.
-        if (deviceManager_.getCurrentAudioDevice() != nullptr)
-        {
-            deviceManager_.addAudioCallback(outputCallback_.get());
-            audioReady_.store(true, std::memory_order_release);
-            audioConfigDirty_.store(true, std::memory_order_release);
+            savedDeviceState_ = std::move(xml);
         }
     }
 
@@ -3420,14 +3428,14 @@ juce::String Engine::currentOutputDeviceName() const
 {
     if (auto* device = deviceManager_.getCurrentAudioDevice())
         return device->getName();
-    return {};
+    return savedOutputDeviceName_;
 }
 
 int Engine::currentBufferSizeSamples() const
 {
     if (auto* device = deviceManager_.getCurrentAudioDevice())
         return device->getCurrentBufferSizeSamples();
-    return 0;
+    return savedBufferSize_;
 }
 
 double Engine::sampleRate() const

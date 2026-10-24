@@ -953,6 +953,13 @@ private:
     // wedged UR22 input can block AudioDeviceStart forever and wedge
     // CoreAudio for every process, so launch must never touch it.
     juce::String preferredInputDeviceName_;
+    // Saved device XML is parsed at launch but NOT opened. Opening CoreAudio
+    // synchronously during Flutter boot can deadlock AudioDeviceStart; the
+    // device opens on the first play/record call instead.
+    std::unique_ptr<juce::XmlElement> savedDeviceState_;
+    juce::String savedOutputDeviceName_;
+    double savedSampleRate_ = 0.0;
+    int savedBufferSize_ = 0;
     std::atomic<bool> messageLoopRunning_ { false };
     void startMessageLoop();
     void stopMessageLoop();

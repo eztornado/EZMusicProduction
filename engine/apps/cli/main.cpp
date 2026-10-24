@@ -958,8 +958,8 @@ int cmdRenderProject(const char* path, const char* outPath,
             std::fprintf(stderr, "warn: device settings: %s\n",
                          loadedSettings.getErrorMessage().toRawUTF8());
     }
-    else if (std::getenv("CADENCE_RENDER_NO_DEVICE") == nullptr
-             && engine.initialise().failed())
+    if (std::getenv("CADENCE_RENDER_NO_DEVICE") == nullptr
+        && engine.initialise().failed())
     {
         std::fprintf(stderr, "warn: device: %s\n", engine.lastErrorUtf8());
     }
