@@ -50,6 +50,8 @@ void printUsage()
         "      replaces the plugin behind an open editor window.\n"
         "  cadence-cli editorloadtest <project.ezmpp>\n"
         "      opens Analog Lab V editors, replaces one, then tears down.\n"
+        "  cadence-cli renderproject <project.ezmpp> <out.wav> [seconds] [bits]\n"
+        "      renders a real project offline (export regression).\n"
         "  cadence-cli vae-test <models-dir>\n"
         "      loads the Magenta MusicVAE checkpoints and runs sample/encode/decode.\n"
         "  cadence-cli ai-test [models-dir]\n"
@@ -934,6 +936,71 @@ int cmdEditorLoadTest(const char* path)
                 opened, replaced,
                 opened > 0 && replaced > 0 ? "ok" : "FAIL");
     return opened > 0 && replaced > 0 ? 0 : 1;
+}
+
+// Load a real project and render it offline. Used to reproduce export
+// crashes/hangs with heavy VST3 instruments (Analog Lab V, ZENOLOGY...).
+int cmdRenderProject(const char* path, const char* outPath,
+                     double maxSeconds, int bits)
+{
+    cadence::Engine engine;
+    if (std::getenv("CADENCE_RENDER_NO_DEVICE") == nullptr
+        && engine.initialise().failed())
+        std::fprintf(stderr, "warn: device: %s\n", engine.lastErrorUtf8());
+    const auto loaded = engine.loadProject(juce::File(juce::String::fromUTF8(path)));
+    if (loaded.failed())
+    {
+        std::printf("renderproject: load failed: %s\n",
+                    loaded.getErrorMessage().toRawUTF8());
+        return 1;
+    }
+    while (engine.hasPendingPluginJobs())
+        engine.pumpOnePluginJob();
+
+    // Diagnostic switches for the app export path: open the Analog Lab V
+    // editor and/or start live playback before the offline render.
+    if (std::getenv("CADENCE_RENDER_OPEN_EDITOR") != nullptr)
+    {
+        for (int i = 0; i < engine.trackCount(); ++i)
+        {
+            const auto id = engine.trackIdAt(i);
+            if (engine.trackType(id) == 1
+                && juce::String(engine.trackInstrumentName(id))
+                       .containsIgnoreCase("Analog Lab"))
+            {
+                engine.openInstrumentEditor(id);
+                break;
+            }
+        }
+    }
+    if (std::getenv("CADENCE_RENDER_PLAY") != nullptr)
+        engine.play();
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto result = engine.renderToFileEx(
+        juce::File(juce::String::fromUTF8(outPath)), maxSeconds, bits);
+    const double secs = std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - t0).count();
+    if (result.failed())
+    {
+        std::printf("renderproject: FAILED after %.1f s: %s\n", secs,
+                    result.getErrorMessage().toRawUTF8());
+        return 1;
+    }
+    std::printf("renderproject: ok in %.1f s -> %s\n", secs, outPath);
+
+    // Keep the AppKit/JUCE loop alive after the render. A VST3 that leaves a
+    // dangling run-loop timer behind crashes here, after the WAV is written —
+    // exactly what the app showed after a successful export.
+    if (std::getenv("CADENCE_RENDER_PUMP") != nullptr)
+    {
+        juce::Timer::callAfterDelay(3000, [] {
+            juce::MessageManager::getInstance()->stopDispatchLoop();
+        });
+        juce::MessageManager::getInstance()->runDispatchLoop();
+        std::printf("renderproject: message loop pump survived\n");
+    }
+    return 0;
 }
 
 // Regression test for the truncated-note bug: a noteOff clamped into every
@@ -3760,6 +3827,18 @@ int main(int argc, char** argv)
             return 1;
         }
         return cmdEditorLoadTest(argv[2]);
+    }
+
+    if (cmd == "renderproject")
+    {
+        if (argc < 4)
+        {
+            printUsage();
+            return 1;
+        }
+        return cmdRenderProject(argv[2], argv[3],
+                               argc > 4 ? std::atof(argv[4]) : 9999.0,
+                               argc > 5 ? std::atoi(argv[5]) : 24);
     }
 
     if (cmd == "chordtest")

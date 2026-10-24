@@ -776,6 +776,8 @@ TrackAudioNode& ProjectAudioSource::ensureNode(TrackId trackId)
 
 void ProjectAudioSource::pushExternalMidi(const juce::MidiMessage& m)
 {
+    if (offlineRender_.load(std::memory_order_acquire))
+        return;
     const std::scoped_lock lock(externalMutex_);
     externalQueue_.push_back(m);
 }
@@ -1698,8 +1700,9 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         return;
 
     // Live MIDI monitoring: empty the input queue so the notes played reach
-    // the armed instrument tracks' synths.
-    drainExternalMidi();
+    // the armed instrument tracks' synths. Offline export has no live input.
+    if (! offlineRender_.load(std::memory_order_acquire))
+        drainExternalMidi();
 
     const auto project = std::atomic_load(&project_);
     // A queued panic (stop/pause/seek) sends a full MIDI panic to every
@@ -6419,8 +6422,16 @@ juce::Result Engine::renderToFile(const juce::File& outFile, double maxSeconds)
 }
 
 // Offline render: NOT realtime — blocks are processed as fast as the CPU
-// allows, at the project sample rate (no resampling, no artifacts). FX
-// chains and instrument plugins are included via a dedicated reconcile.
+// allows, at the project sample rate (no resampling, no artifacts).
+//
+// The app used to build a SECOND ProjectAudioSource for every export, which
+// instantiated a second copy of every VST3. Analog Lab V leaves run-loop
+// timers behind when such a copy is destroyed: the WAV was complete, then the
+// app crashed in AppKit → Analog Lab V a few seconds later. When the live
+// device is open at the project rate we now stop it and render through the
+// EXISTING plugin instances, then reopen it. No duplicate VST3s, no dangling
+// timers. The separate-source path is only a fallback and its instances are
+// quarantined until Engine destruction.
 juce::Result Engine::renderToFileEx(const juce::File& outFile, double maxSeconds,
                                     int bitsPerSample)
 {
@@ -6434,18 +6445,6 @@ juce::Result Engine::renderToFileEx(const juce::File& outFile, double maxSeconds
     const int totalSamples = (int) std::ceil(duration * project->sampleRate);
     if (totalSamples <= 0)
         return fail("nothing to render: project has no clips");
-
-    ProjectAudioSource renderSource;
-    renderSource.setProject(project);
-    // The offline source needs its own plugin nodes (fx chains + instrument
-    // plugins) — reconcile on this thread before rendering. Runs on the
-    // caller (message thread in the app), which is where instantiation
-    // belongs anyway.
-    renderSource.reconcileNodes(*project, pluginHost_, 512, false);
-    // EZOrquestra decodes its program on a loader thread — the offline
-    // render must wait for it or the render is silent.
-    ezorq::waitProgramsLoaded();
-    renderSource.play();
 
     // FileOutputStream appends to existing files; renders must replace.
     outFile.deleteFile();
@@ -6466,21 +6465,94 @@ juce::Result Engine::renderToFileEx(const juce::File& outFile, double maxSeconds
     if (writer == nullptr)
         return fail("cannot create wav writer");
 
-    constexpr int blockSize = 512;
-    juce::AudioBuffer<float> block(2, blockSize);
+    auto writeBlocks = [&](ProjectAudioSource& source, int blockSize) {
+        juce::AudioBuffer<float> block(2, blockSize);
+        for (int pos = 0; pos < totalSamples && source.isPlaying();
+             pos += blockSize)
+        {
+            block.clear();
+            const int n = std::min(blockSize, totalSamples - pos);
+            const juce::AudioSourceChannelInfo info { &block, 0, n };
+            source.getNextAudioBlock(info);
+            if (! writer->writeFromAudioSampleBuffer(block, 0, n))
+                return false;
+        }
+        return true;
+    };
 
-    for (int pos = 0; pos < totalSamples && renderSource.isPlaying(); pos += blockSize)
+    auto* device = deviceManager_.getCurrentAudioDevice();
+    const double deviceRate = device != nullptr
+        ? device->getCurrentSampleRate() : 0.0;
+    const int deviceBlock = device != nullptr
+        ? device->getCurrentBufferSizeSamples() : 0;
+    const double liveRate = transport_->preparedSampleRate() > 0.0
+        ? transport_->preparedSampleRate() : deviceRate;
+    const int liveBlock = transport_->preparedBlockSize() > 0
+        ? transport_->preparedBlockSize() : deviceBlock;
+    const bool canUseLive = !isRecording()
+        && juce::MessageManager::getInstance()->isThisTheMessageThread()
+        && device != nullptr
+        && liveRate > 0.0
+        && std::abs(liveRate - project->sampleRate) < 0.5;
+
+    if (canUseLive)
     {
-        block.clear();
-        const juce::AudioSourceChannelInfo info { &block, 0, std::min(blockSize, totalSamples - pos) };
-        renderSource.getNextAudioBlock(info);
-        writer->writeFromAudioSampleBuffer(block, 0, info.numSamples);
+        const bool wasPlaying = transport_->isPlaying();
+        const double position = transport_->positionSeconds();
+        const bool metronome = transport_->metronomeEnabled();
+        const int blockSize = liveBlock > 0
+            ? juce::jmin(512, liveBlock) : 512;
+
+        audioReady_.store(false, std::memory_order_release);
+        intentionalDeviceStop_.store(true, std::memory_order_release);
+        transport_->pause();
+        transport_->requestPanic();
+        deviceManager_.removeAudioCallback(outputCallback_.get());
+        deviceManager_.closeAudioDevice();
+        transport_->flushAllNotes();
+        transport_->setMetronome(false);
+        transport_->setOfflineRender(true);
+        transport_->seek(0.0);
+        transport_->play();
+
+        bool deviceStopped = true;
+        auto restore = [&] {
+            if (! deviceStopped)
+                return;
+            deviceStopped = false;
+            transport_->setOfflineRender(false);
+            transport_->stop();
+            transport_->seek(position);
+            transport_->setMetronome(metronome);
+            if (wasPlaying)
+                transport_->play();
+            else
+                transport_->pause();
+            restartAudio();
+        };
+        juce::ScopeGuard guard { restore };
+
+        if (! writeBlocks(*transport_, blockSize))
+            return fail("cannot write " + outFile.getFullPathName());
+        writer.reset();
+        return juce::Result::ok();
     }
 
+    // Fallback: separate source. Keep it alive until the Engine dies — some
+    // VST3s schedule run-loop work even without an editor, and destroying the
+    // instance immediately is what crashed the app after the export.
+    auto renderSource = std::make_unique<ProjectAudioSource>();
+    renderSource->setProject(project);
+    renderSource->reconcileNodes(*project, pluginHost_, 512, false);
+    // EZOrquestra decodes its program on a loader thread — the offline
+    // render must wait for it or the render is silent.
+    ezorq::waitProgramsLoaded();
+    renderSource->play();
+    if (! writeBlocks(*renderSource, 512))
+        return fail("cannot write " + outFile.getFullPathName());
+    renderSource->stop();
+    offlineRenderSources_.push_back(std::move(renderSource));
     writer.reset();
-    if (stream != nullptr)
-        stream->flush();
-
     return juce::Result::ok();
 }
 

@@ -227,6 +227,19 @@ public:
     void setRecording(bool r, std::int64_t startSamples,
                       std::shared_ptr<const CaptureList> caps);
     void setMetronome(bool on) { metronome_.store(on); }
+    bool metronomeEnabled() const { return metronome_.load(); }
+    void setOfflineRender(bool on) { offlineRender_.store(on); }
+    // Device rate/block the live plugin nodes were prepared for. Used by the
+    // offline export to reuse those instances instead of instantiating a
+    // second copy of every VST3 (which leaves dangling run-loop timers).
+    double preparedSampleRate() const
+    {
+        return deviceRate_.load(std::memory_order_acquire);
+    }
+    int preparedBlockSize() const
+    {
+        return deviceBlock_.load(std::memory_order_acquire);
+    }
     void allNotesOff();
     // True when the track's node holds a prepared instrument plugin —
     // false means MIDI falls back to the internal synth.
@@ -264,6 +277,10 @@ private:
     std::atomic<bool> playing_ { false };
     std::atomic<bool> recording_ { false };
     std::atomic<bool> metronome_ { false };
+    // Offline export reuses the live plugin instances with the audio device
+    // stopped. Ignore MIDI input during that window so a controller note can
+    // never leak into the exported file.
+    std::atomic<bool> offlineRender_ { false };
     std::atomic<std::int64_t> positionSamples_ { 0 };
     // Generator recording context (see setRecording overload).
     std::atomic<std::int64_t> recordStartSamples_ { 0 };
@@ -901,6 +918,12 @@ private:
     };
     std::shared_ptr<RetiredEditorList> retiredEditors_
         = std::make_shared<RetiredEditorList>();
+    // Offline sources used when the live device cannot be reused (different
+    // sample rate or no message thread). Some VST3s (Analog Lab V) leave
+    // run-loop timers behind when their instance is destroyed, so the app
+    // crashed after a successful export. Keep these sources alive until the
+    // Engine is destroyed; the live-device path avoids them entirely.
+    std::vector<std::unique_ptr<ProjectAudioSource>> offlineRenderSources_;
     void retireEditorWindow(std::shared_ptr<juce::DocumentWindow> window);
     void closeOrphanedEditorWindows();
     void closeAllEditorWindows();
