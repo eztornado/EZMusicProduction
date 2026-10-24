@@ -13,6 +13,11 @@ import 'package:cadence_ui/ui/piano_roll.dart';
 void main() {
   testWidgets('pointer moves a note, pencil draws, eraser deletes',
       (tester) async {
+    // Tall window: the whole pitch range fits, so note rows are at fixed
+    // screen positions (no vertical scroll) and clicks hit the right note.
+    await tester.binding.setSurfaceSize(const Size(1000, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
     final service = EngineService();
     addTearDown(service.dispose);
 
@@ -31,8 +36,8 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: SizedBox(
-          width: 900,
-          height: 600,
+          width: 1000,
+          height: 1200,
           child: PianoRoll(
               service: service,
               clipId: clipId,
@@ -50,7 +55,9 @@ void main() {
     double screenX(double contentSeconds) =>
         44.0 + contentSeconds * 140 - hOffset;
     final pressX = screenX(2.45); // inside note 0 [2.309, 2.609]
-    final pressY = 350.0;
+    // Grid starts below header (30) + quantize panel (34) + ruler (16);
+    // note 0 is pitch 64 -> row (95 - 64) * 10.
+    final pressY = 80.0 + (95 - 64) * 10 + 5;
 
     final gesture = await tester.startGesture(
         Offset(pressX, pressY),

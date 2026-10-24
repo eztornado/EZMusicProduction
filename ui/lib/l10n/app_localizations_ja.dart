@@ -203,7 +203,7 @@ class AppLocalizationsJa extends AppLocalizations {
   }
 
   @override
-  String get pianoRollHint => 'クリック: 追加 · ドラッグ: 移動 · 端: 長さ · Del: 削除';
+  String get pianoRollHint => '空白ドラッグ: 選択 · ドラッグ: 移動 · 端: 長さ · Del: 削除';
 
   @override
   String get pianoRollUndock => '別ウィンドウに分離';

@@ -312,6 +312,14 @@ struct TrackCapture {
 };
 using CaptureList = std::vector<std::shared_ptr<TrackCapture>>;
 
+// One note edit inside a batch (multi-note move from the piano roll).
+struct MidiNoteEdit {
+    int index = -1;
+    int pitch = 60;
+    double startSeconds = 0.0;
+    double lengthSeconds = 0.0;
+};
+
 // Phase 2 engine: owns the project document (published as immutable
 // snapshots), the audio device and the project transport. Phase 1's
 // single-file "tape" playback survives as a convenience (loadFile builds a
@@ -598,6 +606,9 @@ public:
     juce::Result midiClipRemoveNote(ClipId clipId, int noteIndex);
     juce::Result midiClipSetNote(ClipId clipId, int noteIndex, int pitch,
                                  double startInClipSeconds, double lengthSeconds);
+    // Applies several note edits in one undo entry (group move/resize).
+    juce::Result midiClipSetNotes(ClipId clipId,
+                                  const std::vector<MidiNoteEdit>& edits);
 
     // ---- AI clip generation (Magenta MusicVAE + contextual generator) ----
     // Generation runs on a worker thread: startAiGeneration returns

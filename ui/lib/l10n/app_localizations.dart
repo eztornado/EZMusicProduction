@@ -475,7 +475,7 @@ abstract class AppLocalizations {
   /// No description provided for @pianoRollHint.
   ///
   /// In es, this message translates to:
-  /// **'click: añadir · arrastrar: mover · borde: largo · Supr: borrar'**
+  /// **'arrastrar en vacío: seleccionar · arrastrar: mover · borde: largo · Supr: borrar'**
   String get pianoRollHint;
 
   /// No description provided for @pianoRollUndock.

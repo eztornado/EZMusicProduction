@@ -68,7 +68,7 @@
 
   "pianoRollClipUnavailable": "クリップを利用できません",
   "pianoRollTitle": "ピアノロール — {name}",
-  "pianoRollHint": "クリック: 追加 · ドラッグ: 移動 · 端: 長さ · Del: 削除",
+  "pianoRollHint": "空白ドラッグ: 選択 · ドラッグ: 移動 · 端: 長さ · Del: 削除",
   "pianoRollUndock": "別ウィンドウに分離",
   "pianoRollToolMove": "ノートを移動/伸縮",
   "pianoRollToolDraw": "ノートを描画",

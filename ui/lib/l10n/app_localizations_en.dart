@@ -205,7 +205,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pianoRollHint =>
-      'click: add · drag: move · edge: length · Del: delete';
+      'drag empty: select · drag: move · edge: length · Del: delete';
 
   @override
   String get pianoRollUndock => 'Undock into its own window';
