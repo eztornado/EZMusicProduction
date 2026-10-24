@@ -3,6 +3,7 @@
 // drag right edge = resize · drag empty grid = select an area · Delete =
 // remove. Every edit commits one engine command (one undo entry).
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -118,6 +119,9 @@ class _PianoRollState extends State<PianoRoll> {
 
   @override
   void dispose() {
+    _autoScrollTimer?.cancel();
+    _hScroll.dispose();
+    _vScroll.dispose();
     _focusNode.dispose();
     widget.frameTick.removeListener(_followPlayhead);
     super.dispose();
@@ -176,6 +180,13 @@ class _PianoRollState extends State<PianoRoll> {
   Offset? _marqueeStart;
   Offset? _marqueeCurrent;
   Set<int> _marqueeBase = const {};
+  // Edge auto-scroll: while selecting or dragging, scrolling the view under
+  // a stationary pointer keeps extending the gesture past the visible area.
+  Timer? _autoScrollTimer;
+  double _pointerX = 0; // viewport-relative (grid area)
+  double _pointerY = 0; // content-relative (grid rows)
+  static const double _autoScrollEdge = 36;
+  static const double _autoScrollMaxStep = 18;
 
   ClipInfo? get _clip {
     for (final track in widget.service.snapshot.tracks) {
@@ -225,13 +236,17 @@ class _PianoRollState extends State<PianoRoll> {
   // The grid sits inside scrollables; GestureDetector pan gestures there
   // compete with the scroll arena and lose. Raw Listener events always
   // arrive, so note drags are deterministic. Scroll drag is disabled
-  // (NeverScrollable) and scrolling happens via wheel + the scrollbar.
+  // (NeverScrollable) and scrolling happens via wheel, the scrollbar, or
+  // edge auto-scroll while selecting/dragging.
   void _onPointerDown(PointerDownEvent event, ClipInfo clip) {
     if (event.buttons != kPrimaryButton) return;
     _focusNode.requestFocus();
     // Content coords: x is viewport-relative (this box wraps the h-scroll),
     // y is already content-relative (the box spans the grid height).
-    final contentX = event.localPosition.dx + _hOffset;
+    _pointerX = event.localPosition.dx;
+    _pointerY = event.localPosition.dy;
+    _startAutoScroll();
+    final contentX = _pointerX + _hOffset;
     final seconds = contentX / kPrPixelsPerSecond;
     final pitch = _yToPitch(event.localPosition.dy, 0)
         .clamp(kPrBottomPitch, kPrTopPitch);
@@ -298,34 +313,18 @@ class _PianoRollState extends State<PianoRoll> {
     if (event.buttons & kPrimaryButton == 0) return;
     final clip = _clip;
     if (clip == null) return;
+    _pointerX = event.localPosition.dx;
+    _pointerY = event.localPosition.dy;
     if (_marqueeActive) {
-      final contentX = event.localPosition.dx + _hOffset;
-      _marqueeCurrent = Offset(contentX, event.localPosition.dy);
-      final rect = Rect.fromPoints(_marqueeStart!, _marqueeCurrent!);
-      final hits = <int>{};
-      for (var i = 0; i < clip.notes.length; i++) {
-        final note = clip.notes[i];
-        final noteRect = Rect.fromLTWH(
-          note.start * kPrPixelsPerSecond,
-          _pitchToY(note.pitch, 0),
-          math.max(1.0, note.length * kPrPixelsPerSecond),
-          kPrRowHeight,
-        );
-        if (rect.overlaps(noteRect)) hits.add(i);
-      }
-      _selectedNotes
-        ..clear()
-        ..addAll(_marqueeBase)
-        ..addAll(hits);
-      setState(() {});
+      _marqueeCurrent = Offset(_pointerX + _hOffset, _pointerY);
+      _updateMarquee();
       return;
     }
     // Eraser: keep deleting notes the pointer passes over.
     if (_tool == _PrTool.eraser) {
-      final seconds =
-          (event.localPosition.dx + _hOffset) / kPrPixelsPerSecond;
-      final pitch = _yToPitch(event.localPosition.dy, 0)
-          .clamp(kPrBottomPitch, kPrTopPitch);
+      final seconds = (_pointerX + _hOffset) / kPrPixelsPerSecond;
+      final pitch =
+          _yToPitch(_pointerY, 0).clamp(kPrBottomPitch, kPrTopPitch);
       final hit = _hitNoteIndex(clip, seconds, pitch);
       if (hit != null) {
         widget.service.midiClipRemoveNote(widget.clipId, hit);
@@ -335,15 +334,41 @@ class _PianoRollState extends State<PianoRoll> {
     }
     // Pencil: stretch the note being drawn.
     if (_drawing) {
-      final seconds =
-          (event.localPosition.dx + _hOffset) / kPrPixelsPerSecond;
+      final seconds = (_pointerX + _hOffset) / kPrPixelsPerSecond;
       final end = math.max(_drawStart + _snapUnit, _snapPos(seconds));
       setState(() => _drawLen = end - _drawStart);
       return;
     }
     if (_dragGroup.isEmpty) return;
-    final seconds =
-        (event.localPosition.dx + _hOffset) / kPrPixelsPerSecond;
+    _updateDragPreview(_pointerX + _hOffset, _pointerY);
+  }
+
+  void _updateMarquee() {
+    final clip = _clip;
+    final start = _marqueeStart;
+    final current = _marqueeCurrent;
+    if (clip == null || start == null || current == null) return;
+    final rect = Rect.fromPoints(start, current);
+    final hits = <int>{};
+    for (var i = 0; i < clip.notes.length; i++) {
+      final note = clip.notes[i];
+      final noteRect = Rect.fromLTWH(
+        note.start * kPrPixelsPerSecond,
+        _pitchToY(note.pitch, 0),
+        math.max(1.0, note.length * kPrPixelsPerSecond),
+        kPrRowHeight,
+      );
+      if (rect.overlaps(noteRect)) hits.add(i);
+    }
+    _selectedNotes
+      ..clear()
+      ..addAll(_marqueeBase)
+      ..addAll(hits);
+    setState(() {});
+  }
+
+  void _updateDragPreview(double contentX, double contentY) {
+    final seconds = contentX / kPrPixelsPerSecond;
     const minLen = 0.05;
 
     if (_resizing) {
@@ -368,13 +393,13 @@ class _PianoRollState extends State<PianoRoll> {
       final minStart = _dragGroup.map((s) => s.start).reduce(math.min);
       if (delta < -minStart) delta = -minStart;
 
-      final pitch = _yToPitch(event.localPosition.dy, 0)
-          .clamp(kPrBottomPitch, kPrTopPitch);
+      final pitch =
+          _yToPitch(contentY, 0).clamp(kPrBottomPitch, kPrTopPitch);
       final minPitch = _dragGroup.map((s) => s.pitch).reduce(math.min);
       final maxPitch = _dragGroup.map((s) => s.pitch).reduce(math.max);
       var deltaPitch = pitch - ref.pitch;
-      deltaPitch = deltaPitch.clamp(
-          kPrBottomPitch - minPitch, kPrTopPitch - maxPitch);
+      deltaPitch =
+          deltaPitch.clamp(kPrBottomPitch - minPitch, kPrTopPitch - maxPitch);
 
       _previewStart = ref.start + delta;
       _dragPreviews = {
@@ -386,7 +411,91 @@ class _PianoRollState extends State<PianoRoll> {
     setState(() {});
   }
 
+  void _startAutoScroll() {
+    _autoScrollTimer ??= Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) => _autoScrollTick(),
+    );
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
+  /// Timer-driven scroll so a marquee or note drag keeps going when the
+  /// pointer rests near an edge. While the view moves there are no pointer
+  /// events, so the gesture's content coordinate has to be advanced here.
+  void _autoScrollTick() {
+    if (!_marqueeActive && !_drawing && _dragGroup.isEmpty) {
+      _stopAutoScroll();
+      return;
+    }
+    final h = _hScroll.hasClients ? _hScroll.position : null;
+    final v = _vScroll.hasClients ? _vScroll.position : null;
+    var stepX = 0.0;
+    var stepY = 0.0;
+    if (h != null) {
+      final fromLeft = _pointerX;
+      final fromRight = h.viewportDimension - _pointerX;
+      if (fromLeft < _autoScrollEdge) {
+        stepX = -_edgeSpeed(fromLeft);
+      } else if (fromRight < _autoScrollEdge) {
+        stepX = _edgeSpeed(fromRight);
+      }
+    }
+    if (v != null) {
+      final viewportY = _pointerY - v.pixels;
+      final fromTop = viewportY;
+      final fromBottom = v.viewportDimension - viewportY;
+      if (fromTop < _autoScrollEdge) {
+        stepY = -_edgeSpeed(fromTop);
+      } else if (fromBottom < _autoScrollEdge) {
+        stepY = _edgeSpeed(fromBottom);
+      }
+    }
+    if (stepX == 0 && stepY == 0) return;
+
+    final oldX = h?.pixels ?? 0;
+    final oldY = v?.pixels ?? 0;
+    if (h != null && stepX != 0) {
+      _hScroll.jumpTo((oldX + stepX).clamp(0.0, h.maxScrollExtent));
+    }
+    if (v != null && stepY != 0) {
+      _vScroll.jumpTo((oldY + stepY).clamp(0.0, v.maxScrollExtent));
+    }
+    final dx = (h?.pixels ?? oldX) - oldX;
+    final dy = (v?.pixels ?? oldY) - oldY;
+    if (dx == 0 && dy == 0) return;
+    _syncGestureAfterScroll(dy);
+  }
+
+  /// Re-evaluates the active gesture after the view scrolled under a
+  /// stationary pointer. [dy] is the content movement for vertical scroll.
+  void _syncGestureAfterScroll(double dy) {
+    if (!_marqueeActive && !_drawing && _dragGroup.isEmpty) return;
+    // The pointer did not move, but the content did: keep its content
+    // coordinate in sync so the gesture grows past the visible area.
+    _pointerY += dy;
+    if (_marqueeActive) {
+      _marqueeCurrent = Offset(_pointerX + _hOffset, _pointerY);
+      _updateMarquee();
+    } else if (_drawing) {
+      final seconds = (_pointerX + _hOffset) / kPrPixelsPerSecond;
+      final end = math.max(_drawStart + _snapUnit, _snapPos(seconds));
+      setState(() => _drawLen = end - _drawStart);
+    } else {
+      _updateDragPreview(_pointerX + _hOffset, _pointerY);
+    }
+  }
+
+  double _edgeSpeed(double distance) {
+    final t = (1 - distance / _autoScrollEdge).clamp(0.0, 1.0);
+    return _autoScrollMaxStep * t;
+  }
+
   void _onPointerUp(PointerUpEvent event) {
+    _stopAutoScroll();
     if (_marqueeActive) {
       _marqueeActive = false;
       _marqueeStart = null;
@@ -440,6 +549,7 @@ class _PianoRollState extends State<PianoRoll> {
   }
 
   void _onPointerCancel(PointerCancelEvent event) {
+    _stopAutoScroll();
     _drawing = false;
     _drawLen = 0;
     _dragGroup = const [];
@@ -455,11 +565,18 @@ class _PianoRollState extends State<PianoRoll> {
   }
 
   /// Wheel / trackpad scroll: both axes, since the scrollables themselves
-  /// have drag disabled.
+  /// have drag disabled. Shift turns a vertical wheel into horizontal pan,
+  /// which is how a plain mouse reaches the rest of a long clip.
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
-    final dx = event.scrollDelta.dx;
-    final dy = event.scrollDelta.dy;
+    var dx = event.scrollDelta.dx;
+    var dy = event.scrollDelta.dy;
+    if (HardwareKeyboard.instance.isShiftPressed && dx == 0 && dy != 0) {
+      dx = dy;
+      dy = 0;
+    }
+    final beforeX = _hScroll.hasClients ? _hScroll.offset : 0.0;
+    final beforeY = _vScroll.hasClients ? _vScroll.offset : 0.0;
     if (dx != 0 && _hScroll.hasClients) {
       _hScroll.jumpTo(
           (_hScroll.offset + dx).clamp(0.0, _hScroll.position.maxScrollExtent));
@@ -468,6 +585,11 @@ class _PianoRollState extends State<PianoRoll> {
       _vScroll.jumpTo(
           (_vScroll.offset + dy).clamp(0.0, _vScroll.position.maxScrollExtent));
     }
+    final movedX =
+        (_hScroll.hasClients ? _hScroll.offset : beforeX) - beforeX;
+    final movedY =
+        (_vScroll.hasClients ? _vScroll.offset : beforeY) - beforeY;
+    if (movedX != 0 || movedY != 0) _syncGestureAfterScroll(movedY);
   }
 
   void _beginNoteDrag(ClipInfo clip, int index, double seconds) {
