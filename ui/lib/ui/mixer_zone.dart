@@ -168,6 +168,7 @@ class _MixerZoneState extends State<MixerZone> {
                   onToggleFxBypass: (slot) =>
                       service.toggleMasterFxBypass(slot),
                   onRemoveFx: (slot) => service.removeMasterFx(slot),
+                  onOpenEditor: (slot) => service.openMasterFxEditor(slot),
                   onAddFx: () async {
                     final picked = await showPluginPickerDialog(
                       context,

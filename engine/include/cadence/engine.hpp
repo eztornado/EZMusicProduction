@@ -6,8 +6,10 @@
 
 #include <cadence/model.hpp>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <memory>
@@ -126,37 +128,47 @@ private:
     std::vector<juce::PluginDescription> builtins_;
 };
 
-// Immutable fx chain snapshot: swapped wholesale under the owning node's
-// mutex, so the audio thread renders from a copy without races.
+// Immutable fx chain snapshot: swapped wholesale into the audio path. The
+// prepared* fields live in the snapshot too, so the audio thread never reads
+// mutable node fields while the message thread rebuilds the chain.
 struct FxChain {
     std::vector<std::shared_ptr<juce::AudioProcessor>> processors;
     std::vector<bool> bypass;
     juce::StringArray uids; // change detection
     std::vector<bool> valid; // instantiated successfully
+    std::vector<double> preparedRates; // per chain processor
+    double preparedRate = 0.0;         // rate the chain was prepared at
+    int preparedBlock = 0;             // maximum block size it was prepared for
 };
 
-// Runtime audio nodes of one track (fx chain + instrument plugin). Built on
-// the message thread, swapped into the audio path atomically.
-struct TrackAudioNode {
-    juce::AudioBuffer<float> chainBuffer;
+// Immutable per-track plugin snapshot. The audio thread loads one of these
+// atomically at the start of a block; the message thread never mutates a
+// published state, it builds a new one and swaps it. The shared_ptr keeps a
+// plugin instance alive for as long as the audio thread may be inside
+// processBlock, which is the fix for the Analog Lab V crashes: the old code
+// published/replaced/destroyed live instances while the audio thread used
+// them.
+struct TrackNodeState {
     std::shared_ptr<const FxChain> fx;
-    std::mutex fxMutex;
-    std::vector<double> preparedRates; // per chain processor
-    double preparedRate = 0.0;         // sample rate the chain was prepared at
-    std::atomic<int> preparedBlock {0}; // maximumBlockSize plugins were prepared for
     std::shared_ptr<juce::AudioProcessor> instrument;
-    std::mutex instrumentMutex;
     bool instrumentBypass = false;
-    bool instrumentPrepared = false;
-    juce::String instrumentUid; // change detection for reconcile
-
-    // MIDI insert (arpeggiator): transforms the track's MIDI stream
-    // before the instrument plays it. Same threading rules as instrument.
+    juce::String instrumentUid;
+    double instrumentPreparedRate = 0.0;
+    int instrumentPreparedBlock = 0;
     std::shared_ptr<juce::AudioProcessor> midiFx;
-    std::mutex midiFxMutex;
     bool midiFxBypass = false;
-    bool midiFxPrepared = false;
     juce::String midiFxUid;
+    double midiFxPreparedRate = 0.0;
+    int midiFxPreparedBlock = 0;
+};
+
+// Runtime audio node of one track. The map entry is NEVER erased while the
+// engine lives: nodeFor() hands raw pointers to the audio thread, so erasing
+// a node would be a use-after-free. Removed tracks get an empty state
+// instead, which releases their plugins once the audio thread drops its last
+// snapshot reference.
+struct TrackAudioNode {
+    std::shared_ptr<const TrackNodeState> state; // atomic_load/store
 };
 
 // Renders project snapshots: every block it picks up the current immutable
@@ -181,10 +193,15 @@ public:
                                                          int slotIndex);
     std::shared_ptr<juce::AudioProcessor> instrumentProcessorFor(TrackId trackId);
     std::shared_ptr<juce::AudioProcessor> midiFxProcessorFor(TrackId trackId);
+    std::shared_ptr<juce::AudioProcessor> masterFxProcessorFor(int slotIndex);
     // Plugin-parameter automation (§7.12 v1.5): applies every param lane of
     // the track to its target processor at the block position (audio path).
-    void applyParamAutomation(const Track& track, TrackAudioNode* node,
+    void applyParamAutomation(const Track& track, const TrackNodeState* state,
                               std::int64_t blockStart, double rate);
+    // Hard-stop every voice now (message thread, device stopped/restarting).
+    // Unlike requestPanic() this does not depend on another audio callback:
+    // plugins get a silent panic block and the internal synths are silenced.
+    void flushAllNotes();
     void setPluginHost(PluginHost* host) { pluginHost_ = host; }
 
     void play();
@@ -247,13 +264,22 @@ private:
     juce::AudioBuffer<float> midiFxSilent_; // zero audio passed to the MIDI insert
     juce::MidiBuffer blockMidi_;
     juce::MidiBuffer panicMidi_; // prebuilt on prepareToPlay (audio-thread safe)
-    juce::SpinLock synthsLock_;
+    juce::MidiBuffer fxEmptyMidi_; // reused by processFxChain (no alloc/block)
+    mutable juce::SpinLock synthsLock_;
     std::map<TrackId, std::unique_ptr<juce::Synthesiser>> synths_;
     double synthsRate_ = 0.0;
-    std::map<TrackId, int> lastSustainCc_; // audio thread only
+    // Fixed-size (no allocation on the audio thread). Indexed by meter slot,
+    // which is also the track's position in the project snapshot.
+    std::array<int, kMeterTracks> lastSustainCc_ {};
     std::atomic<std::uint64_t> panicGeneration_ { 0 };
     std::uint64_t lastPanicGeneration_ = 0; // audio thread only
     juce::AudioBuffer<float> masterBuffer_;
+    std::shared_ptr<const FxChain> masterFxChain_; // atomic_load/store
+    std::atomic<double> deviceRate_ { 0.0 };
+    std::atomic<int> deviceBlock_ { 0 };
+    // Cached once: getenv() may lock and is not real-time safe.
+    const bool debugMidi_ = std::getenv("CADENCE_MIDI_DBG") != nullptr;
+    const bool debugArp_ = std::getenv("CADENCE_ARP_DBG") != nullptr;
     std::atomic<std::uint32_t> masterPeaks_[2] {{0}, {0}};
     std::atomic<std::uint32_t> trackPeaks_[kMeterTracks] {};
 
@@ -262,7 +288,9 @@ private:
     std::vector<juce::MidiMessage> externalQueue_;
     std::vector<juce::MidiMessage> pendingExternal_;
 
-    mutable std::mutex trackNodesMutex_;
+    // Serialises message-thread rebuilds. The audio thread never takes this:
+    // it only loads the node's immutable state snapshot.
+    std::mutex trackNodesMutex_;
     std::map<TrackId, std::unique_ptr<TrackAudioNode>> trackNodes_;
     PluginHost* pluginHost_ = nullptr;
 
@@ -283,9 +311,17 @@ private:
 
     juce::Synthesiser* getOrCreateSynth(TrackId trackId, double rate);
     void silenceSynthForTrack(TrackId trackId);
-    TrackAudioNode* nodeFor(TrackId trackId);
-    void processFxChain(TrackAudioNode& node, TrackId trackId, double rate,
-                        int numSamples);
+    TrackAudioNode* nodeFor(TrackId trackId) const;
+    // Message-thread helper: creates the node once and returns it. Map
+    // insertion is guarded by synthsLock_ because nodeFor() reads the map
+    // from the audio thread.
+    TrackAudioNode& ensureNode(TrackId trackId);
+    // Message-thread helper: make sure every instrument track already has a
+    // synthesiser. Creating one (and its voices) on the audio thread is an
+    // allocation and a potential dropout.
+    void prepareInternalSynths(const Project& project, double rate);
+    void processFxChain(const FxChain& chain, juce::AudioBuffer<float>& buffer,
+                        double rate, int numSamples);
     void drainExternalMidi();
     // Sends the full panic to EVERY instrument track (including muted,
     // soloed and non-armed ones) even while the transport is stopped. Without
@@ -362,6 +398,12 @@ public:
     void initialiseAudioInBackground();
     bool audioInitialised() const { return audioReady_.load(); }
     bool isInitialised() const;
+    // Health/diagnostics. Safe from any thread; the strings are stable until
+    // the next call on this engine.
+    bool audioDeviceRunning() const { return audioDeviceRunning_.load(); }
+    int audioXRunCount() const;
+    int audioRecoveryCount() const { return audioRecoveryCount_.load(); }
+    const char* lastAudioErrorUtf8();
 
     juce::StringArray outputDeviceNames();
     juce::StringArray inputDeviceNames();
@@ -568,6 +610,8 @@ public:
     int masterFxCount() const;
     const char* masterFxNameAt(int slotIndex) const;
     bool masterFxBypassAt(int slotIndex) const;
+    // Native editor for a master insert (message thread).
+    juce::Result openMasterFxEditor(int slotIndex);
 
     // Recording setup: arm + input are not undoable and not part of history.
     juce::Result setTrackArmed(TrackId trackId, bool armed);
@@ -790,7 +834,11 @@ private:
     juce::Result fail(const juce::String& message) const;
 
     std::atomic<bool> audioReady_ {false};
-    std::thread initThread_;
+    // Cancellation token for the deferred audio-device open. It is shared
+    // with the message-loop lambda so the lambda can bail out safely after
+    // the Engine is gone (Flutter may quit before the device opens).
+    std::shared_ptr<std::atomic<bool>> initCancel_
+        = std::make_shared<std::atomic<bool>>(false);
     juce::AudioDeviceManager deviceManager_;
     std::unique_ptr<ProjectAudioSource> transport_;
     PluginHost pluginHost_;
@@ -823,8 +871,6 @@ private:
     mutable std::string lastErrorUtf8_;
     mutable std::string stringOut_; // backing store for read-access strings
     mutable std::mutex editMutex_;
-    std::mutex masterFxMutex_;
-    std::shared_ptr<const FxChain> masterFxChain_;
     std::shared_ptr<const CaptureList> captures_; // accessed with std::atomic_*
     // Open plugin editor windows (message thread only). Key: track<<16 | slot
     // (slot 0xFFFF = instrument slot). Values keep the processor alive too.
@@ -861,6 +907,36 @@ private:
     std::atomic<bool> messageLoopRunning_ { false };
     void startMessageLoop();
     void stopMessageLoop();
+
+    // ---- device health / automatic recovery ----
+    class AudioHealthWatchdog;
+    std::unique_ptr<AudioHealthWatchdog> audioHealthWatchdog_;
+    std::atomic<bool> audioDeviceRunning_ { false };
+    std::atomic<bool> intentionalDeviceStop_ { false };
+    std::atomic<bool> audioRecoveryPending_ { false };
+    std::atomic<bool> audioConfigDirty_ { false };
+    std::atomic<bool> shuttingDown_ { false };
+    std::atomic<std::uint64_t> audioCallbackCount_ { 0 };
+    std::atomic<std::uint64_t> audioCallbackHeartbeat_ { 0 };
+    std::atomic<int> audioRecoveryCount_ { 0 };
+    std::atomic<int> audioXRunCount_ { 0 };
+    int audioStallTicks_ = 0; // watchdog only (message thread)
+    mutable std::mutex audioErrorMutex_;
+    juce::String lastAudioError_;
+    std::string lastAudioErrorUtf8_;
+
+    void noteAudioCallback() noexcept
+    {
+        audioCallbackCount_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void prepareTransportForDevice(juce::AudioIODevice* device);
+    void handleAudioDeviceAboutToStart(juce::AudioIODevice* device);
+    void handleAudioDeviceStopped(bool intentional);
+    void handleAudioDeviceError(const juce::String& message);
+    void scheduleAudioRecovery(const juce::String& reason);
+    void recoverAudio();
+    void reconcileAfterDeviceChange();
+    void checkAudioHealth();
 };
 
 } // namespace cadence

@@ -24,7 +24,21 @@ CadenceEngine* cadence_engine_create(void)
 
 void cadence_engine_destroy(CadenceEngine* engine)
 {
-    if (g_active_engine == engine) g_active_engine = nullptr;
+    // Idempotent: the macOS AppDelegate may have destroyed the active engine
+    // in applicationWillTerminate before Dart's dispose() runs. Only the
+    // active handle is ever owned by the app.
+    if (engine == nullptr || g_active_engine != engine)
+        return;
+    g_active_engine = nullptr;
+    delete asEngine(engine);
+}
+
+void cadence_engine_destroy_active(void)
+{
+    auto* engine = g_active_engine;
+    if (engine == nullptr)
+        return;
+    g_active_engine = nullptr;
     delete asEngine(engine);
 }
 
@@ -72,6 +86,26 @@ void cadence_engine_initialise_audio_background(CadenceEngine* engine)
 int cadence_engine_audio_initialised(CadenceEngine* engine)
 {
     return (engine != nullptr && asEngine(engine)->audioInitialised()) ? 1 : 0;
+}
+
+int cadence_engine_audio_device_running(CadenceEngine* engine)
+{
+    return (engine != nullptr && asEngine(engine)->audioDeviceRunning()) ? 1 : 0;
+}
+
+int cadence_engine_audio_xrun_count(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->audioXRunCount() : 0;
+}
+
+int cadence_engine_audio_recovery_count(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->audioRecoveryCount() : 0;
+}
+
+const char* cadence_engine_last_audio_error(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->lastAudioErrorUtf8() : "";
 }
 
 CadenceResult cadence_engine_new_project(CadenceEngine* engine, double sample_rate)
@@ -646,9 +680,18 @@ CadenceResult cadence_engine_play(CadenceEngine* engine)
 {
     if (engine == nullptr)
         return kCadenceErrorNullArgument;
-    if (! asEngine(engine)->isInitialised())
+    auto* e = asEngine(engine);
+    // Self-healing: if the device was never opened (or CoreAudio dropped it
+    // after a UR22 hiccup), try to reopen it before refusing to play. The
+    // previous behaviour required an app restart.
+    if (! e->isInitialised())
+    {
+        if (e->initialise().failed())
+            return kCadenceErrorAudioDevice;
+    }
+    if (! e->isInitialised())
         return kCadenceErrorNotInitialised;
-    asEngine(engine)->play();
+    e->play();
     return kCadenceOk;
 }
 
@@ -1406,6 +1449,15 @@ CadenceResult cadence_engine_master_set_fx_bypass(CadenceEngine* engine, int slo
 int cadence_engine_master_fx_bypass_at(CadenceEngine* engine, int slot_index)
 {
     return (engine != nullptr && asEngine(engine)->masterFxBypassAt(slot_index)) ? 1 : 0;
+}
+
+CadenceResult cadence_engine_open_master_fx_editor(CadenceEngine* engine,
+                                                    int slot_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->openMasterFxEditor(slot_index).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
 }
 
 void cadence_engine_set_metronome(CadenceEngine* engine, int enabled)

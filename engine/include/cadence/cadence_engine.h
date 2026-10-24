@@ -29,6 +29,9 @@ typedef enum CadenceResult {
 
 CadenceEngine* cadence_engine_create(void);
 void cadence_engine_destroy(CadenceEngine* engine);
+/* Destroys the process-wide active engine, if any. Safe to call twice and
+   from the macOS AppDelegate on applicationWillTerminate. */
+void cadence_engine_destroy_active(void);
 /* Returns the last created engine (for native drop handlers in Swift). */
 CadenceEngine* cadence_engine_get_active(void);
 /* Adds an audio file as a clip to the first track at the playhead position.
@@ -44,6 +47,11 @@ CadenceResult cadence_engine_restart_audio(CadenceEngine* engine);
    Poll audio_initialised() to check when it's ready. */
 void cadence_engine_initialise_audio_background(CadenceEngine* engine);
 int cadence_engine_audio_initialised(CadenceEngine* engine);
+/* Health/diagnostics. Safe from any thread. */
+int cadence_engine_audio_device_running(CadenceEngine* engine);
+int cadence_engine_audio_xrun_count(CadenceEngine* engine);
+int cadence_engine_audio_recovery_count(CadenceEngine* engine);
+const char* cadence_engine_last_audio_error(CadenceEngine* engine);
 
 /* ---- project document ---- */
 
@@ -457,6 +465,9 @@ CadenceResult cadence_engine_master_remove_fx(CadenceEngine* engine, int slot_in
 CadenceResult cadence_engine_master_set_fx_bypass(CadenceEngine* engine, int slot_index,
                                                   int bypass);
 int cadence_engine_master_fx_bypass_at(CadenceEngine* engine, int slot_index);
+/* Opens the master insert's native editor window (message thread). */
+CadenceResult cadence_engine_open_master_fx_editor(CadenceEngine* engine,
+                                                    int slot_index);
 
 /* Starts capture on every armed track (requires device + armed tracks).
    stop/pause/stop_record finalize the takes as clips (one undo entry);

@@ -5,6 +5,7 @@
 // from anywhere (multi-monitor, Cubase/Mixcraft style).
 
 import 'dart:async';
+import 'dart:ui' show AppExitResponse;
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -213,6 +214,7 @@ class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin {
   EngineService? _service;
   late final Ticker _ticker;
+  late final AppLifecycleListener _lifecycle;
   final ValueNotifier<int> _frameTick = ValueNotifier(0);
   /// Fatal: la dylib del motor no se pudo cargar (sin servicio no hay app).
   /// Se guarda el error CRUDO; el texto traducido se compone en build().
@@ -245,6 +247,21 @@ class _HomePageState extends State<HomePage>
     } catch (error) {
       _dylibError = error.toString();
     }
+    // Flutter does not dispose the widget tree when the macOS window is
+    // closed. Destroy the engine (and every live VST3 instance) explicitly on
+    // exit; otherwise plugin static destructors run with live instances and
+    // Analog Lab V aborts inside __cxa_finalize_ranges.
+    _lifecycle = AppLifecycleListener(
+      onExitRequested: () async {
+        _service?.dispose();
+        _service = null;
+        return AppExitResponse.exit;
+      },
+      onDetach: () {
+        _service?.dispose();
+        _service = null;
+      },
+    );
     var frameCount = 0;
     _ticker = createTicker((_) {
       frameCount++;
@@ -327,6 +344,7 @@ class _HomePageState extends State<HomePage>
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     _ticker.dispose();
     _frameTick.dispose();
     _service?.dispose();

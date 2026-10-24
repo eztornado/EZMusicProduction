@@ -617,16 +617,13 @@ private:
 
 void ProjectAudioSource::setProject(std::shared_ptr<const Project> newProject)
 {
-    {
-        const juce::SpinLock::ScopedLockType lock(synthsLock_);
-        for (auto it = synths_.begin(); it != synths_.end();)
-        {
-            bool kept = false;
-            for (const auto& track : newProject->tracks)
-                if (track.id == it->first) { kept = true; break; }
-            it = kept ? std::next(it) : synths_.erase(it);
-        }
-    }
+    // Never erase synths while the audio thread may hold a raw pointer to
+    // one. They are tiny and reused if the track id comes back (ids are
+    // monotonic, so in practice only removed tracks keep their allocation).
+    const double rate = deviceRate_.load(std::memory_order_acquire) > 0.0
+        ? deviceRate_.load(std::memory_order_acquire)
+        : newProject->sampleRate;
+    prepareInternalSynths(*newProject, rate);
     std::atomic_store(&project_, newProject);
 }
 
@@ -665,20 +662,58 @@ std::int64_t ProjectAudioSource::positionSamples() const
     return positionSamples_.load();
 }
 
-void ProjectAudioSource::prepareToPlay(int samplesPerBlockExpected, double /*sampleRate*/)
+void ProjectAudioSource::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
-    trackScratch_.setSize(2, samplesPerBlockExpected, false, false, true);
+    const int block = juce::jmax(1, samplesPerBlockExpected);
+    const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
+
+    // Device configuration first: the audio thread and reconcileNodes() use
+    // these values to decide whether a plugin is safe to process.
+    deviceRate_.store(rate, std::memory_order_release);
+    deviceBlock_.store(block, std::memory_order_release);
+
+    // Preallocate every buffer the callback can touch. The old code resized
+    // trackScratch_/midiFxSilent_ inside getNextAudioBlock(), which could
+    // allocate (and therefore block) on the audio thread after a device or
+    // buffer-size change.
+    trackScratch_.setSize(2, block, false, false, true);
+    midiFxSilent_.setSize(1, block, false, false, true);
+    masterBuffer_.setSize(2, block, false, false, true);
     // Reserve the panic buffer up front: stop/seek runs on the audio thread
     // and must not allocate while delivering 16-channel note-offs.
     blockMidi_.ensureSize(8192);
     panicMidi_.ensureSize(4096);
+    fxEmptyMidi_.ensureSize(1024);
+    fxEmptyMidi_.clear();
     panicMidi_.clear();
     addPanicMessages(panicMidi_);
+    lastSustainCc_.fill(0);
+
+    // Prepare the fallback synths for the new device rate on the message
+    // thread, not on the first note of the audio callback.
+    if (auto project = std::atomic_load(&project_))
+        prepareInternalSynths(*project, rate);
+    {
+        const juce::SpinLock::ScopedLockType lock(synthsLock_);
+        if (std::abs(synthsRate_ - rate) > 0.5)
+        {
+            for (auto& [id, synth] : synths_)
+                synth->setCurrentPlaybackSampleRate(rate);
+            synthsRate_ = rate;
+        }
+    }
 }
 
 void ProjectAudioSource::releaseResources()
 {
-    trackScratch_.setSize(2, 0);
+    // The device is stopped here, so no audio thread is inside the callback.
+    // Free the large scratch buffers; prepareToPlay() allocates them again
+    // before the next stream starts.
+    trackScratch_.setSize(0, 0);
+    midiFxSilent_.setSize(0, 0);
+    masterBuffer_.setSize(0, 0);
+    deviceRate_.store(0.0, std::memory_order_release);
+    deviceBlock_.store(0, std::memory_order_release);
 }
 
 juce::Synthesiser* ProjectAudioSource::getOrCreateSynth(TrackId trackId, double rate)
@@ -712,6 +747,30 @@ void ProjectAudioSource::silenceSynthForTrack(TrackId trackId)
     auto it = synths_.find(trackId);
     if (it != synths_.end())
         silenceSynthVoices(*it->second);
+}
+
+void ProjectAudioSource::prepareInternalSynths(const Project& project, double rate)
+{
+    if (rate <= 0.0)
+        rate = 48000.0;
+    for (const auto& track : project.tracks)
+        if (track.type == Track::Type::Instrument)
+            getOrCreateSynth(track.id, rate);
+}
+
+TrackAudioNode& ProjectAudioSource::ensureNode(TrackId trackId)
+{
+    // The map is read by the audio thread under synthsLock_. Insertions and
+    // the first state publication must take the same lock; the old code
+    // inserted with trackNodesMutex_ only and raced nodeFor().
+    const juce::SpinLock::ScopedLockType lock(synthsLock_);
+    auto& nodePtr = trackNodes_[trackId];
+    if (nodePtr == nullptr)
+    {
+        nodePtr = std::make_unique<TrackAudioNode>();
+        nodePtr->state = std::make_shared<const TrackNodeState>();
+    }
+    return *nodePtr;
 }
 
 void ProjectAudioSource::pushExternalMidi(const juce::MidiMessage& m)
@@ -748,8 +807,11 @@ void ProjectAudioSource::renderArmedInstrumentMonitoring(
     // arrives in exactly one block, and held voices (synth or plugin) only
     // keep sounding if the track keeps being rendered. Gating on "this block
     // has new MIDI events" made notes die after ~10 ms.
-    const int numOut = std::min(2, info.buffer->getNumChannels());
-    trackScratch_.setSize(2, info.numSamples, false, false, true);
+    if (trackScratch_.getNumSamples() < info.numSamples)
+        trackScratch_.setSize(2, info.numSamples, false, false, true);
+
+    const double deviceRate = deviceRate_.load(std::memory_order_acquire);
+    const double pluginRate = deviceRate > 0.0 ? deviceRate : project.sampleRate;
 
     int trackIndex = 0;
     for (const auto& track : project.tracks)
@@ -766,22 +828,21 @@ void ProjectAudioSource::renderArmedInstrumentMonitoring(
         // Live input goes through the instrument plugin when one is loaded,
         // exactly like playback — the internal synth is only the fallback.
         auto* node = nodeFor(track.id);
+        auto state = node != nullptr ? std::atomic_load(&node->state) : nullptr;
         const bool hasInstrumentPlugin =
-            node != nullptr && node->instrument != nullptr
-            && ! node->instrumentBypass
-            && info.numSamples <= node->preparedBlock.load(
-                                       std::memory_order_acquire);
+            state != nullptr && state->instrument != nullptr
+            && ! state->instrumentBypass
+            && state->instrumentPreparedRate == pluginRate
+            && info.numSamples <= state->instrumentPreparedBlock;
 
         if (hasInstrumentPlugin)
         {
             trackScratch_.clear();
-            node->instrument->processBlock(trackScratch_, blockMidi_);
+            state->instrument->processBlock(trackScratch_, blockMidi_);
         }
         else
         {
-            auto* synth = getOrCreateSynth(track.id, project.sampleRate);
-            if (synthsRate_ != project.sampleRate)
-                synth->setCurrentPlaybackSampleRate(project.sampleRate);
+            auto* synth = getOrCreateSynth(track.id, pluginRate);
             trackScratch_.clear();
             synth->renderNextBlock(trackScratch_, blockMidi_, 0,
                                    info.numSamples);
@@ -796,13 +857,12 @@ void ProjectAudioSource::renderArmedInstrumentMonitoring(
 
         const float angle = (juce::jlimit(-1.0f, 1.0f, track.pan) + 1.0f)
                             * juce::MathConstants<float>::pi * 0.25f;
-        const float left = std::cos(angle) * track.volume * project.masterGain;
-        const float right = std::sin(angle) * track.volume * project.masterGain;
-        info.buffer->addFrom(0, info.startSample, trackScratch_, 0, 0,
-                             info.numSamples, left);
-        if (numOut > 1)
-            info.buffer->addFrom(1, info.startSample, trackScratch_, 1, 0,
-                                 info.numSamples, right);
+        const float left = std::cos(angle) * track.volume;
+        const float right = std::sin(angle) * track.volume;
+        masterBuffer_.addFrom(0, 0, trackScratch_, 0, 0,
+                              info.numSamples, left);
+        masterBuffer_.addFrom(1, 0, trackScratch_, 1, 0,
+                              info.numSamples, right);
     }
 }
 
@@ -825,18 +885,17 @@ void ProjectAudioSource::panicAllInstrumentTracks(const Project& project,
             continue;
 
         auto* node = nodeFor(track.id);
-        const int prepared =
-            node != nullptr
-                ? node->preparedBlock.load(std::memory_order_acquire)
-                : 0;
+        auto state = node != nullptr ? std::atomic_load(&node->state) : nullptr;
+        const int prepared = state != nullptr ? state->instrumentPreparedBlock : 0;
         const bool hasInstrumentPlugin =
-            node != nullptr && node->instrument != nullptr
-            && ! node->instrumentBypass && prepared > 0;
+            state != nullptr && state->instrument != nullptr
+            && ! state->instrumentBypass && prepared > 0;
 
         if (hasInstrumentPlugin)
         {
             const int n = std::min(numSamples, prepared);
-            trackScratch_.setSize(2, numSamples, false, false, true);
+            if (trackScratch_.getNumSamples() < numSamples)
+                trackScratch_.setSize(2, numSamples, false, false, true);
             trackScratch_.clear();
             // A plugin may consume/modify the MIDI buffer, so give each one
             // its own copy; panicMidi_ stays pristine for the next track.
@@ -847,7 +906,7 @@ void ProjectAudioSource::panicAllInstrumentTracks(const Project& project,
             // smaller block than the device is asking for right now.
             juce::AudioBuffer<float> view(
                 trackScratch_.getArrayOfWritePointers(), 2, n);
-            node->instrument->processBlock(view, blockMidi_);
+            state->instrument->processBlock(view, blockMidi_);
         }
         else
         {
@@ -863,6 +922,13 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
                                         int blockSize, bool deferHeavyPlugins)
 {
     const std::scoped_lock lock(trackNodesMutex_);
+
+    // Plugins are prepared at the DEVICE rate, not the project rate: the
+    // audio callback hands them device-rate buffers. If the project rate is
+    // different we still need to fix that separately (resampling), but at
+    // least the plugin contract matches the buffers it receives.
+    const double deviceRate = deviceRate_.load(std::memory_order_acquire);
+    const double pluginRate = deviceRate > 0.0 ? deviceRate : project.sampleRate;
     // Plugins get the device's real block size as their maximum contract;
     // the audio thread skips blocks larger than this instead of overrunning.
     const int maxBlock = juce::jlimit(256, 8192, blockSize > 0 ? blockSize : 512);
@@ -872,7 +938,7 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
         [&](const PluginJob& job) {
             for (const auto& track : project.tracks)
                 if (track.id == job.trackId)
-                    return job.sampleRate != project.sampleRate
+                    return job.sampleRate != pluginRate
                         || job.maxBlock != maxBlock
                         || track.instrument.pluginUid
                             != job.instrument.pluginUid
@@ -889,72 +955,103 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
 
     // Build fresh chain data first (instantiation may fail per slot).
     struct ChainBuild {
-        FxChain chain;
-        std::vector<juce::String> states;
+        std::shared_ptr<const FxChain> fx;
         std::shared_ptr<juce::AudioProcessor> instrument;
-        juce::String instrumentState;
-        std::shared_ptr<juce::AudioProcessor> midiFx; // ezarp insert
+        std::shared_ptr<juce::AudioProcessor> midiFx;
+        juce::String midiFxUid;
+        bool instrumentBypass = false;
+        bool midiFxBypass = false;
+        // Deferred load: keep the old snapshot audible until the job lands.
+        std::shared_ptr<const TrackNodeState> keepState;
     };
     std::map<TrackId, ChainBuild> builds;
 
     for (const auto& track : project.tracks)
     {
-        if (track.fx.empty() && track.instrument.pluginUid.isEmpty()
-            && trackNodes_.find(track.id) == trackNodes_.end())
+        const bool hasPlugins = ! track.fx.empty()
+            || ! track.instrument.pluginUid.isEmpty();
+        auto existingIt = trackNodes_.find(track.id);
+        std::shared_ptr<const TrackNodeState> oldState;
+        if (existingIt != trackNodes_.end() && existingIt->second != nullptr)
+            oldState = std::atomic_load(&existingIt->second->state);
+
+        if (! hasPlugins && oldState == nullptr)
             continue;
 
-        // A node whose chain is UNCHANGED must not be rebuilt: re-preparing
-        // an instance takes the wrapper's processMutex while the audio
-        // thread holds it in processBlock — seconds of deadline overruns,
-        // and CoreAudio then kills the device client (total silence until
-        // the device is reopened). Bypass toggles only update flags.
-        auto existingIt = trackNodes_.find(track.id);
-        if (existingIt != trackNodes_.end() && existingIt->second != nullptr)
-        {
-            auto& node = *existingIt->second;
-            const std::scoped_lock fxLock(node.fxMutex);
-            const bool chainSame = node.fx != nullptr
-                && node.fx->uids.size() == track.fx.size()
-                && [&] {
-                       for (int i = 0; i < node.fx->uids.size(); ++i)
-                           if (node.fx->uids[i] != track.fx[(size_t) i].pluginUid)
-                               return false;
-                       return true;
-                   }()
-                && node.preparedBlock.load(std::memory_order_acquire) == maxBlock
-                && node.preparedRate == project.sampleRate;
-            const bool instrumentSame =
-                node.instrumentUid == track.instrument.pluginUid
-                && node.instrumentPrepared
-                       == track.instrument.pluginUid.isNotEmpty();
-            if (chainSame && instrumentSame)
+        // The MIDI insert lives in the fx list (EZArpeggio). It is driven
+        // from the instrument render path, never from the audio fx chain.
+        juce::String desiredMidiFxUid;
+        bool desiredMidiFxBypass = false;
+        for (const auto& slot : track.fx)
+            if (slot.pluginUid.containsIgnoreCase("ezarp"))
             {
-                // Same instances: publish an updated bypass flags copy.
-                if (node.fx != nullptr)
-                {
-                    auto updated = std::make_shared<FxChain>(*node.fx);
-                    for (int i = 0;
-                         i < (int) updated->bypass.size()
-                                 && i < (int) track.fx.size();
-                         ++i)
-                        updated->bypass[(size_t) i] =
-                            track.fx[(size_t) i].bypass;
-                    node.fx = std::move(updated);
-                }
-                node.instrumentBypass = track.instrument.bypass;
-                continue;
+                desiredMidiFxUid = slot.pluginUid;
+                desiredMidiFxBypass = slot.bypass;
+                break;
             }
+
+        const bool chainSame = oldState != nullptr && oldState->fx != nullptr
+            && oldState->fx->uids.size() == track.fx.size()
+            && [&] {
+                   for (int i = 0; i < oldState->fx->uids.size(); ++i)
+                       if (oldState->fx->uids[i] != track.fx[(size_t) i].pluginUid)
+                           return false;
+                   return true;
+               }()
+            && oldState->fx->preparedRate == pluginRate
+            && oldState->fx->preparedBlock == maxBlock;
+        const bool instrumentSame = oldState != nullptr
+            && oldState->instrumentUid == track.instrument.pluginUid
+            && (oldState->instrument != nullptr)
+                   == track.instrument.pluginUid.isNotEmpty()
+            && (track.instrument.pluginUid.isEmpty()
+                || (oldState->instrumentPreparedRate == pluginRate
+                    && oldState->instrumentPreparedBlock == maxBlock));
+        const bool midiFxSame = oldState != nullptr
+            && oldState->midiFxUid == desiredMidiFxUid
+            && (oldState->midiFx != nullptr) == desiredMidiFxUid.isNotEmpty()
+            && (desiredMidiFxUid.isEmpty()
+                || (oldState->midiFxPreparedRate == pluginRate
+                    && oldState->midiFxPreparedBlock == maxBlock));
+
+        if (chainSame && instrumentSame && midiFxSame)
+        {
+            // Same live instances: publish a new snapshot with the updated
+            // bypass flags. Never mutate the published state in place.
+            auto next = std::make_shared<TrackNodeState>();
+            if (oldState->fx != nullptr)
+            {
+                auto updated = std::make_shared<FxChain>(*oldState->fx);
+                for (int i = 0;
+                     i < (int) updated->bypass.size()
+                             && i < (int) track.fx.size();
+                     ++i)
+                    updated->bypass[(size_t) i] = track.fx[(size_t) i].bypass;
+                next->fx = std::move(updated);
+            }
+            next->instrument = oldState->instrument;
+            next->instrumentBypass = track.instrument.bypass;
+            next->instrumentUid = oldState->instrumentUid;
+            next->instrumentPreparedRate = oldState->instrumentPreparedRate;
+            next->instrumentPreparedBlock = oldState->instrumentPreparedBlock;
+            next->midiFx = oldState->midiFx;
+            next->midiFxBypass = desiredMidiFxBypass;
+            next->midiFxUid = oldState->midiFxUid;
+            next->midiFxPreparedRate = oldState->midiFxPreparedRate;
+            next->midiFxPreparedBlock = oldState->midiFxPreparedBlock;
+            builds[track.id].keepState = std::move(next);
+            continue;
         }
 
-        // Deferred mode (project load): a track whose plugins are not live
-        // yet gets an EMPTY chain right away (the mix runs dry/synth) and a
-        // queued job; each message-loop pass then loads ONE track's plugins,
-        // keeping the UI responsive instead of freezing for many seconds.
+        // Deferred mode (project load / adding a heavy plugin): a track whose
+        // plugins are not live yet keeps its previous sound (or stays dry if
+        // it is new) and gets a queued job. Each message-loop pass loads ONE
+        // track's plugins, keeping the UI responsive.
         if (deferHeavyPlugins
-            || jobQueuedFor(track, project.sampleRate, maxBlock))
+            || jobQueuedFor(track, pluginRate, maxBlock))
         {
-            enqueuePluginJob(track, project.sampleRate, maxBlock);
-            builds[track.id] = ChainBuild{}; // dry until the job lands
+            enqueuePluginJob(track, pluginRate, maxBlock);
+            builds[track.id].keepState = oldState; // null = dry until job lands
             continue;
         }
 
@@ -964,74 +1061,103 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
         std::multimap<juce::String, std::shared_ptr<juce::AudioProcessor>>
             reusePool;
         std::shared_ptr<juce::AudioProcessor> reuseInstrument;
-        if (existingIt != trackNodes_.end() && existingIt->second != nullptr
-            && existingIt->second->preparedRate == project.sampleRate
-            && existingIt->second->preparedBlock.load(
-                   std::memory_order_acquire) == maxBlock)
+        std::shared_ptr<juce::AudioProcessor> reuseMidiFx;
+        if (oldState != nullptr && oldState->fx != nullptr
+            && oldState->fx->preparedRate == pluginRate
+            && oldState->fx->preparedBlock == maxBlock)
         {
-            auto& oldNode = *existingIt->second;
-            const std::scoped_lock oldFxLock(oldNode.fxMutex);
-            if (oldNode.fx)
-                for (size_t k = 0; k < oldNode.fx->processors.size(); ++k)
-                    if (oldNode.fx->processors[k])
-                        reusePool.emplace(oldNode.fx->uids[k],
-                                          oldNode.fx->processors[k]);
-            if (oldNode.instrument != nullptr
-                && oldNode.instrumentUid == track.instrument.pluginUid)
-                reuseInstrument = oldNode.instrument;
+            for (size_t k = 0; k < oldState->fx->processors.size(); ++k)
+                if (oldState->fx->processors[k] != nullptr
+                    && ! oldState->fx->uids[k].containsIgnoreCase("ezarp"))
+                    reusePool.emplace(oldState->fx->uids[k],
+                                      oldState->fx->processors[k]);
         }
+        if (oldState != nullptr && oldState->instrument != nullptr
+            && oldState->instrumentUid == track.instrument.pluginUid
+            && oldState->instrumentPreparedRate == pluginRate
+            && oldState->instrumentPreparedBlock == maxBlock)
+            reuseInstrument = oldState->instrument;
+        if (oldState != nullptr && oldState->midiFx != nullptr
+            && oldState->midiFxUid == desiredMidiFxUid
+            && oldState->midiFxPreparedRate == pluginRate
+            && oldState->midiFxPreparedBlock == maxBlock)
+            reuseMidiFx = oldState->midiFx;
 
         ChainBuild build;
+        build.instrumentBypass = track.instrument.bypass;
+        build.midiFxBypass = desiredMidiFxBypass;
+
+        auto fx = std::make_shared<FxChain>();
+        fx->preparedRate = pluginRate;
+        fx->preparedBlock = maxBlock;
         for (const auto& slot : track.fx)
         {
             std::shared_ptr<juce::AudioProcessor> proc;
-            auto reuseIt = reusePool.find(slot.pluginUid);
-            if (reuseIt != reusePool.end())
+            const bool isMidiInsert = slot.pluginUid.containsIgnoreCase("ezarp");
+            if (isMidiInsert)
             {
-                proc = reuseIt->second; // same object: preset survives
-                reusePool.erase(reuseIt);
+                if (reuseMidiFx != nullptr)
+                {
+                    proc = std::move(reuseMidiFx);
+                }
+                else
+                {
+                    proc = host.create(slot.pluginUid, pluginRate, maxBlock);
+                    if (proc)
+                    {
+                        proc->setPlayHead(this);
+                        proc->setPlayConfigDetails(0, 0, pluginRate, maxBlock);
+                        proc->prepareToPlay(pluginRate, maxBlock);
+                    }
+                    if (proc && slot.state.isNotEmpty())
+                    {
+                        juce::MemoryBlock mb;
+                        if (mb.fromBase64Encoding(slot.state))
+                            proc->setStateInformation(mb.getData(),
+                                                      (int) mb.getSize());
+                    }
+                }
+                build.midiFx = proc;
+                build.midiFxUid = slot.pluginUid;
             }
             else
             {
-                proc = host.create(slot.pluginUid, project.sampleRate, maxBlock);
-                if (proc)
+                auto reuseIt = reusePool.find(slot.pluginUid);
+                if (reuseIt != reusePool.end())
                 {
-                    // Plugins are prepared on the message thread: VST3
-                    // prepareToPlay takes the MessageManagerLock and deadlocks
-                    // the device if called from the audio thread.
-                    proc->setPlayHead(this);
-                    activateStereoBuses(*proc);
-                    proc->setPlayConfigDetails(2, 2, project.sampleRate, maxBlock);
-                    proc->prepareToPlay(project.sampleRate, maxBlock);
+                    proc = reuseIt->second; // same object: preset survives
+                    reusePool.erase(reuseIt);
                 }
-                if (slot.state.isNotEmpty())
+                else
                 {
-                    juce::MemoryBlock mb;
-                    if (mb.fromBase64Encoding(slot.state))
-                        proc->setStateInformation(mb.getData(), (int) mb.getSize());
-                }
-            }
-            build.chain.processors.push_back(proc);
-            build.chain.bypass.push_back(slot.bypass);
-            build.chain.uids.add(slot.pluginUid);
-            build.chain.valid.push_back(true);
-            build.states.push_back(slot.state);
-            // MIDI insert: instantiate for the RENDER PATH (0-in/0-out),
-            // never the audio chain (processFxChain skips it by uid).
-            if (slot.pluginUid.containsIgnoreCase("ezarp"))
-            {
-                build.midiFx = std::move(proc);
-                if (build.midiFx)
-                {
-                    build.midiFx->setPlayHead(this);
-                    build.midiFx->setPlayConfigDetails(0, 0,
-                                                       project.sampleRate,
-                                                       maxBlock);
-                    build.midiFx->prepareToPlay(project.sampleRate,
-                                                maxBlock);
+                    proc = host.create(slot.pluginUid, pluginRate, maxBlock);
+                    if (proc)
+                    {
+                        // Plugins are prepared on the message thread: VST3
+                        // prepareToPlay takes the MessageManagerLock and
+                        // deadlocks the device if called from the audio thread.
+                        proc->setPlayHead(this);
+                        activateStereoBuses(*proc);
+                        proc->setPlayConfigDetails(2, 2, pluginRate, maxBlock);
+                        proc->prepareToPlay(pluginRate, maxBlock);
+                    }
+                    if (proc && slot.state.isNotEmpty())
+                    {
+                        juce::MemoryBlock mb;
+                        if (mb.fromBase64Encoding(slot.state))
+                            proc->setStateInformation(mb.getData(),
+                                                      (int) mb.getSize());
+                    }
                 }
             }
+            fx->processors.push_back(std::move(proc));
+            fx->bypass.push_back(slot.bypass);
+            fx->uids.add(slot.pluginUid);
+            fx->valid.push_back(fx->processors.back() != nullptr);
+            fx->preparedRates.push_back(pluginRate);
         }
+        build.fx = std::move(fx);
+
         if (! track.instrument.pluginUid.isEmpty())
         {
             if (reuseInstrument != nullptr)
@@ -1041,7 +1167,7 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
             else
             {
                 build.instrument = host.create(track.instrument.pluginUid,
-                                               project.sampleRate, maxBlock);
+                                               pluginRate, maxBlock);
                 if (build.instrument)
                 {
                     // Instruments have no input bus: use the plugin's own
@@ -1051,84 +1177,156 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
                     build.instrument->setPlayConfigDetails(
                         build.instrument->getMainBusNumInputChannels(),
                         build.instrument->getMainBusNumOutputChannels(),
-                        project.sampleRate, maxBlock);
-                    build.instrument->prepareToPlay(project.sampleRate, maxBlock);
+                        pluginRate, maxBlock);
+                    build.instrument->prepareToPlay(pluginRate, maxBlock);
                 }
-                if (track.instrument.state.isNotEmpty())
+                if (build.instrument
+                    && track.instrument.state.isNotEmpty())
                 {
                     juce::MemoryBlock mb;
                     if (mb.fromBase64Encoding(track.instrument.state))
-                        build.instrument->setStateInformation(mb.getData(),
-                                                              (int) mb.getSize());
+                        build.instrument->setStateInformation(
+                            mb.getData(), (int) mb.getSize());
                 }
             }
         }
         builds[track.id] = std::move(build);
     }
 
-    // Apply: swap chains into the nodes (audio thread picks up next block).
+    // Apply: publish immutable snapshots. The audio thread loads them at the
+    // start of a block; old snapshots stay alive until it drops its reference.
     for (const auto& track : project.tracks)
     {
         auto it = builds.find(track.id);
         if (it == builds.end())
             continue;
-        // Create the node on first use — operator[] inserts a null ptr for
-        // unknown tracks, and dereferencing that was a guaranteed crash on
-        // the first fx/instrument a track ever got.
-        auto& nodePtr = trackNodes_[track.id];
-        if (nodePtr == nullptr)
+        auto& node = ensureNode(track.id);
+        if (it->second.keepState != nullptr)
         {
-            const juce::SpinLock::ScopedLockType structLock(synthsLock_);
-            nodePtr = std::make_unique<TrackAudioNode>();
+            std::atomic_store(&node.state, it->second.keepState);
+            continue;
         }
-        auto& node = *nodePtr;
-        auto fx = std::make_shared<FxChain>();
-        fx->processors = it->second.chain.processors;
-        fx->bypass = it->second.chain.bypass;
-        fx->uids = it->second.chain.uids;
-        fx->valid = it->second.chain.valid;
+        auto next = std::make_shared<TrackNodeState>();
+        next->fx = it->second.fx;
+        next->instrument = it->second.instrument;
+        next->instrumentBypass = it->second.instrumentBypass;
+        next->instrumentUid = track.instrument.pluginUid;
+        next->instrumentPreparedRate = next->instrument ? pluginRate : 0.0;
+        next->instrumentPreparedBlock = next->instrument ? maxBlock : 0;
+        next->midiFx = it->second.midiFx;
+        next->midiFxBypass = it->second.midiFxBypass;
+        next->midiFxUid = it->second.midiFxUid;
+        next->midiFxPreparedRate = next->midiFx ? pluginRate : 0.0;
+        next->midiFxPreparedBlock = next->midiFx ? maxBlock : 0;
+        std::atomic_store(&node.state,
+                          std::shared_ptr<const TrackNodeState>(std::move(next)));
+    }
+
+    // Removed tracks: publish an empty snapshot. NEVER erase the node: the
+    // audio thread may still hold a raw pointer to it. This releases the
+    // plugins as soon as the audio thread drops its last snapshot.
+    {
+        const juce::SpinLock::ScopedLockType structLock(synthsLock_);
+        for (auto& [id, nodePtr] : trackNodes_)
         {
-            const std::scoped_lock fxLock(node.fxMutex);
-            node.fx = std::move(fx);
-            node.preparedRates.assign(node.fx->processors.size(),
-                                      project.sampleRate);
-            node.preparedRate = project.sampleRate;
-            node.preparedBlock.store(maxBlock, std::memory_order_release);
-        }
-        {
-            const std::scoped_lock instLock(node.instrumentMutex);
-            node.instrument = it->second.instrument;
-            node.instrumentBypass = track.instrument.bypass;
-            node.instrumentPrepared = it->second.instrument != nullptr;
-            node.instrumentUid = track.instrument.pluginUid;
-        }
-        // MIDI insert: the build phase instantiated it from the fx slot —
-        // publish under the node's lock.
-        {
-            const std::scoped_lock mfxLock(node.midiFxMutex);
-            node.midiFx = it->second.midiFx;
-            node.midiFxPrepared = node.midiFx != nullptr;
-            node.midiFxUid = node.midiFx != nullptr ? node.midiFxUid
-                                                    : juce::String();
+            if (nodePtr == nullptr)
+                continue;
+            const bool live = [&] {
+                for (const auto& track : project.tracks)
+                    if (track.id == id)
+                        return true;
+                return false;
+            }();
+            if (! live)
+                std::atomic_store(&nodePtr->state,
+                                  std::shared_ptr<const TrackNodeState>());
         }
     }
 
-    // Drop nodes of removed tracks (map structure guarded against nodeFor).
-    for (auto it = trackNodes_.begin(); it != trackNodes_.end();)
+    // Master inserts: same immutable-snapshot rules as track chains. The old
+    // code declared masterFxChain_ but never built it, so the mixer's master
+    // inserts were silently bypassed.
     {
-        bool kept = false;
-        for (const auto& track : project.tracks)
-            if (track.id == it->first) { kept = true; break; }
-        if (kept)
+        auto oldMaster = std::atomic_load(&masterFxChain_);
+        const bool same = oldMaster != nullptr
+            && oldMaster->uids.size() == (int) project.masterFx.size()
+            && [&] {
+                   for (int i = 0; i < oldMaster->uids.size(); ++i)
+                       if (oldMaster->uids[i]
+                           != project.masterFx[(size_t) i].pluginUid)
+                           return false;
+                   return true;
+               }()
+            && oldMaster->preparedRate == pluginRate
+            && oldMaster->preparedBlock == maxBlock;
+        if (same)
         {
-            it = std::next(it);
+            auto updated = std::make_shared<FxChain>(*oldMaster);
+            for (int i = 0;
+                 i < (int) updated->bypass.size()
+                         && i < (int) project.masterFx.size();
+                 ++i)
+                updated->bypass[(size_t) i] =
+                    project.masterFx[(size_t) i].bypass;
+            std::atomic_store(&masterFxChain_,
+                              std::shared_ptr<const FxChain>(std::move(updated)));
         }
         else
         {
-            const juce::SpinLock::ScopedLockType structLock(synthsLock_);
-            it = trackNodes_.erase(it);
+            std::multimap<juce::String, std::shared_ptr<juce::AudioProcessor>>
+                reusePool;
+            if (oldMaster != nullptr
+                && oldMaster->preparedRate == pluginRate
+                && oldMaster->preparedBlock == maxBlock)
+                for (size_t k = 0; k < oldMaster->processors.size(); ++k)
+                    if (oldMaster->processors[k] != nullptr)
+                        reusePool.emplace(oldMaster->uids[(int) k],
+                                          oldMaster->processors[k]);
+
+            auto fx = std::make_shared<FxChain>();
+            fx->preparedRate = pluginRate;
+            fx->preparedBlock = maxBlock;
+            for (const auto& slot : project.masterFx)
+            {
+                std::shared_ptr<juce::AudioProcessor> proc;
+                auto reuseIt = reusePool.find(slot.pluginUid);
+                if (reuseIt != reusePool.end())
+                {
+                    proc = reuseIt->second;
+                    reusePool.erase(reuseIt);
+                }
+                else
+                {
+                    proc = host.create(slot.pluginUid, pluginRate, maxBlock);
+                    if (proc)
+                    {
+                        proc->setPlayHead(this);
+                        activateStereoBuses(*proc);
+                        proc->setPlayConfigDetails(2, 2, pluginRate, maxBlock);
+                        proc->prepareToPlay(pluginRate, maxBlock);
+                    }
+                    if (proc && slot.state.isNotEmpty())
+                    {
+                        juce::MemoryBlock mb;
+                        if (mb.fromBase64Encoding(slot.state))
+                            proc->setStateInformation(mb.getData(),
+                                                      (int) mb.getSize());
+                    }
+                }
+                fx->processors.push_back(std::move(proc));
+                fx->bypass.push_back(slot.bypass);
+                fx->uids.add(slot.pluginUid);
+                fx->valid.push_back(fx->processors.back() != nullptr);
+                fx->preparedRates.push_back(pluginRate);
+            }
+            std::atomic_store(&masterFxChain_,
+                              std::shared_ptr<const FxChain>(std::move(fx)));
         }
     }
+
+    // The fallback synth is prepared on the message thread, not on the
+    // audio thread's first note.
+    prepareInternalSynths(project, pluginRate);
 
     // Kick off the deferred job pump: one plugin load per message-loop
     // pass, so Flutter keeps painting between loads.
@@ -1200,62 +1398,116 @@ void ProjectAudioSource::applyPluginJob(const PluginJob& job,
                                         PluginHost& host)
 {
     const std::scoped_lock lock(trackNodesMutex_);
+    auto& node = ensureNode(job.trackId);
+    auto oldState = std::atomic_load(&node.state);
 
-    auto& nodePtr = trackNodes_[job.trackId];
-    if (nodePtr == nullptr)
-    {
-        const juce::SpinLock::ScopedLockType structLock(synthsLock_);
-        nodePtr = std::make_unique<TrackAudioNode>();
-    }
-    auto& node = *nodePtr;
-
-    // Reuse live instances with the same uid (keeps presets alive when a
-    // job re-applies a chain that partially survived).
+    // Reuse live instances ONLY when they were prepared for the same device
+    // configuration. Re-preparing a live instance would call prepareToPlay()
+    // while the audio thread is inside processBlock() — exactly the kind of
+    // race that crashed Analog Lab V. A new instance is safer.
     std::multimap<juce::String, std::shared_ptr<juce::AudioProcessor>> reusePool;
-    if (node.fx != nullptr)
-        for (size_t k = 0; k < node.fx->processors.size(); ++k)
-            if (node.fx->processors[k])
-                reusePool.emplace(node.fx->uids[k], node.fx->processors[k]);
+    std::shared_ptr<juce::AudioProcessor> reuseInstrument;
+    std::shared_ptr<juce::AudioProcessor> reuseMidiFx;
+    if (oldState != nullptr && oldState->fx != nullptr
+        && oldState->fx->preparedRate == job.sampleRate
+        && oldState->fx->preparedBlock == job.maxBlock)
+    {
+        for (size_t k = 0; k < oldState->fx->processors.size(); ++k)
+            if (oldState->fx->processors[k] != nullptr
+                && ! oldState->fx->uids[k].containsIgnoreCase("ezarp"))
+                reusePool.emplace(oldState->fx->uids[k],
+                                  oldState->fx->processors[k]);
+    }
+    if (oldState != nullptr && oldState->instrument != nullptr
+        && oldState->instrumentUid == job.instrument.pluginUid
+        && oldState->instrumentPreparedRate == job.sampleRate
+        && oldState->instrumentPreparedBlock == job.maxBlock)
+        reuseInstrument = oldState->instrument;
+    if (oldState != nullptr && oldState->midiFx != nullptr
+        && oldState->midiFxPreparedRate == job.sampleRate
+        && oldState->midiFxPreparedBlock == job.maxBlock)
+        reuseMidiFx = oldState->midiFx;
 
     auto fx = std::make_shared<FxChain>();
+    fx->preparedRate = job.sampleRate;
+    fx->preparedBlock = job.maxBlock;
+    std::shared_ptr<juce::AudioProcessor> midiFx;
+    juce::String midiFxUid;
+    bool midiFxBypass = false;
+
     for (const auto& slot : job.fx)
     {
         std::shared_ptr<juce::AudioProcessor> proc;
-        auto reuseIt = reusePool.find(slot.pluginUid);
-        if (reuseIt != reusePool.end())
+        const bool isMidiInsert = slot.pluginUid.containsIgnoreCase("ezarp");
+        if (isMidiInsert)
         {
-            proc = reuseIt->second; // same object: preset survives
-            reusePool.erase(reuseIt);
+            if (reuseMidiFx != nullptr)
+            {
+                proc = std::move(reuseMidiFx);
+            }
+            else
+            {
+                proc = host.create(slot.pluginUid, job.sampleRate, job.maxBlock);
+                if (proc)
+                {
+                    proc->setPlayHead(this);
+                    proc->setPlayConfigDetails(0, 0, job.sampleRate,
+                                               job.maxBlock);
+                    proc->prepareToPlay(job.sampleRate, job.maxBlock);
+                }
+                if (proc && slot.state.isNotEmpty())
+                {
+                    juce::MemoryBlock mb;
+                    if (mb.fromBase64Encoding(slot.state))
+                        proc->setStateInformation(mb.getData(),
+                                                  (int) mb.getSize());
+                }
+            }
+            midiFx = proc;
+            midiFxUid = slot.pluginUid;
+            midiFxBypass = slot.bypass;
         }
         else
         {
-            proc = host.create(slot.pluginUid, job.sampleRate, job.maxBlock);
-            if (proc)
+            auto reuseIt = reusePool.find(slot.pluginUid);
+            if (reuseIt != reusePool.end())
             {
-                proc->setPlayHead(this);
-                activateStereoBuses(*proc);
-                proc->setPlayConfigDetails(2, 2, job.sampleRate, job.maxBlock);
-                proc->prepareToPlay(job.sampleRate, job.maxBlock);
+                proc = reuseIt->second; // same object: preset survives
+                reusePool.erase(reuseIt);
             }
-            if (slot.state.isNotEmpty())
+            else
             {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding(slot.state))
-                    proc->setStateInformation(mb.getData(), (int) mb.getSize());
+                proc = host.create(slot.pluginUid, job.sampleRate, job.maxBlock);
+                if (proc)
+                {
+                    proc->setPlayHead(this);
+                    activateStereoBuses(*proc);
+                    proc->setPlayConfigDetails(2, 2, job.sampleRate,
+                                               job.maxBlock);
+                    proc->prepareToPlay(job.sampleRate, job.maxBlock);
+                }
+                if (proc && slot.state.isNotEmpty())
+                {
+                    juce::MemoryBlock mb;
+                    if (mb.fromBase64Encoding(slot.state))
+                        proc->setStateInformation(mb.getData(),
+                                                  (int) mb.getSize());
+                }
             }
         }
         fx->processors.push_back(std::move(proc));
         fx->bypass.push_back(slot.bypass);
         fx->uids.add(slot.pluginUid);
-        fx->valid.push_back(true);
+        fx->valid.push_back(fx->processors.back() != nullptr);
+        fx->preparedRates.push_back(job.sampleRate);
     }
+
     std::shared_ptr<juce::AudioProcessor> instrument;
     if (! job.instrument.pluginUid.isEmpty())
     {
-        if (node.instrument != nullptr
-            && node.instrumentUid == job.instrument.pluginUid)
+        if (reuseInstrument != nullptr)
         {
-            instrument = node.instrument; // same object: patch survives
+            instrument = std::move(reuseInstrument); // same object: patch survives
         }
         else
         {
@@ -1271,7 +1523,7 @@ void ProjectAudioSource::applyPluginJob(const PluginJob& job,
                     job.sampleRate, job.maxBlock);
                 instrument->prepareToPlay(job.sampleRate, job.maxBlock);
             }
-            if (job.instrument.state.isNotEmpty())
+            if (instrument && job.instrument.state.isNotEmpty())
             {
                 juce::MemoryBlock mb;
                 if (mb.fromBase64Encoding(job.instrument.state))
@@ -1281,24 +1533,23 @@ void ProjectAudioSource::applyPluginJob(const PluginJob& job,
         }
     }
 
-    {
-        const std::scoped_lock fxLock(node.fxMutex);
-        node.fx = std::move(fx);
-        node.preparedRates.assign(node.fx->processors.size(),
-                                  job.sampleRate);
-        node.preparedRate = job.sampleRate;
-        node.preparedBlock.store(job.maxBlock, std::memory_order_release);
-    }
-    {
-        const std::scoped_lock instLock(node.instrumentMutex);
-        node.instrument = std::move(instrument);
-        node.instrumentBypass = job.instrument.bypass;
-        node.instrumentPrepared = node.instrument != nullptr;
-        node.instrumentUid = job.instrument.pluginUid;
-    }
+    auto next = std::make_shared<TrackNodeState>();
+    next->fx = std::move(fx);
+    next->instrument = std::move(instrument);
+    next->instrumentBypass = job.instrument.bypass;
+    next->instrumentUid = job.instrument.pluginUid;
+    next->instrumentPreparedRate = next->instrument ? job.sampleRate : 0.0;
+    next->instrumentPreparedBlock = next->instrument ? job.maxBlock : 0;
+    next->midiFx = std::move(midiFx);
+    next->midiFxBypass = midiFxBypass;
+    next->midiFxUid = std::move(midiFxUid);
+    next->midiFxPreparedRate = next->midiFx ? job.sampleRate : 0.0;
+    next->midiFxPreparedBlock = next->midiFx ? job.maxBlock : 0;
+    std::atomic_store(&node.state,
+                      std::shared_ptr<const TrackNodeState>(std::move(next)));
 }
 
-TrackAudioNode* ProjectAudioSource::nodeFor(TrackId trackId)
+TrackAudioNode* ProjectAudioSource::nodeFor(TrackId trackId) const
 {
     const juce::SpinLock::ScopedLockType lock(synthsLock_);
     auto it = trackNodes_.find(trackId);
@@ -1309,31 +1560,21 @@ TrackAudioNode* ProjectAudioSource::nodeFor(TrackId trackId)
 // the track at the block position and pushes the value into the target
 // processor. Audio-thread safe: JUCE VST3 parameter changes are queued.
 void ProjectAudioSource::applyParamAutomation(const Track& track,
-                                              TrackAudioNode* node,
+                                              const TrackNodeState* state,
                                               std::int64_t blockStart,
                                               double rate)
 {
-    if (track.paramLanes.empty() || node == nullptr)
+    if (track.paramLanes.empty() || state == nullptr)
         return;
-
-    std::shared_ptr<const FxChain> fx;
-    std::shared_ptr<juce::AudioProcessor> instrument;
-    {
-        const std::scoped_lock fxLock(node->fxMutex);
-        fx = node->fx;
-    }
-    {
-        const std::scoped_lock instLock(node->instrumentMutex);
-        instrument = node->instrument;
-    }
 
     for (const auto& lane : track.paramLanes)
     {
         std::shared_ptr<juce::AudioProcessor> proc;
         if (lane.slotKind == 1)
-            proc = instrument;
-        else if (fx != nullptr && lane.slotIndex < (int) fx->processors.size())
-            proc = fx->processors[(size_t) lane.slotIndex];
+            proc = state->instrument;
+        else if (state->fx != nullptr
+                 && lane.slotIndex < (int) state->fx->processors.size())
+            proc = state->fx->processors[(size_t) lane.slotIndex];
         if (proc == nullptr)
             continue;
         proc->setParameter(lane.paramIndex,
@@ -1348,11 +1589,11 @@ std::shared_ptr<juce::AudioProcessor> ProjectAudioSource::fxProcessorFor(
     auto* node = nodeFor(trackId);
     if (node == nullptr)
         return nullptr;
-    const std::scoped_lock fxLock(node->fxMutex);
-    if (node->fx == nullptr || slotIndex < 0
-        || slotIndex >= (int) node->fx->processors.size())
+    auto state = std::atomic_load(&node->state);
+    if (state == nullptr || state->fx == nullptr || slotIndex < 0
+        || slotIndex >= (int) state->fx->processors.size())
         return nullptr;
-    return node->fx->processors[(size_t) slotIndex];
+    return state->fx->processors[(size_t) slotIndex];
 }
 
 std::shared_ptr<juce::AudioProcessor> ProjectAudioSource::instrumentProcessorFor(
@@ -1361,8 +1602,8 @@ std::shared_ptr<juce::AudioProcessor> ProjectAudioSource::instrumentProcessorFor
     auto* node = nodeFor(trackId);
     if (node == nullptr)
         return nullptr;
-    const std::scoped_lock instLock(node->instrumentMutex);
-    return node->instrument;
+    auto state = std::atomic_load(&node->state);
+    return state != nullptr ? state->instrument : nullptr;
 }
 
 std::shared_ptr<juce::AudioProcessor> ProjectAudioSource::midiFxProcessorFor(
@@ -1371,39 +1612,46 @@ std::shared_ptr<juce::AudioProcessor> ProjectAudioSource::midiFxProcessorFor(
     auto* node = nodeFor(trackId);
     if (node == nullptr)
         return nullptr;
-    const std::scoped_lock mfxLock(node->midiFxMutex);
-    return node->midiFx;
+    auto state = std::atomic_load(&node->state);
+    return state != nullptr ? state->midiFx : nullptr;
 }
 
-void ProjectAudioSource::processFxChain(TrackAudioNode& node, TrackId trackId,
+std::shared_ptr<juce::AudioProcessor> ProjectAudioSource::masterFxProcessorFor(
+    int slotIndex)
+{
+    auto chain = std::atomic_load(&masterFxChain_);
+    if (chain == nullptr || slotIndex < 0
+        || slotIndex >= (int) chain->processors.size())
+        return nullptr;
+    return chain->processors[(size_t) slotIndex];
+}
+
+void ProjectAudioSource::processFxChain(const FxChain& chain,
+                                        juce::AudioBuffer<float>& buffer,
                                         double rate, int numSamples)
 {
-    const std::scoped_lock fxLock(node.fxMutex);
-    auto fx = node.fx; // keep the chain alive even if reconcile swaps it now
-    if (fx == nullptr)
-        return;
     // A block larger than the prepared maximum would overrun the plugins'
     // internal buffers — skip the block rather than process garbage.
-    if (numSamples > node.preparedBlock.load(std::memory_order_acquire))
+    if (chain.preparedBlock <= 0 || numSamples > chain.preparedBlock)
         return;
 
-    // Processors arrive prepared (reconcileNodes, message thread). A chain
-    // prepared for a different rate is skipped until the next reconcile.
-    for (size_t i = 0; i < fx->processors.size(); ++i)
+    for (size_t i = 0; i < chain.processors.size(); ++i)
     {
-        if (fx->bypass[i])
+        if (i < chain.bypass.size() && chain.bypass[i])
             continue;
-        auto* proc = fx->processors[i].get();
+        auto* proc = chain.processors[i].get();
         if (proc == nullptr)
             continue;
         // MIDI inserts (EZArpeggio) are driven from the instrument render
         // path with the track's real MIDI stream — never here (audio-only).
-        if (fx->uids[(size_t) i].containsIgnoreCase("ezarp"))
+        if (i < (size_t) chain.uids.size()
+            && chain.uids[(int) i].containsIgnoreCase("ezarp"))
             continue;
-        if (i >= node.preparedRates.size() || node.preparedRates[i] != rate)
+        if (i >= chain.preparedRates.size()
+            || chain.preparedRates[i] != rate)
             continue;
-        juce::MidiBuffer emptyMidi;
-        proc->processBlock(trackScratch_, emptyMidi);
+        fxEmptyMidi_.clear();
+        proc->processBlock(buffer, fxEmptyMidi_);
     }
 }
 
@@ -1426,26 +1674,69 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     const bool injectPanic = panicGen != lastPanicGeneration_;
     lastPanicGeneration_ = panicGen;
 
-    if (! playing_.load() || project == nullptr)
+    if (project == nullptr)
     {
         info.clearActiveBufferRegion();
-        if (project != nullptr)
-        {
-            if (injectPanic)
-            {
-                // Drop live notes queued before the stop; a key held after
-                // the stop arrives in a later block and still monitors.
-                pendingExternal_.clear();
-                lastSustainCc_.clear();
-                panicAllInstrumentTracks(*project, info.numSamples);
-            }
-            renderArmedInstrumentMonitoring(info, *project);
-        }
+        for (auto& peak : masterPeaks_)
+            peak.store(0, std::memory_order_relaxed);
         return;
     }
 
+    const int numSamples = info.numSamples;
+    if (numSamples <= 0)
+        return;
+
+    // The master bus is always two channels. Track scratch, the MIDI insert
+    // buffer and this bus are preallocated in prepareToPlay(); the resize is
+    // only a safety net for a device that violates its own contract.
+    if (masterBuffer_.getNumSamples() < numSamples)
+        masterBuffer_.setSize(2, numSamples, false, false, true);
+    masterBuffer_.clear();
+
     const double rate = project->sampleRate;
-    const std::int64_t blockStart = positionSamples_.fetch_add(info.numSamples);
+    const double deviceRate = deviceRate_.load(std::memory_order_acquire);
+    const double pluginRate = deviceRate > 0.0 ? deviceRate : rate;
+
+    // Master inserts + master fader + meters + output copy. Master gain is
+    // applied HERE, after the inserts, not per track: that is what makes the
+    // master fader a true master fader and keeps track meters independent of
+    // it.
+    auto finishMaster = [&] {
+        if (auto masterFx = std::atomic_load(&masterFxChain_))
+            processFxChain(*masterFx, masterBuffer_, pluginRate, numSamples);
+        masterBuffer_.applyGain(project->masterGain);
+
+        const int numOut = std::min(2, info.buffer->getNumChannels());
+        for (int ch = 0; ch < numOut; ++ch)
+        {
+            masterPeaks_[ch].store(
+                std::bit_cast<std::uint32_t>(
+                    absMax(masterBuffer_.getReadPointer(ch, 0), numSamples)),
+                std::memory_order_relaxed);
+            info.buffer->copyFrom(ch, info.startSample, masterBuffer_, ch, 0,
+                                  numSamples);
+        }
+        if (numOut < 2)
+            masterPeaks_[1].store(0, std::memory_order_relaxed);
+    };
+
+    if (! playing_.load())
+    {
+        info.clearActiveBufferRegion();
+        if (injectPanic)
+        {
+            // Drop live notes queued before the stop; a key held after
+            // the stop arrives in a later block and still monitors.
+            pendingExternal_.clear();
+            lastSustainCc_.fill(0);
+            panicAllInstrumentTracks(*project, numSamples);
+        }
+        renderArmedInstrumentMonitoring(info, *project);
+        finishMaster();
+        return;
+    }
+
+    const std::int64_t blockStart = positionSamples_.fetch_add(numSamples);
     const std::int64_t endSamples = (std::int64_t) (project->durationSeconds() * rate);
 
     // While recording, keep the transport rolling past the project end so
@@ -1457,6 +1748,8 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         // must be released, not left frozen until the next play.
         requestPanic();
         info.clearActiveBufferRegion();
+        for (auto& peak : masterPeaks_)
+            peak.store(0, std::memory_order_relaxed);
         return;
     }
 
@@ -1465,7 +1758,7 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     if (injectPanic)
     {
         pendingExternal_.clear();
-        lastSustainCc_.clear();
+        lastSustainCc_.fill(0);
         // Internal synths ignore CC64 through Synthesiser::renderNextBlock,
         // so a pedal-held voice would survive the MIDI panic. Hard-stop them
         // here; plugins get the full panic in their MIDI buffer below.
@@ -1478,8 +1771,8 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     for (const auto& track : project->tracks)
         anySolo = anySolo || track.solo;
 
-    const int numOut = std::min(2, info.buffer->getNumChannels());
-    trackScratch_.setSize(2, info.numSamples, false, false, true);
+    if (trackScratch_.getNumSamples() < numSamples)
+        trackScratch_.setSize(2, numSamples, false, false, true);
 
     int trackIndex = 0;
     for (const auto& track : project->tracks)
@@ -1492,6 +1785,13 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         }
 
         float trackPeak = 0.0f;
+
+        // Load ONE immutable snapshot per track per block. The audio thread
+        // never locks or reads a mutable plugin field again: reconcile and
+        // deferred jobs publish a new snapshot and leave this one alive until
+        // we drop it at the end of the block.
+        auto* node = nodeFor(track.id);
+        auto state = node != nullptr ? std::atomic_load(&node->state) : nullptr;
 
         // Instrument tracks: render their MIDI clips through the internal
         // synth or through the loaded instrument plugin.
@@ -1523,7 +1823,7 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                     const std::int64_t off = on + (std::int64_t) (note.lengthSeconds * rate);
                     // Full scan, no break: recorded notes are paired in
                     // note-OFF order, so the array is NOT sorted by start.
-                    if (on >= blockStart + info.numSamples)
+                    if (on >= blockStart + numSamples)
                         continue;
                     if (on >= clipEndSamples)
                         continue;
@@ -1542,20 +1842,19 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
 
                     // Only send noteOff when it lands inside THIS block — a
                     // clamped one here would cut every note to one block long.
-                    if (off < blockStart + info.numSamples)
+                    if (off < blockStart + numSamples)
                         blockMidi_.addEvent(
                             juce::MidiMessage::noteOff(1, note.pitch),
                             (int) (off - blockStart));
                 }
             }
 
-            auto* node = nodeFor(track.id);
-            applyParamAutomation(track, node, blockStart, rate);
+            applyParamAutomation(track, state.get(), blockStart, rate);
             const bool hasInstrumentPlugin =
-                node != nullptr && node->instrument != nullptr
-                && ! node->instrumentBypass
-                && info.numSamples <= node->preparedBlock.load(
-                                           std::memory_order_acquire);
+                state != nullptr && state->instrument != nullptr
+                && ! state->instrumentBypass
+                && state->instrumentPreparedRate == pluginRate
+                && numSamples <= state->instrumentPreparedBlock;
 
             // Sustain pedal (CC64) lane → MIDI CC events at the block head.
             // STEP semantics: on/off, never a fade between points.
@@ -1563,7 +1862,7 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
             {
                 const int cc = (int) std::lround(
                     evalStepAt(susCurve, blockStart, rate) * 127.0f);
-                int& last = lastSustainCc_[track.id];
+                int& last = lastSustainCc_[meterSlot];
                 if (cc != last)
                 {
                     blockMidi_.addEvent(
@@ -1571,44 +1870,57 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                     last = cc;
                 }
             }
-            if (const char* dbg = std::getenv("CADENCE_MIDI_DBG"))
-            {
-                if ((void*) dbg != nullptr && blockMidi_.getNumEvents() > 0)
-                    std::fprintf(stderr,
-                                 "[midi-dbg] node=%p inst=%p bypass=%d "
-                                 "preparedBlock=%d numSamples=%d events=%d\n",
-                                 (void*) node,
-                                 node ? (void*) node->instrument.get() : nullptr,
-                                 node ? (int) node->instrumentBypass : -1,
-                                 node ? node->preparedBlock.load() : -1,
-                                 info.numSamples, blockMidi_.getNumEvents());
-            }
+            if (debugMidi_ && blockMidi_.getNumEvents() > 0)
+                std::fprintf(stderr,
+                             "[midi-dbg] node=%p inst=%p bypass=%d "
+                             "preparedBlock=%d numSamples=%d events=%d\n",
+                             (void*) node,
+                             state != nullptr
+                                 ? (void*) state->instrument.get()
+                                 : nullptr,
+                             state != nullptr
+                                 ? (int) state->instrumentBypass
+                                 : -1,
+                             state != nullptr
+                                 ? state->instrumentPreparedBlock
+                                 : -1,
+                             numSamples, blockMidi_.getNumEvents());
 
             // MIDI insert (arpeggiator): the instrument hears the
             // TRANSFORMED stream — the original clip notes are consumed.
             const bool midiFxActive =
-                node != nullptr && node->midiFx != nullptr
-                && ! node->midiFxBypass && node->midiFxPrepared;
-            if (std::getenv("CADENCE_ARP_DBG") != nullptr)
+                state != nullptr && state->midiFx != nullptr
+                && ! state->midiFxBypass
+                && state->midiFxPreparedRate == pluginRate
+                && state->midiFxPreparedBlock > 0
+                && numSamples <= state->midiFxPreparedBlock;
+            if (debugArp_)
                 std::fprintf(stderr,
                              "[arp-dbg] node=%p mfx=%p prepared=%d "
                              "bypass=%d numSamples=%d events=%d\n",
                              (void*) node,
-                             node ? (void*) node->midiFx.get() : nullptr,
-                             node ? (int) node->midiFxPrepared : -1,
-                             node ? (int) node->midiFxBypass : -1,
-                             info.numSamples, blockMidi_.getNumEvents());
+                             state != nullptr
+                                 ? (void*) state->midiFx.get()
+                                 : nullptr,
+                             state != nullptr
+                                 ? state->midiFxPreparedBlock
+                                 : -1,
+                             state != nullptr
+                                 ? (int) state->midiFxBypass
+                                 : -1,
+                             numSamples, blockMidi_.getNumEvents());
             if (midiFxActive)
             {
-                midiFxSilent_.setSize(1, info.numSamples, false, false, true);
+                if (midiFxSilent_.getNumSamples() < numSamples)
+                    midiFxSilent_.setSize(1, numSamples, false, false, true);
                 midiFxSilent_.clear();
-                node->midiFx->processBlock(midiFxSilent_, blockMidi_);
+                state->midiFx->processBlock(midiFxSilent_, blockMidi_);
             }
 
             if (hasInstrumentPlugin)
             {
                 trackScratch_.clear();
-                node->instrument->processBlock(trackScratch_, blockMidi_);
+                state->instrument->processBlock(trackScratch_, blockMidi_);
 
                 // MIDI generators (EZDrums): whatever the plugin
                 // "performed" this block is written into the armed
@@ -1617,12 +1929,12 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                 if (recording_.load(std::memory_order_relaxed) && track.armed)
                 {
                     const bool ezdrumsGen = dynamic_cast<ezdrums::MidiGenerator*>(
-                                                node->instrument.get())
+                                                state->instrument.get())
                                             != nullptr;
                     if (ezdrumsGen)
                     {
                         auto* gen = dynamic_cast<ezdrums::MidiGenerator*>(
-                            node->instrument.get());
+                            state->instrument.get());
                         juce::MidiBuffer performed;
                         gen->drainGeneratedMidi(performed);
                         if (performed.getNumEvents() > 0)
@@ -1637,8 +1949,13 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                                     if (! capture->isMidi
                                         || capture->trackId != track.id)
                                         continue;
-                                    const std::scoped_lock lock(
-                                        capture->midiMutex);
+                                    // Never block the audio thread on the
+                                    // message thread finalizing a take.
+                                    std::unique_lock<std::mutex> lock(
+                                        capture->midiMutex,
+                                        std::try_to_lock);
+                                    if (! lock.owns_lock())
+                                        continue;
                                     for (const auto ev : performed)
                                     {
                                         const auto& m = ev.getMessage();
@@ -1679,8 +1996,11 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                                     blockStart
                                     - recordStartSamples_.load(
                                         std::memory_order_relaxed);
-                                const std::scoped_lock lock(
-                                    capture->midiMutex);
+                                std::unique_lock<std::mutex> lock(
+                                    capture->midiMutex,
+                                    std::try_to_lock);
+                                if (! lock.owns_lock())
+                                    continue;
                                 for (const auto ev : blockMidi_)
                                 {
                                     const auto& m = ev.getMessage();
@@ -1709,9 +2029,7 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
             }
             else
             {
-                auto* synth = getOrCreateSynth(track.id, rate);
-                if (synthsRate_ != rate)
-                    synth->setCurrentPlaybackSampleRate(rate);
+                auto* synth = getOrCreateSynth(track.id, pluginRate);
                 // Synthesiser ignores CC messages: route the sustain pedal
                 // to the voices ourselves (PianoVoice implements sustain).
                 for (const auto ev : blockMidi_)
@@ -1724,25 +2042,25 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                                                        m.getControllerValue());
                 }
                 trackScratch_.clear();
-                synth->renderNextBlock(trackScratch_, blockMidi_, 0, info.numSamples);
+                synth->renderNextBlock(trackScratch_, blockMidi_, 0, numSamples);
             }
 
-            if (node != nullptr && node->fx)
-                processFxChain(*node, track.id, rate, info.numSamples);
+            if (state != nullptr && state->fx != nullptr)
+                processFxChain(*state->fx, trackScratch_, pluginRate, numSamples);
 
             // Volume + pan automation (§7.12, Read always active): gain
             // ramps across the block from the curves, replacing the static
-            // volume/pan.
+            // volume/pan. Master gain is applied later, on the master bus.
             const auto* volCurve = track.volumeAutomation.get();
             const auto* panCurve = track.panAutomation.get();
             const float v0 = volumeAt(track, volCurve, blockStart, rate);
             const float v1 = volumeAt(track, volCurve,
-                                      blockStart + info.numSamples, rate);
+                                      blockStart + numSamples, rate);
             const float pan0 = panCurve
                 ? evalCurveAt(panCurve, blockStart, rate, 0.5f) * 2.0f - 1.0f
                 : track.pan;
             const float pan1 = panCurve
-                ? evalCurveAt(panCurve, blockStart + info.numSamples, rate,
+                ? evalCurveAt(panCurve, blockStart + numSamples, rate,
                               0.5f) * 2.0f - 1.0f
                 : track.pan;
 
@@ -1750,22 +2068,19 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                                * juce::MathConstants<float>::pi * 0.25f;
             const float ang1 = (juce::jlimit(-1.0f, 1.0f, pan1) + 1.0f)
                                * juce::MathConstants<float>::pi * 0.25f;
-            const float left0 = std::cos(ang0) * project->masterGain * v0;
-            const float left1 = std::cos(ang1) * project->masterGain * v1;
-            const float right0 = std::sin(ang0) * project->masterGain * v0;
-            const float right1 = std::sin(ang1) * project->masterGain * v1;
-            trackScratch_.applyGainRamp(0, 0, info.numSamples, left0, left1);
-            trackScratch_.applyGainRamp(1, 0, info.numSamples, right0, right1);
+            const float left0 = std::cos(ang0) * v0;
+            const float left1 = std::cos(ang1) * v1;
+            const float right0 = std::sin(ang0) * v0;
+            const float right1 = std::sin(ang1) * v1;
+            trackScratch_.applyGainRamp(0, 0, numSamples, left0, left1);
+            trackScratch_.applyGainRamp(1, 0, numSamples, right0, right1);
 
             for (int ch = 0; ch < 2; ++ch)
                 trackPeak = std::max(trackPeak,
-                    absMax(trackScratch_.getReadPointer(ch, 0), info.numSamples));
+                    absMax(trackScratch_.getReadPointer(ch, 0), numSamples));
 
-            info.buffer->addFrom(0, info.startSample, trackScratch_, 0, 0,
-                                 info.numSamples, 1.0f);
-            if (numOut > 1)
-                info.buffer->addFrom(1, info.startSample, trackScratch_, 1, 0,
-                                     info.numSamples, 1.0f);
+            masterBuffer_.addFrom(0, 0, trackScratch_, 0, 0, numSamples, 1.0f);
+            masterBuffer_.addFrom(1, 0, trackScratch_, 1, 0, numSamples, 1.0f);
 
             trackPeaks_[meterSlot].store(std::bit_cast<std::uint32_t>(trackPeak),
                                          std::memory_order_relaxed);
@@ -1790,7 +2105,7 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
             const std::int64_t clipStart = (std::int64_t) (clip.startSeconds * rate);
             const std::int64_t clipEnd = (std::int64_t) (clip.endSeconds() * rate);
             const std::int64_t from = std::max(blockStart, clipStart);
-            const std::int64_t to = std::min(blockStart + (std::int64_t) info.numSamples, clipEnd);
+            const std::int64_t to = std::min(blockStart + (std::int64_t) numSamples, clipEnd);
             if (to <= from)
                 continue;
 
@@ -1848,55 +2163,52 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         const auto* panCurve = track.panAutomation.get();
         const float v0 = volumeAt(track, volCurve, blockStart, rate);
         const float v1 = volumeAt(track, volCurve,
-                                  blockStart + info.numSamples, rate);
+                                  blockStart + numSamples, rate);
         const float pan0 = panCurve
             ? evalCurveAt(panCurve, blockStart, rate, 0.5f) * 2.0f - 1.0f
             : track.pan;
         const float pan1 = panCurve
-            ? evalCurveAt(panCurve, blockStart + info.numSamples, rate,
+            ? evalCurveAt(panCurve, blockStart + numSamples, rate,
                           0.5f) * 2.0f - 1.0f
             : track.pan;
 
-        auto* node = nodeFor(track.id);
-        applyParamAutomation(track, node, blockStart, rate);
-        if (node != nullptr && node->fx)
-            processFxChain(*node, track.id, rate, info.numSamples);
+        applyParamAutomation(track, state.get(), blockStart, rate);
+        if (state != nullptr && state->fx != nullptr)
+            processFxChain(*state->fx, trackScratch_, pluginRate, numSamples);
 
         // Stereo sources pan as a balance (see panGains): a centred stereo
         // clip keeps its level, matching Cubase's stereo panner.
         const bool stereo = hasStereoSource(*project, track);
         float left0 = 0.0f, right0 = 0.0f, left1 = 0.0f, right1 = 0.0f;
-        panGains(stereo, pan0, project->masterGain * v0, left0, right0);
-        panGains(stereo, pan1, project->masterGain * v1, left1, right1);
-        trackScratch_.applyGainRamp(0, 0, info.numSamples, left0, left1);
-        trackScratch_.applyGainRamp(1, 0, info.numSamples, right0, right1);
+        panGains(stereo, pan0, v0, left0, right0);
+        panGains(stereo, pan1, v1, left1, right1);
+        trackScratch_.applyGainRamp(0, 0, numSamples, left0, left1);
+        trackScratch_.applyGainRamp(1, 0, numSamples, right0, right1);
 
         for (int ch = 0; ch < 2; ++ch)
             trackPeak = std::max(trackPeak,
-                absMax(trackScratch_.getReadPointer(ch, 0), info.numSamples));
+                absMax(trackScratch_.getReadPointer(ch, 0), numSamples));
 
-        info.buffer->addFrom(0, info.startSample, trackScratch_, 0, 0,
-                             info.numSamples, 1.0f);
-        if (numOut > 1)
-            info.buffer->addFrom(1, info.startSample, trackScratch_, 1, 0,
-                                 info.numSamples, 1.0f);
+        masterBuffer_.addFrom(0, 0, trackScratch_, 0, 0, numSamples, 1.0f);
+        masterBuffer_.addFrom(1, 0, trackScratch_, 1, 0, numSamples, 1.0f);
 
         trackPeaks_[meterSlot].store(std::bit_cast<std::uint32_t>(trackPeak),
                                      std::memory_order_relaxed);
     }
 
     // Metronome click: accent on the beat that starts a bar (4/4 fixed until
-    // the tempo/time-signature editing lands).
+    // the tempo/time-signature editing lands). It goes through the master bus
+    // so the master meter reflects what is actually leaving the engine.
     if (metronome_.load(std::memory_order_relaxed))
     {
         const double beatSamples = 60.0 / project->tempoBpm * rate;
         std::int64_t beat = (std::int64_t) std::ceil((double) blockStart / beatSamples);
-        for (; beat * beatSamples < blockStart + info.numSamples; ++beat)
+        for (; beat * beatSamples < blockStart + numSamples; ++beat)
         {
             const std::int64_t clickPos = (std::int64_t) (beat * beatSamples) - blockStart;
             const int offset = (int) clickPos;
             const int clickLen = (int) std::min<std::int64_t>(
-                (std::int64_t) (0.03 * rate), info.numSamples - offset);
+                (std::int64_t) (0.03 * rate), numSamples - offset);
             const bool accent = (beat % 4) == 0;
             const double freq = accent ? 1568.0 : 880.0;
             for (int i = 0; i < clickLen; ++i)
@@ -1904,17 +2216,13 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                 const float env = 1.0f - (float) i / (float) clickLen;
                 const float sample = (float) (0.4 * env
                     * std::sin(juce::MathConstants<double>::twoPi * freq * i / rate));
-                for (int ch = 0; ch < numOut; ++ch)
-                    info.buffer->addSample(ch, info.startSample + offset + i, sample);
+                for (int ch = 0; ch < 2; ++ch)
+                    masterBuffer_.addSample(ch, offset + i, sample);
             }
         }
     }
 
-    for (int ch = 0; ch < numOut; ++ch)
-        masterPeaks_[ch].store(
-            std::bit_cast<std::uint32_t>(
-                absMax(info.buffer->getReadPointer(ch, info.startSample), info.numSamples)),
-            std::memory_order_relaxed);
+    finishMaster();
 }
 
 void ProjectAudioSource::allNotesOff()
@@ -1951,10 +2259,50 @@ ProjectAudioSource::getPosition() const
 
 bool ProjectAudioSource::trackInstrumentLive(TrackId trackId) const
 {
-    const std::scoped_lock lock(trackNodesMutex_);
-    auto it = trackNodes_.find(trackId);
-    return it != trackNodes_.end() && it->second != nullptr
-        && it->second->instrument != nullptr;
+    auto* node = nodeFor(trackId);
+    if (node == nullptr)
+        return false;
+    auto state = std::atomic_load(&node->state);
+    return state != nullptr && state->instrument != nullptr;
+}
+
+void ProjectAudioSource::flushAllNotes()
+{
+    // Internal synths: hard-stop, including voices held by the sustain pedal.
+    allNotesOff();
+
+    const auto project = std::atomic_load(&project_);
+    if (project == nullptr)
+        return;
+
+    // Hosted instruments: give each one a silent panic block. This runs on
+    // the message thread while the device is stopped/restarting, so it cannot
+    // race processBlock(). It covers the case where stop/pause/seek requested
+    // a panic but the device died before another callback could deliver it.
+    constexpr int kPanicBlock = 64;
+    juce::AudioBuffer<float> silent(2, kPanicBlock);
+    silent.clear();
+    for (const auto& track : project->tracks)
+    {
+        if (track.type != Track::Type::Instrument)
+            continue;
+        auto* node = nodeFor(track.id);
+        auto state = node != nullptr ? std::atomic_load(&node->state) : nullptr;
+        if (state != nullptr && state->instrument != nullptr
+            && ! state->instrumentBypass
+            && state->instrumentPreparedBlock > 0)
+        {
+            const int n = std::min(kPanicBlock,
+                                   state->instrumentPreparedBlock);
+            juce::AudioBuffer<float> view(
+                silent.getArrayOfWritePointers(), 2, n);
+            juce::MidiBuffer panic;
+            addPanicMessages(panic);
+            state->instrument->processBlock(view, panic);
+        }
+        silenceSynthForTrack(track.id);
+    }
+    lastSustainCc_.fill(0);
 }
 
 float ProjectAudioSource::masterPeak(int channel)
@@ -1980,24 +2328,18 @@ public:
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override
     {
-        if (device != nullptr)
-        {
-            engine.transport_->prepareToPlay(device->getCurrentBufferSizeSamples(),
-                                             device->getCurrentSampleRate());
-            engine.preparePreview(device->getCurrentBufferSizeSamples(),
-                                  device->getCurrentSampleRate());
-        }
-        else
-        {
-            engine.transport_->releaseResources();
-            engine.releasePreview();
-        }
+        engine.handleAudioDeviceAboutToStart(device);
     }
 
     void audioDeviceStopped() override
     {
-        engine.transport_->releaseResources();
-        engine.releasePreview();
+        engine.handleAudioDeviceStopped(
+            engine.intentionalDeviceStop_.load(std::memory_order_acquire));
+    }
+
+    void audioDeviceError(const juce::String& message) override
+    {
+        engine.handleAudioDeviceError(message);
     }
 
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData,
@@ -2007,6 +2349,8 @@ public:
                                           int numFrames,
                                           const juce::AudioIODeviceCallbackContext&) override
     {
+        engine.noteAudioCallback();
+
         // 1) Capture inputs into armed-track buffers (recording).
         if (engine.recording_.load(std::memory_order_relaxed))
         {
@@ -2023,7 +2367,10 @@ public:
                         const int now = capture->played.fetch_add(numFrames,
                             std::memory_order_relaxed);
                         const int boundary = 12000; // 0.25 s at 48 kHz
-                        const std::scoped_lock lock(capture->midiMutex);
+                        std::unique_lock<std::mutex> lock(capture->midiMutex,
+                                                         std::try_to_lock);
+                        if (! lock.owns_lock())
+                            continue;
                         while (capture->loopbackBoundary + boundary <= now)
                         {
                             capture->loopbackBoundary += boundary;
@@ -2117,6 +2464,17 @@ public:
         if (engine.previewTransport_.hasStreamFinished())
             engine.stopPreview();
     }
+
+private:
+    Engine& engine;
+};
+
+class Engine::AudioHealthWatchdog : public juce::Timer
+{
+public:
+    explicit AudioHealthWatchdog(Engine& owner) : engine(owner) {}
+
+    void timerCallback() override { engine.checkAudioHealth(); }
 
 private:
     Engine& engine;
@@ -2221,27 +2579,59 @@ Engine::Engine()
     outputCallback_ = std::make_unique<OutputCallback>(*this);
     midiInCallback_ = std::make_unique<MidiInCallback>(*this);
     previewWatchdog_ = std::make_unique<PreviewWatchdog>(*this);
+    audioHealthWatchdog_ = std::make_unique<AudioHealthWatchdog>(*this);
+    audioHealthWatchdog_->startTimer(500);
     aiService_ = std::make_unique<ai::Service>();
 }
 
 Engine::~Engine()
 {
+    shuttingDown_.store(true, std::memory_order_release);
+    if (audioHealthWatchdog_ != nullptr)
+    {
+        audioHealthWatchdog_->stopTimer();
+        audioHealthWatchdog_.reset();
+    }
+
     aiCancel_.store(true, std::memory_order_release);
     if (aiThread_.joinable())
         aiThread_.join();
-    transport_->releaseResources();
+    if (initCancel_ != nullptr)
+        initCancel_->store(true, std::memory_order_release);
+
+    // A device close during shutdown is intentional: never let the error
+    // path schedule a recovery while the Engine is being destroyed.
+    intentionalDeviceStop_.store(true, std::memory_order_release);
+    transport_->pause();
+    transport_->requestPanic();
     deviceManager_.removeAudioCallback(outputCallback_.get());
     deviceManager_.closeAudioDevice();
+    // Deliver the panic to plugins while the device is stopped and the
+    // message thread owns them, then destroy every instance BEFORE the
+    // plugin host/format manager members are destroyed. The old member order
+    // destroyed pluginHost_ before transport_, unloading plugin modules while
+    // live instances still existed (the Analog Lab V abort at exit).
+    transport_->flushAllNotes();
+    transport_->releaseResources();
+    transport_.reset();
     stopMessageLoop();
 }
 
 void Engine::initialiseAudioInBackground()
 {
-    // Opens the audio device on a background thread. The UI stays
-    // responsive even if CoreAudio takes seconds to initialise (heavy
-    // devices, HAL in transitional state after connect/disconnect).
-    initThread_ = std::thread([this] {
+    // Open the device on the next message-loop turn instead of blocking the
+    // Dart FFI caller. initialise() itself must run on the message thread
+    // (JUCE device management), so a worker thread would only wait for it.
+    // The shared cancellation token makes the deferred lambda safe if the
+    // app quits before it runs.
+    auto* mm = juce::MessageManager::getInstance();
+    auto cancel = initCancel_;
+    mm->callAsync([this, cancel] {
+        if (cancel == nullptr || cancel->load(std::memory_order_acquire))
+            return;
         const auto r = initialise();
+        if (cancel->load(std::memory_order_acquire))
+            return;
         audioReady_.store(r.wasOk(), std::memory_order_release);
     });
 }
@@ -2294,30 +2684,311 @@ juce::Result Engine::addClipFromPath(TrackId trackId, const juce::String& path,
 
 juce::Result Engine::restartAudio()
 {
-    deviceManager_.closeAudioDevice();
-    return initialise();
+    // Explicit user action or automatic recovery. Reopen the SAME device
+    // setup; the old code called initialiseWithDefaultDevices() and silently
+    // threw away the user's UR22 selection/buffer size.
+    juce::Result result = juce::Result::ok();
+    runOnMessageThread([&] {
+        // A device restart must not throw away an in-progress take.
+        if (isRecording())
+            finalizeRecording();
+        const bool wasPlaying = transport_->isPlaying();
+        const double position = transport_->positionSeconds();
+
+        audioReady_.store(false, std::memory_order_release);
+        intentionalDeviceStop_.store(true, std::memory_order_release);
+        transport_->pause();
+        transport_->requestPanic();
+
+        deviceManager_.removeAudioCallback(outputCallback_.get());
+        deviceManager_.closeAudioDevice();
+        // The device is stopped: deliver a hard panic now. A stop/pause panic
+        // requested just before a device death would otherwise never reach
+        // the plugins, leaving stuck voices after recovery.
+        transport_->flushAllNotes();
+
+        const auto setup = deviceManager_.getAudioDeviceSetup();
+        if (setup.outputDeviceName.isNotEmpty()
+            || setup.inputDeviceName.isNotEmpty())
+            deviceManager_.restartLastAudioDevice();
+
+        if (deviceManager_.getCurrentAudioDevice() == nullptr)
+        {
+            const auto err = deviceManager_.initialiseWithDefaultDevices(2, 2);
+            if (err.isNotEmpty())
+                result = juce::Result::fail("device restart: " + err);
+        }
+
+        if (result.wasOk() && deviceManager_.getCurrentAudioDevice() != nullptr)
+        {
+            deviceManager_.addAudioCallback(outputCallback_.get());
+            audioDeviceRunning_.store(true, std::memory_order_release);
+            audioCallbackHeartbeat_.store(
+                audioCallbackCount_.load(std::memory_order_relaxed));
+            audioStallTicks_ = 0;
+            // Prepare the plugin graph for the new rate/block before the
+            // transport resumes; otherwise the first blocks silently skip
+            // instruments/fx until the async reconcile lands.
+            reconcileAfterDeviceChange();
+            transport_->seek(position);
+            if (wasPlaying)
+                transport_->play();
+            audioReady_.store(true, std::memory_order_release);
+        }
+
+        intentionalDeviceStop_.store(false, std::memory_order_release);
+        if (result.failed())
+        {
+            audioReady_.store(false, std::memory_order_release);
+            audioDeviceRunning_.store(false, std::memory_order_release);
+        }
+    });
+
+    if (result.failed())
+        lastErrorUtf8_ = result.getErrorMessage().toStdString();
+    return result;
 }
 
 juce::Result Engine::initialise()
 {
     juce::Result error = juce::Result::ok();
     runOnMessageThread([&] {
-        const auto err = deviceManager_.initialiseWithDefaultDevices(2, 2);
-        error = err.isEmpty() ? juce::Result::ok() : juce::Result::fail(err);
+        // loadDeviceSettings() may already have opened the configured device.
+        // Do NOT call initialiseWithDefaultDevices() here: it would discard
+        // the saved UR22 selection and buffer size on the first Play.
+        if (deviceManager_.getCurrentAudioDevice() != nullptr)
+        {
+            deviceManager_.addAudioCallback(outputCallback_.get());
+            audioReady_.store(true, std::memory_order_release);
+            audioConfigDirty_.store(true, std::memory_order_release);
+            reconcileAfterDeviceChange();
+            return;
+        }
+
+        const auto setup = deviceManager_.getAudioDeviceSetup();
+        if (setup.outputDeviceName.isNotEmpty()
+            || setup.inputDeviceName.isNotEmpty())
+            deviceManager_.restartLastAudioDevice();
+
+        if (deviceManager_.getCurrentAudioDevice() == nullptr)
+        {
+            const auto err = deviceManager_.initialiseWithDefaultDevices(2, 2);
+            if (err.isNotEmpty())
+            {
+                error = juce::Result::fail(err);
+                return;
+            }
+        }
+
+        deviceManager_.addAudioCallback(outputCallback_.get());
+        audioReady_.store(deviceManager_.getCurrentAudioDevice() != nullptr,
+                          std::memory_order_release);
+        audioConfigDirty_.store(true, std::memory_order_release);
+        reconcileAfterDeviceChange();
     });
+
     if (error.failed())
     {
+        audioReady_.store(false, std::memory_order_release);
         lastErrorUtf8_ = error.getErrorMessage().toStdString();
         return juce::Result::fail(error.getErrorMessage());
     }
-
-    deviceManager_.addAudioCallback(outputCallback_.get());
     return juce::Result::ok();
 }
 
 bool Engine::isInitialised() const
 {
-    return deviceManager_.getCurrentAudioDevice() != nullptr;
+    // Do not dereference the device pointer here: Dart can poll this while
+    // CoreAudio is closing/reopening the device. The atomic is published by
+    // audioDeviceAboutToStart/audioDeviceStopped and by initialise().
+    return audioReady_.load(std::memory_order_acquire);
+}
+
+int Engine::audioXRunCount() const
+{
+    if (auto* device = deviceManager_.getCurrentAudioDevice())
+    {
+        const int xruns = device->getXRunCount();
+        if (xruns >= 0)
+            return xruns;
+    }
+    return audioXRunCount_.load(std::memory_order_relaxed);
+}
+
+const char* Engine::lastAudioErrorUtf8()
+{
+    const std::scoped_lock lock(audioErrorMutex_);
+    lastAudioErrorUtf8_ = lastAudioError_.toStdString();
+    return lastAudioErrorUtf8_.c_str();
+}
+
+void Engine::prepareTransportForDevice(juce::AudioIODevice* device)
+{
+    if (device == nullptr)
+    {
+        transport_->releaseResources();
+        releasePreview();
+        return;
+    }
+    transport_->prepareToPlay(device->getCurrentBufferSizeSamples(),
+                              device->getCurrentSampleRate());
+    preparePreview(device->getCurrentBufferSizeSamples(),
+                   device->getCurrentSampleRate());
+}
+
+void Engine::handleAudioDeviceAboutToStart(juce::AudioIODevice* device)
+{
+    if (device == nullptr)
+    {
+        transport_->releaseResources();
+        releasePreview();
+        audioDeviceRunning_.store(false, std::memory_order_release);
+        return;
+    }
+
+    prepareTransportForDevice(device);
+    audioDeviceRunning_.store(true, std::memory_order_release);
+    audioCallbackHeartbeat_.store(
+        audioCallbackCount_.load(std::memory_order_relaxed));
+    audioStallTicks_ = 0;
+    audioReady_.store(true, std::memory_order_release);
+    // The device-start callback may run while the device manager holds its
+    // callback lock. Never block here: mark the graph dirty and let the
+    // message-thread watchdog reconcile it.
+    audioConfigDirty_.store(true, std::memory_order_release);
+}
+
+void Engine::handleAudioDeviceStopped(bool intentional)
+{
+    transport_->releaseResources();
+    releasePreview();
+    audioDeviceRunning_.store(false, std::memory_order_release);
+    audioReady_.store(false, std::memory_order_release);
+    if (! intentional && ! shuttingDown_.load(std::memory_order_acquire))
+        scheduleAudioRecovery("audio device stopped unexpectedly");
+}
+
+void Engine::handleAudioDeviceError(const juce::String& message)
+{
+    {
+        const std::scoped_lock lock(audioErrorMutex_);
+        lastAudioError_ = message;
+        lastAudioErrorUtf8_ = message.toStdString();
+    }
+    scheduleAudioRecovery("CoreAudio: " + message);
+}
+
+void Engine::scheduleAudioRecovery(const juce::String& reason)
+{
+    if (shuttingDown_.load(std::memory_order_acquire)
+        || intentionalDeviceStop_.load(std::memory_order_acquire))
+        return;
+    {
+        const std::scoped_lock lock(audioErrorMutex_);
+        if (lastAudioError_.isEmpty())
+            lastAudioError_ = reason;
+    }
+    audioRecoveryPending_.store(true, std::memory_order_release);
+}
+
+void Engine::recoverAudio()
+{
+    if (shuttingDown_.load(std::memory_order_acquire))
+        return;
+
+    if (auto* device = deviceManager_.getCurrentAudioDevice())
+        if (device->isPlaying())
+        {
+            audioRecoveryPending_.store(false, std::memory_order_release);
+            audioDeviceRunning_.store(true, std::memory_order_release);
+            return;
+        }
+
+    const auto result = restartAudio();
+    if (result.wasOk())
+    {
+        audioRecoveryCount_.fetch_add(1, std::memory_order_relaxed);
+        audioRecoveryPending_.store(false, std::memory_order_release);
+    }
+    else
+    {
+        // Try again on the next watchdog tick.
+        audioRecoveryPending_.store(true, std::memory_order_release);
+    }
+}
+
+void Engine::reconcileAfterDeviceChange()
+{
+    if (shuttingDown_.load(std::memory_order_acquire))
+        return;
+    auto* device = deviceManager_.getCurrentAudioDevice();
+    if (device == nullptr)
+        return;
+    auto project = std::atomic_load(&project_);
+    if (project == nullptr)
+        return;
+    // Defer heavy plugin loads: a device change must not freeze the UI while
+    // every VST3 is re-instantiated at the new rate. The message-loop job pump
+    // loads one track at a time; tracks whose old instances are at the wrong
+    // rate fall back to the internal synth until their new instance lands.
+    transport_->reconcileNodes(*project, pluginHost_,
+                               device->getCurrentBufferSizeSamples(), true);
+    audioConfigDirty_.store(false, std::memory_order_release);
+}
+
+void Engine::checkAudioHealth()
+{
+    if (shuttingDown_.load(std::memory_order_acquire))
+        return;
+
+    if (audioConfigDirty_.exchange(false, std::memory_order_acq_rel))
+        reconcileAfterDeviceChange();
+
+    if (audioRecoveryPending_.exchange(false, std::memory_order_acq_rel))
+    {
+        recoverAudio();
+        return;
+    }
+
+    auto* device = deviceManager_.getCurrentAudioDevice();
+    if (device == nullptr)
+    {
+        if (audioDeviceRunning_.exchange(false, std::memory_order_acq_rel)
+            && ! intentionalDeviceStop_.load(std::memory_order_acquire))
+            scheduleAudioRecovery("audio device disappeared");
+        return;
+    }
+
+    audioDeviceRunning_.store(true, std::memory_order_release);
+    if (const int xruns = device->getXRunCount(); xruns >= 0)
+        audioXRunCount_.store(xruns, std::memory_order_relaxed);
+
+    if (! device->isPlaying())
+    {
+        if (! intentionalDeviceStop_.load(std::memory_order_acquire))
+            scheduleAudioRecovery("audio device is not running");
+        return;
+    }
+
+    // Heartbeat: every audio callback increments this counter. If it stops
+    // advancing while the device claims to be playing, the callback thread is
+    // stuck or CoreAudio silently disabled the client. Recover automatically
+    // instead of making the user restart the whole app.
+    const auto count = audioCallbackCount_.load(std::memory_order_relaxed);
+    const auto last = audioCallbackHeartbeat_.exchange(
+        count, std::memory_order_relaxed);
+    if (count == last)
+    {
+        if (++audioStallTicks_ >= 4)
+        {
+            audioStallTicks_ = 0;
+            scheduleAudioRecovery("audio callback stalled");
+        }
+    }
+    else
+    {
+        audioStallTicks_ = 0;
+    }
 }
 
 juce::StringArray Engine::outputDeviceNames()
@@ -2406,6 +3077,13 @@ juce::Result Engine::setDeviceConfig(const juce::String& outputDevice,
     juce::Result result = juce::Result::ok();
     runOnMessageThread([&] {
         const auto previous = deviceManager_.getAudioDeviceSetup();
+        if (isRecording())
+            finalizeRecording();
+        const bool wasPlaying = transport_->isPlaying();
+        const double position = transport_->positionSeconds();
+        transport_->pause();
+        transport_->requestPanic();
+
         auto setup = previous;
         if (outputDevice.isNotEmpty())
             setup.outputDeviceName = outputDevice;
@@ -2416,6 +3094,7 @@ juce::Result Engine::setDeviceConfig(const juce::String& outputDevice,
         if (bufferSize > 0)
             setup.bufferSize = bufferSize;
 
+        intentionalDeviceStop_.store(true, std::memory_order_release);
         const auto error = deviceManager_.setAudioDeviceSetup(setup, true);
         if (error.isNotEmpty())
         {
@@ -2427,6 +3106,16 @@ juce::Result Engine::setDeviceConfig(const juce::String& outputDevice,
         {
             result = juce::Result::ok();
         }
+        intentionalDeviceStop_.store(false, std::memory_order_release);
+
+        // The device reopened at a new rate/block. Rebuild the plugin graph
+        // before resuming so the first blocks are not silently skipped.
+        reconcileAfterDeviceChange();
+        audioReady_.store(deviceManager_.getCurrentAudioDevice() != nullptr,
+                          std::memory_order_release);
+        transport_->seek(position);
+        if (wasPlaying)
+            transport_->play();
     });
     return result;
 }
@@ -2576,6 +3265,17 @@ juce::Result Engine::loadDeviceSettings(const juce::File& file)
             deviceManager_.initialise(2, 2, xml.get(), true);
         else
             deviceManager_.initialiseWithDefaultDevices(2, 2);
+
+        // The settings file opens the device BEFORE the first Play. Attach
+        // the callback now; otherwise the first Play used to call
+        // initialiseWithDefaultDevices() and silently reset UR22 to the
+        // system default device/buffer.
+        if (deviceManager_.getCurrentAudioDevice() != nullptr)
+        {
+            deviceManager_.addAudioCallback(outputCallback_.get());
+            audioReady_.store(true, std::memory_order_release);
+            audioConfigDirty_.store(true, std::memory_order_release);
+        }
     }
 
     auto midiVar = root->getProperty("midiInputs");
@@ -4798,6 +5498,15 @@ juce::Result Engine::saveProject(const juce::File& file)
                         track.fx[(size_t) i].state = mb.toBase64Encoding();
                 }
         }
+        for (int i = 0; i < (int) serializable->masterFx.size(); ++i)
+            if (auto proc = transport_->masterFxProcessorFor(i))
+            {
+                juce::MemoryBlock mb;
+                proc->getStateInformation(mb);
+                if (mb.getSize() > 0)
+                    serializable->masterFx[(size_t) i].state =
+                        mb.toBase64Encoding();
+            }
     });
 
     const auto text = juce::JSON::toString(
@@ -5065,14 +5774,16 @@ void Engine::pause()
     // flushed. Panicking before pausing left a window where the audio thread
     // could still schedule notes after the panic.
     transport_->pause();
-    transport_->allNotesOff();
+    // Do NOT silence synth voices from this (message) thread while the audio
+    // thread may be inside renderNextBlock: the panic is delivered by the
+    // next callback, where silenceSynthForTrack() runs on the audio thread.
+    // If the device is already dead, flushAllNotes() handles it on restart.
     transport_->requestPanic();
 }
 void Engine::stop()
 {
     finalizeRecording();
     transport_->stop();
-    transport_->allNotesOff();
     transport_->requestPanic();
 }
 void Engine::seek(double seconds)
@@ -5081,7 +5792,6 @@ void Engine::seek(double seconds)
     // start of a block, so the panic is delivered with the new position
     // (or by the next block) instead of racing the old one.
     transport_->seek(seconds);
-    transport_->allNotesOff();
     transport_->requestPanic();
 }
 
@@ -5165,6 +5875,38 @@ juce::Result Engine::openInstrumentEditor(TrackId trackId, ClipId clipId)
         // = unbound; it can create one at the playhead from its editor).
         ezsynth::bindHostContext(proc.get(), this, trackId, bound);
         const auto key = (std::uint64_t) trackId << 16;
+        auto it = editorWindows_.find(key);
+        if (it != editorWindows_.end() && it->second.proc != proc)
+        {
+            editorWindows_.erase(it);
+            it = editorWindows_.end();
+        }
+        if (it == editorWindows_.end())
+            it = editorWindows_
+                     .emplace(key,
+                              EditorEntry{std::make_unique<PluginEditorWindow>(
+                                              proc),
+                                          proc})
+                     .first;
+        it->second.window->setVisible(true);
+        it->second.window->toFront(true);
+    });
+    return result;
+}
+
+juce::Result Engine::openMasterFxEditor(int slotIndex)
+{
+    juce::Result result = juce::Result::ok();
+    runOnMessageThread([&] {
+        auto proc = transport_->masterFxProcessorFor(slotIndex);
+        if (proc == nullptr)
+        {
+            result = fail("no plugin in that master slot");
+            return;
+        }
+        // Master slots use a key namespace disjoint from track keys.
+        const auto key = 0x8000000000000000ULL
+                         | (std::uint64_t) (slotIndex + 1);
         auto it = editorWindows_.find(key);
         if (it != editorWindows_.end() && it->second.proc != proc)
         {

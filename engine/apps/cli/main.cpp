@@ -40,6 +40,12 @@ void printUsage()
         "      verifies undo/redo and project save/load round-trip.\n"
         "  cadence-cli rectest\n"
         "      verifies the record pipeline end-to-end with a synthesized tone.\n"
+        "  cadence-cli mastertest\n"
+        "      verifies the master bus fader and master insert chain.\n"
+        "  cadence-cli devrestart\n"
+        "      restarts the UR22 while playing and checks device/position.\n"
+        "  cadence-cli churntest\n"
+        "      swaps instrument/fx snapshots while the audio thread renders.\n"
         "  cadence-cli vae-test <models-dir>\n"
         "      loads the Magenta MusicVAE checkpoints and runs sample/encode/decode.\n"
         "  cadence-cli ai-test [models-dir]\n"
@@ -584,6 +590,247 @@ int cmdTestDeviceSwitch()
                 engine.currentOutputDeviceName().toRawUTF8(),
                 engine.currentBufferSizeSamples());
     return 0;
+}
+
+// Master bus regression: the master fader must scale the final mix (after
+// master inserts), not each track. The old code applied masterGain per track
+// and never processed masterFxChain_ at all.
+int cmdMasterTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Tone", 0);
+    writeToneWav(juce::File("/tmp/cadence_master_tone.wav"), 1.0, 440.0);
+    engine.addClip(track, juce::File("/tmp/cadence_master_tone.wav"), 0.0, 1.0);
+
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    engine.setMasterGain(1.0f);
+    const auto fullResult = engine.renderToFileEx(
+        juce::File("/tmp/cadence_master_full.wav"), 999, 16);
+    engine.setMasterGain(0.5f);
+    const auto halfResult = engine.renderToFileEx(
+        juce::File("/tmp/cadence_master_half.wav"), 999, 16);
+
+    const double rmsFull = rmsInRange(formats,
+                                      juce::File("/tmp/cadence_master_full.wav"),
+                                      0.1, 0.9);
+    const double rmsHalf = rmsInRange(formats,
+                                      juce::File("/tmp/cadence_master_half.wav"),
+                                      0.1, 0.9);
+    const double ratio = rmsFull > 0.0 ? rmsHalf / rmsFull : 0.0;
+    const bool gainOk = fullResult.wasOk() && halfResult.wasOk()
+        && ratio > 0.45 && ratio < 0.55;
+
+    // Master insert chain: add the built-in EQ, render, then bypass it.
+    int eqIndex = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (juce::String(engine.pluginNameAt(i)) == "EZ EQ Pro")
+        {
+            eqIndex = i;
+            break;
+        }
+    bool fxOk = true;
+    if (eqIndex >= 0)
+    {
+        fxOk = engine.addMasterFx(eqIndex).wasOk()
+            && engine.masterFxCount() == 1
+            && juce::String(engine.masterFxNameAt(0)) == "EZ EQ Pro";
+        const auto fxResult = engine.renderToFileEx(
+            juce::File("/tmp/cadence_master_fx.wav"), 999, 16);
+        const double rmsFx = rmsInRange(formats,
+                                        juce::File("/tmp/cadence_master_fx.wav"),
+                                        0.1, 0.9);
+        fxOk = fxOk && fxResult.wasOk() && rmsFx > 0.001;
+        fxOk = fxOk && engine.setMasterFxBypass(0, true).wasOk()
+            && engine.masterFxBypassAt(0);
+        const auto bypassResult = engine.renderToFileEx(
+            juce::File("/tmp/cadence_master_bypass.wav"), 999, 16);
+        const double rmsBypass = rmsInRange(
+            formats, juce::File("/tmp/cadence_master_bypass.wav"), 0.1, 0.9);
+        fxOk = fxOk && bypassResult.wasOk() && rmsBypass > 0.001;
+    }
+
+    std::printf("mastertest: full=%.5f half=%.5f ratio=%.2f gain=%s "
+                "fx=%s\n",
+                rmsFull, rmsHalf, ratio,
+                gainOk ? "ok" : "FAIL", fxOk ? "ok" : "FAIL");
+    return gainOk && fxOk ? 0 : 1;
+}
+
+// Device lifecycle regression: restartAudio() must reopen the SAME device and
+// keep playing from the same position. The old implementation silently
+// reopened the default device and lost the UR22 selection.
+int cmdDeviceRestart()
+{
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+    {
+        std::printf("devrestart: skipped — no audio device\n");
+        return 0;
+    }
+    engine.newProject(48000);
+    const auto track = engine.addTrack("Tone", 0);
+    writeToneWav(juce::File("/tmp/cadence_devrestart.wav"), 5.0, 440.0);
+    engine.addClip(track, juce::File("/tmp/cadence_devrestart.wav"), 0.0, 1.0);
+
+    const auto switchResult = engine.setDeviceConfig("Steinberg UR22", "",
+                                                     48000, 512);
+    if (switchResult.failed())
+    {
+        std::printf("devrestart: skipped — UR22 unavailable (%s)\n",
+                    switchResult.getErrorMessage().toRawUTF8());
+        return 0;
+    }
+
+    engine.play();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const auto beforeName = engine.currentOutputDeviceName();
+    const int beforeBuffer = engine.currentBufferSizeSamples();
+    const double beforePos = engine.positionSeconds();
+    const bool beforePlaying = engine.isPlaying();
+
+    const auto restart = engine.restartAudio();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const auto afterName = engine.currentOutputDeviceName();
+    const int afterBuffer = engine.currentBufferSizeSamples();
+    const double afterPos = engine.positionSeconds();
+    const bool afterPlaying = engine.isPlaying();
+    const bool running = engine.audioDeviceRunning();
+    const int recoveries = engine.audioRecoveryCount();
+
+    std::printf("devrestart: %s -> %s, buffer %d -> %d, playing %d -> %d, "
+                "pos %.2f -> %.2f, running=%d recoveries=%d\n",
+                beforeName.toRawUTF8(), afterName.toRawUTF8(),
+                beforeBuffer, afterBuffer, beforePlaying ? 1 : 0,
+                afterPlaying ? 1 : 0, beforePos, afterPos,
+                running ? 1 : 0, recoveries);
+
+    engine.stop();
+    const bool ok = restart.wasOk()
+        && beforeName == afterName
+        && beforeBuffer == afterBuffer
+        && afterPlaying
+        && afterPos + 0.01 >= beforePos
+        && running
+        && recoveries == 0;
+    std::printf("devrestart: %s\n", ok ? "ok" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+// Lifetime regression: swap instrument/fx snapshots while the audio thread
+// renders. The old code read node->instrument/node->fx without synchronisation
+// and destroyed the old plugin instance immediately; this test would crash or
+// use freed memory. With immutable snapshots it must stay finite and silent
+// of NaNs.
+int cmdChurnTest()
+{
+    cadence::PluginHost host;
+    host.setup();
+
+    juce::String synthUid, eqUid;
+    for (int i = 0; i < host.pluginCount(); ++i)
+    {
+        auto desc = host.descriptionAt(i);
+        if (desc == nullptr)
+            continue;
+        if (desc->name == "EZSynth")
+            synthUid = desc->createIdentifierString();
+        else if (desc->name == "EZ EQ Pro")
+            eqUid = desc->createIdentifierString();
+    }
+    if (synthUid.isEmpty())
+    {
+        std::printf("churntest: skipped — EZSynth not registered\n");
+        return 0;
+    }
+
+    auto project = std::make_shared<cadence::Project>();
+    project->sampleRate = 48000.0;
+    project->tempoBpm = 120.0;
+    cadence::Track track;
+    track.id = 1;
+    track.type = cadence::Track::Type::Instrument;
+    track.name = "Churn";
+    track.instrument.pluginUid = synthUid;
+    track.instrument.name = "EZSynth";
+    auto midi = std::make_shared<cadence::MidiClipData>();
+    for (int i = 0; i < 8; ++i)
+        midi->notes.push_back({ i * 0.25, 0.2, 60 + i, 0.8f, 0.0 });
+    cadence::Clip clip;
+    clip.id = 1;
+    clip.startSeconds = 0.0;
+    clip.lengthSeconds = 60.0;
+    clip.midi = midi;
+    track.clips.push_back(clip);
+    project->tracks.push_back(track);
+    project->nextTrackId = 2;
+    project->nextClipId = 2;
+
+    cadence::ProjectAudioSource source;
+    source.setProject(project);
+    source.prepareToPlay(512, 48000.0);
+    source.reconcileNodes(*project, host, 512, false);
+    source.play();
+
+    std::atomic<bool> stop { false };
+    std::atomic<bool> bad { false };
+    std::thread render([&] {
+        juce::AudioBuffer<float> block(2, 512);
+        while (! stop.load(std::memory_order_relaxed))
+        {
+            block.clear();
+            juce::AudioSourceChannelInfo info { &block, 0, 512 };
+            source.getNextAudioBlock(info);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    if (! std::isfinite(block.getSample(ch, i)))
+                    {
+                        bad.store(true, std::memory_order_relaxed);
+                        stop.store(true, std::memory_order_relaxed);
+                        return;
+                    }
+        }
+    });
+
+    for (int iter = 0; iter < 80 && ! stop.load(); ++iter)
+    {
+        auto next = std::make_shared<cadence::Project>(*project);
+        auto& t = next->tracks[0];
+        if ((iter % 2) == 0 && eqUid.isNotEmpty())
+        {
+            cadence::FxSlot slot;
+            slot.pluginUid = eqUid;
+            slot.name = "EZ EQ Pro";
+            t.fx.push_back(slot);
+        }
+        else
+        {
+            t.fx.clear();
+        }
+        // Alternate the instrument instance too: empty -> internal synth,
+        // EZSynth -> hosted instrument. This is the exact replacement that
+        // used to free a live plugin under the audio thread.
+        if ((iter % 4) == 3)
+            t.instrument = {};
+        else
+        {
+            t.instrument.pluginUid = synthUid;
+            t.instrument.name = "EZSynth";
+        }
+        source.setProject(next);
+        source.reconcileNodes(*next, host, 512, false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    }
+
+    stop.store(true, std::memory_order_relaxed);
+    render.join();
+    source.releaseResources();
+
+    std::printf("churntest: 80 snapshot swaps while rendering — %s\n",
+                bad.load() ? "NaN/FAIL" : "ok");
+    return bad.load() ? 1 : 0;
 }
 
 // Regression test for the truncated-note bug: a noteOff clamped into every
@@ -3389,6 +3636,15 @@ int main(int argc, char** argv)
 
     if (cmd == "devswitch")
         return cmdTestDeviceSwitch();
+
+    if (cmd == "mastertest")
+        return cmdMasterTest();
+
+    if (cmd == "devrestart")
+        return cmdDeviceRestart();
+
+    if (cmd == "churntest")
+        return cmdChurnTest();
 
     if (cmd == "chordtest")
         return cmdChordTest();
