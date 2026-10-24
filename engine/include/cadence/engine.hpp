@@ -246,6 +246,7 @@ private:
     juce::AudioBuffer<float> trackScratch_;
     juce::AudioBuffer<float> midiFxSilent_; // zero audio passed to the MIDI insert
     juce::MidiBuffer blockMidi_;
+    juce::MidiBuffer panicMidi_; // prebuilt on prepareToPlay (audio-thread safe)
     juce::SpinLock synthsLock_;
     std::map<TrackId, std::unique_ptr<juce::Synthesiser>> synths_;
     double synthsRate_ = 0.0;

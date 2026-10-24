@@ -668,6 +668,12 @@ std::int64_t ProjectAudioSource::positionSamples() const
 void ProjectAudioSource::prepareToPlay(int samplesPerBlockExpected, double /*sampleRate*/)
 {
     trackScratch_.setSize(2, samplesPerBlockExpected, false, false, true);
+    // Reserve the panic buffer up front: stop/seek runs on the audio thread
+    // and must not allocate while delivering 16-channel note-offs.
+    blockMidi_.ensureSize(8192);
+    panicMidi_.ensureSize(4096);
+    panicMidi_.clear();
+    addPanicMessages(panicMidi_);
 }
 
 void ProjectAudioSource::releaseResources()
@@ -810,8 +816,8 @@ void ProjectAudioSource::panicAllInstrumentTracks(const Project& project,
     if (numSamples <= 0)
         return;
 
-    juce::MidiBuffer panicMidi;
-    addPanicMessages(panicMidi);
+    if (panicMidi_.isEmpty())
+        addPanicMessages(panicMidi_);
 
     for (const auto& track : project.tracks)
     {
@@ -832,11 +838,16 @@ void ProjectAudioSource::panicAllInstrumentTracks(const Project& project,
             const int n = std::min(numSamples, prepared);
             trackScratch_.setSize(2, numSamples, false, false, true);
             trackScratch_.clear();
+            // A plugin may consume/modify the MIDI buffer, so give each one
+            // its own copy; panicMidi_ stays pristine for the next track.
+            blockMidi_.clear();
+            for (const auto meta : panicMidi_)
+                blockMidi_.addEvent(meta.getMessage(), 0);
             // Non-owning view: the plugin may have been prepared for a
             // smaller block than the device is asking for right now.
             juce::AudioBuffer<float> view(
                 trackScratch_.getArrayOfWritePointers(), 2, n);
-            node->instrument->processBlock(view, panicMidi);
+            node->instrument->processBlock(view, blockMidi_);
         }
         else
         {
