@@ -40,18 +40,25 @@ else
 fi
 echo "$VER_DATE" > "$LAST_DATE_FILE"
 echo "$N" > "$COUNTER_FILE"
+VERSION="$VER_DATE.$N"
 mkdir -p lib/generated
 cat > lib/generated/version.dart <<EOF
 // GENERADO por build_app.sh — no editar a mano.
-const String kAppVersion = '$VER_DATE.$N';
+const String kAppVersion = '$VERSION';
 EOF
-echo "versión: $VER_DATE.$N"
+echo "versión: $VERSION"
 # The engine dylib copied in after the previous build breaks Xcode's
 # codesign ("subcomponent not signed") — remove it first so flutter build
 # signs a clean bundle.
 APP=build/macos/Build/Products/Release/EZMusicProduction.app
 rm -f "$APP/Contents/MacOS/libcadence_engine.dylib"
 flutter build macos --release
+# pubspec stays at 1.0.0+1 for local development; the release bundle must
+# report the generated release version (About, Finder, crash reports).
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \
+  "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" \
+  "$APP/Contents/Info.plist"
 
 echo "=== 3/3 Package (copy engine dylib into app bundles) ==="
 # Copying the dylib AFTER flutter signed the bundle breaks the seal, so the
@@ -72,6 +79,10 @@ sign_bundle "$APP"
 # stale engine: launching it would silently run old code.
 DEBUG_APP=build/macos/Build/Products/Debug/EZMusicProduction.app
 if [ -d "$DEBUG_APP" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \
+    "$DEBUG_APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" \
+    "$DEBUG_APP/Contents/Info.plist"
   cp "../$BUILD_DIR/engine/libcadence_engine.dylib" "$DEBUG_APP/Contents/MacOS/"
   sign_bundle "$DEBUG_APP"
 fi

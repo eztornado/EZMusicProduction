@@ -580,7 +580,7 @@ int cmdDocTest(const char* dirPath)
 }
 
 
-int cmdTestDeviceSwitch()
+int cmdTestDeviceSwitch(int bufferSize)
 {
     cadence::Engine engine;
     engine.initialise();
@@ -589,7 +589,7 @@ int cmdTestDeviceSwitch()
                 engine.currentBufferSizeSamples());
 
     const auto r = engine.setDeviceConfig(
-        "Steinberg UR22", "", 48000, 256);
+        "Steinberg UR22", "", 48000, bufferSize);
     std::printf("setDeviceConfig: %s\n",
                 r.failed() ? r.getErrorMessage().toRawUTF8() : "ok");
     std::printf("AFTER: output=%s buffer=%d\n",
@@ -597,6 +597,8 @@ int cmdTestDeviceSwitch()
                 engine.currentBufferSizeSamples());
     return 0;
 }
+
+
 
 // Master bus regression: the master fader must scale the final mix (after
 // master inserts), not each track. The old code applied masterGain per track
@@ -944,9 +946,19 @@ int cmdRenderProject(const char* path, const char* outPath,
                      double maxSeconds, int bits)
 {
     cadence::Engine engine;
-    if (std::getenv("CADENCE_RENDER_NO_DEVICE") == nullptr
-        && engine.initialise().failed())
+    if (const char* settings = std::getenv("CADENCE_RENDER_DEVICE_SETTINGS"))
+    {
+        const auto loadedSettings = engine.loadDeviceSettings(
+            juce::File(juce::String::fromUTF8(settings)));
+        if (loadedSettings.failed())
+            std::fprintf(stderr, "warn: device settings: %s\n",
+                         loadedSettings.getErrorMessage().toRawUTF8());
+    }
+    else if (std::getenv("CADENCE_RENDER_NO_DEVICE") == nullptr
+             && engine.initialise().failed())
+    {
         std::fprintf(stderr, "warn: device: %s\n", engine.lastErrorUtf8());
+    }
     const auto loaded = engine.loadProject(juce::File(juce::String::fromUTF8(path)));
     if (loaded.failed())
     {
@@ -3805,7 +3817,7 @@ int main(int argc, char** argv)
     }
 
     if (cmd == "devswitch")
-        return cmdTestDeviceSwitch();
+        return cmdTestDeviceSwitch(argc > 2 ? std::atoi(argv[2]) : 256);
 
     if (cmd == "mastertest")
         return cmdMasterTest();

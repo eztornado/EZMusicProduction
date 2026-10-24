@@ -6428,10 +6428,12 @@ juce::Result Engine::renderToFile(const juce::File& outFile, double maxSeconds)
 // instantiated a second copy of every VST3. Analog Lab V leaves run-loop
 // timers behind when such a copy is destroyed: the WAV was complete, then the
 // app crashed in AppKit → Analog Lab V a few seconds later. When the live
-// device is open at the project rate we now stop it and render through the
-// EXISTING plugin instances, then reopen it. No duplicate VST3s, no dangling
-// timers. The separate-source path is only a fallback and its instances are
-// quarantined until Engine destruction.
+// device is open at the project rate we now detach the audio callback, render
+// through the EXISTING plugin instances, then reattach it. The device itself
+// stays open — closing/reopening it can block forever in AudioDeviceStart on
+// the UR22. No duplicate VST3s, no dangling timers. The separate-source path
+// is only a fallback and its instances are quarantined until Engine
+// destruction.
 juce::Result Engine::renderToFileEx(const juce::File& outFile, double maxSeconds,
                                     int bitsPerSample)
 {
@@ -6503,23 +6505,26 @@ juce::Result Engine::renderToFileEx(const juce::File& outFile, double maxSeconds
         const int blockSize = liveBlock > 0
             ? juce::jmin(512, liveBlock) : 512;
 
-        audioReady_.store(false, std::memory_order_release);
+        // Do NOT close the device: on the UR22 AudioDeviceStart can block
+        // forever in HALB_IOThread::StartAndWaitForState. Removing the
+        // callback is enough to guarantee the audio thread is no longer
+        // touching the plugin instances; the device keeps its IO thread and
+        // is simply reattached after the render.
         intentionalDeviceStop_.store(true, std::memory_order_release);
         transport_->pause();
         transport_->requestPanic();
         deviceManager_.removeAudioCallback(outputCallback_.get());
-        deviceManager_.closeAudioDevice();
         transport_->flushAllNotes();
         transport_->setMetronome(false);
         transport_->setOfflineRender(true);
         transport_->seek(0.0);
         transport_->play();
 
-        bool deviceStopped = true;
+        bool callbackRemoved = true;
         auto restore = [&] {
-            if (! deviceStopped)
+            if (! callbackRemoved)
                 return;
-            deviceStopped = false;
+            callbackRemoved = false;
             transport_->setOfflineRender(false);
             transport_->stop();
             transport_->seek(position);
@@ -6528,7 +6533,8 @@ juce::Result Engine::renderToFileEx(const juce::File& outFile, double maxSeconds
                 transport_->play();
             else
                 transport_->pause();
-            restartAudio();
+            deviceManager_.addAudioCallback(outputCallback_.get());
+            intentionalDeviceStop_.store(false, std::memory_order_release);
         };
         juce::ScopeGuard guard { restore };
 
