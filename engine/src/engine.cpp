@@ -1,4 +1,5 @@
 #include "cadence/engine.hpp"
+#include "ai_generation.h"
 #include "ezq4.h"
 #include "ezinst.h"
 #include "ezsynth.h"
@@ -2114,10 +2115,14 @@ Engine::Engine()
     outputCallback_ = std::make_unique<OutputCallback>(*this);
     midiInCallback_ = std::make_unique<MidiInCallback>(*this);
     previewWatchdog_ = std::make_unique<PreviewWatchdog>(*this);
+    aiService_ = std::make_unique<ai::Service>();
 }
 
 Engine::~Engine()
 {
+    aiCancel_.store(true, std::memory_order_release);
+    if (aiThread_.joinable())
+        aiThread_.join();
     transport_->releaseResources();
     deviceManager_.removeAudioCallback(outputCallback_.get());
     deviceManager_.closeAudioDevice();
@@ -3179,6 +3184,276 @@ juce::Result Engine::freezeClipQuantize(ClipId clipId)
         clip->midi = std::move(midi);
         return true;
     });
+}
+
+// ---------- AI clip generation ----------
+
+void Engine::setAiModelDir(const juce::File& dir)
+{
+    const std::scoped_lock lock(aiMutex_);
+    if (aiState_.load(std::memory_order_acquire) == kAiRunning)
+        return; // a model swap would pull the rug from under the worker
+    if (aiService_ == nullptr)
+        aiService_ = std::make_unique<ai::Service>();
+    aiService_->setModelDir(dir);
+}
+
+juce::File Engine::aiModelDir() const
+{
+    const std::scoped_lock lock(aiMutex_);
+    return aiService_ != nullptr ? aiService_->modelDir() : ai::defaultModelDir();
+}
+
+bool Engine::aiModelAvailable(AiMode mode) const
+{
+    const std::scoped_lock lock(aiMutex_);
+    return aiService_ != nullptr
+        && aiService_->modelAvailable(static_cast<ai::Mode>((int) mode));
+}
+
+const char* Engine::aiModelDirUtf8() const
+{
+    const std::scoped_lock lock(aiMutex_);
+    aiStringOut_ = (aiService_ != nullptr ? aiService_->modelDir()
+                                          : ai::defaultModelDir())
+                       .getFullPathName()
+                       .toStdString();
+    return aiStringOut_.c_str();
+}
+
+bool Engine::startAiGeneration(const AiGenerationRequest& request)
+{
+    auto project = std::atomic_load(&project_);
+    if (project == nullptr)
+        return false;
+
+    {
+        const std::scoped_lock lock(aiMutex_);
+        if (aiState_.load(std::memory_order_acquire) == kAiRunning)
+            return false;
+    }
+    // Join the previous worker OUTSIDE the lock: it takes the same lock when
+    // it publishes its result, so joining while holding it would deadlock.
+    if (aiThread_.joinable())
+        aiThread_.join();
+
+    {
+        const std::scoped_lock lock(aiMutex_);
+        aiResult_ = {};
+        aiCancel_.store(false, std::memory_order_release);
+        aiState_.store(kAiRunning, std::memory_order_release);
+    }
+
+    aiThread_ = std::thread([this, project, request] {
+        runAiGeneration(project, request);
+    });
+    return true;
+}
+
+void Engine::runAiGeneration(std::shared_ptr<const Project> project,
+                             AiGenerationRequest request)
+{
+    AiGenerationResult result;
+    result.trackId = request.trackId;
+    result.clipId = request.clipId;
+    result.replaceClip = request.replaceClip;
+
+    try
+    {
+        if (request.trackId < 0)
+        {
+            result.error = "no track selected";
+        }
+        else if (auto* track = project->findTrack(request.trackId);
+                 track == nullptr || track->type != Track::Type::Instrument)
+        {
+            result.error = "AI generation needs an instrument track";
+        }
+        else
+        {
+            ai::Request ar;
+            ar.trackId = request.trackId;
+            ar.clipId = request.clipId;
+            ar.anchorSeconds = request.anchorSeconds;
+            ar.mode = static_cast<ai::Mode>((int) request.mode);
+            ar.bars = request.bars;
+            ar.lengthSeconds = request.lengthSeconds;
+            ar.temperature = request.temperature;
+            ar.variations = request.variations;
+            ar.seed = request.seed;
+            ar.prompt = request.prompt;
+            ar.replaceClip = request.replaceClip;
+            ar.harmonize = request.harmonize;
+            ar.useModel = request.useModel;
+
+            auto r = aiService_->generate(*project, ar);
+            if (! aiCancel_.load(std::memory_order_acquire))
+            {
+                result.ok = r.ok;
+                result.error = r.error;
+                result.provider = r.provider;
+                result.key = r.key;
+                result.chords = r.chords;
+                result.promptNote = r.promptNote;
+                result.contextNote = r.contextNote;
+                result.seed = r.seed;
+                result.clipLengthSeconds = r.clipLengthSeconds;
+                result.startSeconds = r.startSeconds;
+                if (request.replaceClip && request.clipId > 0)
+                    if (const auto* clip = project->findClip(request.clipId))
+                        result.startSeconds = clip->startSeconds;
+
+                result.notes.reserve(r.notes.size());
+                for (const auto& n : r.notes)
+                {
+                    MidiNote note;
+                    note.pitch = juce::jlimit(0, 127, n.pitch);
+                    note.velocity = juce::jlimit(0.01f, 1.0f, n.velocity);
+                    note.startSeconds = juce::jmax(0.0, n.startSeconds);
+                    note.lengthSeconds = juce::jmax(0.01, n.lengthSeconds);
+                    note.origStartSeconds = note.startSeconds;
+                    result.notes.push_back(note);
+                }
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        result.ok = false;
+        result.error = juce::String("generation failed: ") + e.what();
+    }
+    catch (...)
+    {
+        result.ok = false;
+        result.error = "generation failed";
+    }
+
+    const std::scoped_lock lock(aiMutex_);
+    if (aiCancel_.load(std::memory_order_acquire))
+        aiResult_ = {};
+    else
+        aiResult_ = std::move(result);
+
+    const int state = aiResult_.ok ? kAiReady
+                    : (aiResult_.error.isNotEmpty() ? kAiFailed : kAiIdle);
+    aiState_.store(state, std::memory_order_release);
+}
+
+AiGenerationResult Engine::aiGenerationResult() const
+{
+    const std::scoped_lock lock(aiMutex_);
+    return aiResult_;
+}
+
+void Engine::clearAiGenerationResult()
+{
+    const std::scoped_lock lock(aiMutex_);
+    if (aiState_.load(std::memory_order_acquire) == kAiRunning)
+        return;
+    aiResult_ = {};
+    aiState_.store(kAiIdle, std::memory_order_release);
+}
+
+void Engine::cancelAiGeneration()
+{
+    aiCancel_.store(true, std::memory_order_release);
+}
+
+const char* Engine::aiResultString(int field) const
+{
+    const std::scoped_lock lock(aiMutex_);
+    switch (field)
+    {
+        case 0: aiStringOut_ = aiResult_.error.toStdString(); break;
+        case 1: aiStringOut_ = aiResult_.provider.toStdString(); break;
+        case 2: aiStringOut_ = aiResult_.key.toStdString(); break;
+        case 3: aiStringOut_ = aiResult_.chords.toStdString(); break;
+        case 4: aiStringOut_ = aiResult_.promptNote.toStdString(); break;
+        case 5: aiStringOut_ = aiResult_.contextNote.toStdString(); break;
+        default: aiStringOut_.clear(); break;
+    }
+    return aiStringOut_.c_str();
+}
+
+juce::Result Engine::applyAiGeneration(ClipId* outClipId)
+{
+    const auto result = aiGenerationResult();
+    if (! result.ok)
+        return fail(result.error.isNotEmpty() ? result.error
+                                              : juce::String("no AI result to apply"));
+
+    ClipId newClipId = -1;
+    const auto edit = editProject([&] (Project& project) {
+        Track* track = project.findTrack(result.trackId);
+        if (track == nullptr)
+        {
+            fail("track not found: " + juce::String((int) result.trackId));
+            return false;
+        }
+        if (track->type != Track::Type::Instrument)
+        {
+            fail("AI generation needs an instrument track");
+            return false;
+        }
+
+        double length = result.clipLengthSeconds;
+        for (const auto& n : result.notes)
+            length = juce::jmax(length, n.startSeconds + n.lengthSeconds);
+        length = juce::jmax(kMinClipLength, length);
+
+        auto midi = std::make_shared<MidiClipData>();
+        midi->notes.reserve(result.notes.size());
+        for (const auto& n : result.notes)
+        {
+            MidiNote note;
+            note.pitch = juce::jlimit(0, 127, n.pitch);
+            note.velocity = juce::jlimit(0.01f, 1.0f, n.velocity);
+            note.startSeconds = juce::jlimit(0.0, juce::jmax(0.0, length - 0.01),
+                                             n.startSeconds);
+            note.lengthSeconds = juce::jlimit(
+                0.01, juce::jmax(0.01, length - note.startSeconds),
+                n.lengthSeconds);
+            note.origStartSeconds = note.startSeconds;
+            midi->notes.push_back(note);
+        }
+
+        if (result.replaceClip && result.clipId > 0)
+        {
+            Clip* clip = project.findClip(result.clipId);
+            if (clip == nullptr || ! clip->isMidi())
+            {
+                fail("MIDI clip not found");
+                return false;
+            }
+            clip->midi = std::move(midi);
+            clip->lengthSeconds = juce::jmax(clip->lengthSeconds, length);
+            newClipId = clip->id;
+        }
+        else
+        {
+            Clip clip;
+            clip.id = project.nextClipId++;
+            clip.startSeconds = juce::jmax(0.0, result.startSeconds);
+            clip.lengthSeconds = length;
+            clip.midi = std::move(midi);
+            newClipId = clip.id;
+            track->clips.push_back(std::move(clip));
+        }
+        return true;
+    });
+
+    if (edit.failed())
+        return edit;
+
+    if (outClipId != nullptr)
+        *outClipId = newClipId;
+
+    // The applied result is consumed: the next generation starts clean and a
+    // second Apply cannot duplicate the clip.
+    const std::scoped_lock lock(aiMutex_);
+    aiResult_ = {};
+    aiState_.store(kAiIdle, std::memory_order_release);
+    return juce::Result::ok();
 }
 
 double Engine::clipNoteOrigStartAt(ClipId clipId, int index) const

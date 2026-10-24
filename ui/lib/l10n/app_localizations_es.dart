@@ -693,4 +693,127 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get prefNoMidi => 'No hay dispositivos MIDI conectados';
+
+  @override
+  String get aiTitle => 'Generar con IA';
+
+  @override
+  String aiTrackLabel(String name) {
+    return 'Pista: $name';
+  }
+
+  @override
+  String get aiModeMelody => 'Melodía';
+
+  @override
+  String get aiModeHarmony => 'Armonía';
+
+  @override
+  String get aiModeBass => 'Bajo';
+
+  @override
+  String get aiModeDrums => 'Batería';
+
+  @override
+  String get aiBars => 'Compases';
+
+  @override
+  String get aiLength => 'Duración';
+
+  @override
+  String aiHeardLabel(Object text) {
+    return 'Escuchado: $text';
+  }
+
+  @override
+  String get aiLongHint =>
+      'Los clips largos usan un candidato para que la generación sea rápida.';
+
+  @override
+  String get aiVariations => 'Variaciones';
+
+  @override
+  String get aiTemperature => 'Creatividad';
+
+  @override
+  String get aiPrompt => 'Indicación (opcional)';
+
+  @override
+  String get aiPromptHint => 'p. ej. más oscuro, con arpegios, en Do menor';
+
+  @override
+  String get aiHarmonize => 'Añadir armonía';
+
+  @override
+  String get aiReplaceClip => 'Reemplazar el clip';
+
+  @override
+  String get aiGenerate => 'Generar';
+
+  @override
+  String get aiRegenerate => 'Regenerar';
+
+  @override
+  String get aiApply => 'Aplicar al proyecto';
+
+  @override
+  String get aiClose => 'Cerrar';
+
+  @override
+  String get aiGenerating => 'Generando…';
+
+  @override
+  String get aiIdleHint => 'Elige el tipo y pulsa Generar.';
+
+  @override
+  String get aiNoModel =>
+      'Los modelos Magenta no están instalados: se usará el generador interno.';
+
+  @override
+  String get aiProviderLabel => 'Motor';
+
+  @override
+  String get aiKeyLabel => 'Tonalidad';
+
+  @override
+  String get aiChordsLabel => 'Acordes';
+
+  @override
+  String get aiNotesLabel => 'Notas';
+
+  @override
+  String aiPromptUnderstood(String text) {
+    return 'Interpretación: $text';
+  }
+
+  @override
+  String aiFailed(String error) {
+    return 'No se pudo generar: $error';
+  }
+
+  @override
+  String get aiBusy => 'Ya hay una generación en curso';
+
+  @override
+  String get aiApplied => 'Clip generado aplicado';
+
+  @override
+  String get aiGenerateClip => 'Generar con IA…';
+
+  @override
+  String get aiRegenerateClip => 'Regenerar con IA…';
+
+  @override
+  String get aiGenerateAtPlayhead => 'Generar clip con IA…';
+
+  @override
+  String get aiToolbarButton => 'IA';
+
+  @override
+  String get aiToolbarTooltip =>
+      'Generar un clip con IA en la pista de instrumento seleccionada';
+
+  @override
+  String get aiNoInstrumentTrack =>
+      'Crea o selecciona una pista de instrumento para generar con IA.';
 }

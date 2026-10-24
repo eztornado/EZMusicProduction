@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart';
 import '../l10n/l10n.dart';
+import 'ai_generation_dialog.dart' show showAiGenerationDialog;
 
 const double kPrPixelsPerSecond = 140;
 const double kPrRowHeight = 10;
@@ -165,6 +166,26 @@ class _PianoRollState extends State<PianoRoll> {
       }
     }
     return null;
+  }
+
+  /// Regenerate the open clip with the AI dialog (replace-in-place).
+  Future<void> _openAiGeneration() async {
+    final clip = _clip;
+    if (clip == null) return;
+    for (final track in widget.service.snapshot.tracks) {
+      for (final candidate in track.clips) {
+        if (candidate.id != widget.clipId) continue;
+        await showAiGenerationDialog(
+          context,
+          widget.service,
+          trackId: track.id,
+          clipId: widget.clipId,
+          startSeconds: clip.start,
+          replaceClip: true,
+        );
+        return;
+      }
+    }
   }
 
   double get _hOffset => _hScroll.hasClients ? _hScroll.offset : 0;
@@ -493,6 +514,13 @@ class _PianoRollState extends State<PianoRoll> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                             fontSize: 9, color: Color(0xFF5C6270))),
+                  ),
+                  IconButton(
+                    tooltip: context.l10n.aiRegenerateClip,
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.auto_awesome, size: 15,
+                        color: Color(0xFF4D9DF7)),
+                    onPressed: _openAiGeneration,
                   ),
                   IconButton(
                     tooltip: context.l10n.pianoRollUndock,

@@ -1317,6 +1317,228 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'No hay dispositivos MIDI conectados'**
   String get prefNoMidi;
+
+  /// No description provided for @aiTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Generar con IA'**
+  String get aiTitle;
+
+  /// No description provided for @aiTrackLabel.
+  ///
+  /// In es, this message translates to:
+  /// **'Pista: {name}'**
+  String aiTrackLabel(String name);
+
+  /// No description provided for @aiModeMelody.
+  ///
+  /// In es, this message translates to:
+  /// **'Melodía'**
+  String get aiModeMelody;
+
+  /// No description provided for @aiModeHarmony.
+  ///
+  /// In es, this message translates to:
+  /// **'Armonía'**
+  String get aiModeHarmony;
+
+  /// No description provided for @aiModeBass.
+  ///
+  /// In es, this message translates to:
+  /// **'Bajo'**
+  String get aiModeBass;
+
+  /// No description provided for @aiModeDrums.
+  ///
+  /// In es, this message translates to:
+  /// **'Batería'**
+  String get aiModeDrums;
+
+  /// No description provided for @aiBars.
+  ///
+  /// In es, this message translates to:
+  /// **'Compases'**
+  String get aiBars;
+
+  /// No description provided for @aiLength.
+  ///
+  /// In es, this message translates to:
+  /// **'Duración'**
+  String get aiLength;
+
+  /// No description provided for @aiHeardLabel.
+  ///
+  /// In es, this message translates to:
+  /// **'Escuchado: {text}'**
+  String aiHeardLabel(Object text);
+
+  /// No description provided for @aiLongHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Los clips largos usan un candidato para que la generación sea rápida.'**
+  String get aiLongHint;
+
+  /// No description provided for @aiVariations.
+  ///
+  /// In es, this message translates to:
+  /// **'Variaciones'**
+  String get aiVariations;
+
+  /// No description provided for @aiTemperature.
+  ///
+  /// In es, this message translates to:
+  /// **'Creatividad'**
+  String get aiTemperature;
+
+  /// No description provided for @aiPrompt.
+  ///
+  /// In es, this message translates to:
+  /// **'Indicación (opcional)'**
+  String get aiPrompt;
+
+  /// No description provided for @aiPromptHint.
+  ///
+  /// In es, this message translates to:
+  /// **'p. ej. más oscuro, con arpegios, en Do menor'**
+  String get aiPromptHint;
+
+  /// No description provided for @aiHarmonize.
+  ///
+  /// In es, this message translates to:
+  /// **'Añadir armonía'**
+  String get aiHarmonize;
+
+  /// No description provided for @aiReplaceClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Reemplazar el clip'**
+  String get aiReplaceClip;
+
+  /// No description provided for @aiGenerate.
+  ///
+  /// In es, this message translates to:
+  /// **'Generar'**
+  String get aiGenerate;
+
+  /// No description provided for @aiRegenerate.
+  ///
+  /// In es, this message translates to:
+  /// **'Regenerar'**
+  String get aiRegenerate;
+
+  /// No description provided for @aiApply.
+  ///
+  /// In es, this message translates to:
+  /// **'Aplicar al proyecto'**
+  String get aiApply;
+
+  /// No description provided for @aiClose.
+  ///
+  /// In es, this message translates to:
+  /// **'Cerrar'**
+  String get aiClose;
+
+  /// No description provided for @aiGenerating.
+  ///
+  /// In es, this message translates to:
+  /// **'Generando…'**
+  String get aiGenerating;
+
+  /// No description provided for @aiIdleHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Elige el tipo y pulsa Generar.'**
+  String get aiIdleHint;
+
+  /// No description provided for @aiNoModel.
+  ///
+  /// In es, this message translates to:
+  /// **'Los modelos Magenta no están instalados: se usará el generador interno.'**
+  String get aiNoModel;
+
+  /// No description provided for @aiProviderLabel.
+  ///
+  /// In es, this message translates to:
+  /// **'Motor'**
+  String get aiProviderLabel;
+
+  /// No description provided for @aiKeyLabel.
+  ///
+  /// In es, this message translates to:
+  /// **'Tonalidad'**
+  String get aiKeyLabel;
+
+  /// No description provided for @aiChordsLabel.
+  ///
+  /// In es, this message translates to:
+  /// **'Acordes'**
+  String get aiChordsLabel;
+
+  /// No description provided for @aiNotesLabel.
+  ///
+  /// In es, this message translates to:
+  /// **'Notas'**
+  String get aiNotesLabel;
+
+  /// No description provided for @aiPromptUnderstood.
+  ///
+  /// In es, this message translates to:
+  /// **'Interpretación: {text}'**
+  String aiPromptUnderstood(String text);
+
+  /// No description provided for @aiFailed.
+  ///
+  /// In es, this message translates to:
+  /// **'No se pudo generar: {error}'**
+  String aiFailed(String error);
+
+  /// No description provided for @aiBusy.
+  ///
+  /// In es, this message translates to:
+  /// **'Ya hay una generación en curso'**
+  String get aiBusy;
+
+  /// No description provided for @aiApplied.
+  ///
+  /// In es, this message translates to:
+  /// **'Clip generado aplicado'**
+  String get aiApplied;
+
+  /// No description provided for @aiGenerateClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Generar con IA…'**
+  String get aiGenerateClip;
+
+  /// No description provided for @aiRegenerateClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Regenerar con IA…'**
+  String get aiRegenerateClip;
+
+  /// No description provided for @aiGenerateAtPlayhead.
+  ///
+  /// In es, this message translates to:
+  /// **'Generar clip con IA…'**
+  String get aiGenerateAtPlayhead;
+
+  /// No description provided for @aiToolbarButton.
+  ///
+  /// In es, this message translates to:
+  /// **'IA'**
+  String get aiToolbarButton;
+
+  /// No description provided for @aiToolbarTooltip.
+  ///
+  /// In es, this message translates to:
+  /// **'Generar un clip con IA en la pista de instrumento seleccionada'**
+  String get aiToolbarTooltip;
+
+  /// No description provided for @aiNoInstrumentTrack.
+  ///
+  /// In es, this message translates to:
+  /// **'Crea o selecciona una pista de instrumento para generar con IA.'**
+  String get aiNoInstrumentTrack;
 }
 
 class _AppLocalizationsDelegate

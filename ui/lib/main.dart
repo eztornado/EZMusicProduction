@@ -16,6 +16,8 @@ import 'package:flutter/services.dart';
 import 'engine/engine_service.dart';
 import 'l10n/l10n.dart';
 import 'l10n/locale_store.dart';
+import 'ui/ai_generation_dialog.dart'
+    show defaultAiModeForTrack, showAiGenerationDialog;
 import 'ui/app_alert.dart';
 import 'ui/automation_lane.dart';
 import 'ui/export_dialog.dart';
@@ -304,6 +306,25 @@ class _HomePageState extends State<HomePage>
     service.updateWindowTitle();
   }
 
+  /// Toolbar entry point: generate on the active instrument track at the
+  /// playhead. The dialog itself handles polling, preview and apply/undo.
+  Future<void> _openAiGeneration() async {
+    final service = _service;
+    if (service == null) return;
+    final track = service.aiTargetTrack;
+    if (track == null) {
+      showAppError(context, context.l10n.aiNoInstrumentTrack);
+      return;
+    }
+    await showAiGenerationDialog(
+      context,
+      service,
+      trackId: track.id,
+      startSeconds: service.positionSeconds,
+      initialMode: defaultAiModeForTrack(track),
+    );
+  }
+
   @override
   void dispose() {
     _ticker.dispose();
@@ -427,6 +448,21 @@ class _HomePageState extends State<HomePage>
                   onPressed: () => showSoundLibraryDialog(context, service),
                   icon: const Icon(Icons.library_music, size: 18),
                   label: Text(context.l10n.appMenuSounds),
+                ),
+
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: context.l10n.aiToolbarTooltip,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _openAiGeneration(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF7FB7FF),
+                      side: const BorderSide(color: Color(0xFF3A5F8A)),
+                    ),
+                    icon: const Icon(Icons.auto_awesome,
+                        size: 18, color: Color(0xFF7FB7FF)),
+                    label: Text(context.l10n.aiToolbarButton),
+                  ),
                 ),
 
                 const SizedBox(width: 8),

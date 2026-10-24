@@ -5,6 +5,8 @@
 #include "../src/ezsynth.h"
 #include "../src/ezorq.h"
 #include "../src/ezdrums.h"
+#include "../src/magenta_vae.h"
+#include "../src/ai_generation.h"
 #include <fstream>
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -37,7 +39,11 @@ void printUsage()
         "  cadence-cli doc-test <workdir>\n"
         "      verifies undo/redo and project save/load round-trip.\n"
         "  cadence-cli rectest\n"
-        "      verifies the record pipeline end-to-end with a synthesized tone.\n");
+        "      verifies the record pipeline end-to-end with a synthesized tone.\n"
+        "  cadence-cli vae-test <models-dir>\n"
+        "      loads the Magenta MusicVAE checkpoints and runs sample/encode/decode.\n"
+        "  cadence-cli ai-test [models-dir]\n"
+        "      end-to-end AI generation test (analysis, model, apply, undo).\n");
 }
 
 int cmdDevices()
@@ -135,6 +141,61 @@ int writeToneWav(const juce::File& outFile, double seconds, double freq)
 
     std::printf("wrote %s (%.1f s, %.0f Hz, stereo 44.1 kHz)\n",
                 outFile.getFullPathName().toRawUTF8(), seconds, freq);
+    return 0;
+}
+
+int writeChordWav(const juce::File& outFile, double seconds,
+                  const std::vector<int>& midiPitches)
+{
+    if (seconds <= 0.0 || midiPitches.empty())
+        return 1;
+
+    constexpr double sampleRate = 44100.0;
+    const int numSamples = static_cast<int>(sampleRate * seconds);
+    const double fadeSamples = 0.03 * sampleRate;
+    std::vector<float> left(static_cast<size_t>(numSamples), 0.0f);
+    std::vector<float> right(static_cast<size_t>(numSamples), 0.0f);
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const double t = i / sampleRate;
+        const double fade = juce::jlimit(
+            0.0, 1.0, juce::jmin(i / fadeSamples,
+                                 (numSamples - i) / fadeSamples));
+        double sum = 0.0;
+        for (int pitch : midiPitches)
+        {
+            const double freq = 440.0 * std::pow(2.0, (pitch - 69) / 12.0);
+            // A few harmonics make the chroma less pure-sine and closer to a
+            // real instrument without needing a sample library.
+            sum += std::sin(juce::MathConstants<double>::twoPi * freq * t)
+                 + 0.35 * std::sin(juce::MathConstants<double>::twoPi * freq * 2.0 * t);
+        }
+        const float value = static_cast<float>(
+            0.16 * fade * sum / std::sqrt((double) midiPitches.size()));
+        left[(size_t) i] = value;
+        right[(size_t) i] = value;
+    }
+
+    const float* channels[2] = { left.data(), right.data() };
+    outFile.deleteFile();
+    auto fileStream = outFile.createOutputStream();
+    if (fileStream == nullptr)
+        return 1;
+
+    juce::AudioFormatWriterOptions options;
+    options = options.withSampleRate(sampleRate)
+                     .withNumChannels(2)
+                     .withBitsPerSample(16);
+    juce::WavAudioFormat wavFormat;
+    std::unique_ptr<juce::OutputStream> stream = std::move(fileStream);
+    auto writer = wavFormat.createWriterFor(stream, options);
+    if (writer == nullptr)
+        return 1;
+    writer->writeFromFloatArrays(channels, 2, numSamples);
+    writer.reset();
+    if (stream != nullptr)
+        stream->flush();
     return 0;
 }
 
@@ -2779,6 +2840,389 @@ int cmdRecTest()
 
 } // namespace
 
+int cmdVaeTest(const juce::File& modelRoot)
+{
+    auto loadOne = [&] (const juce::File& dir, bool drums) -> int {
+        cadence::magenta::MusicVAE model;
+        juce::String error;
+        const auto t0 = std::chrono::steady_clock::now();
+        if (! model.load(dir, error))
+        {
+            std::fprintf(stderr, "load failed for %s: %s\n",
+                         dir.getFullPathName().toRawUTF8(), error.toRawUTF8());
+            return 1;
+        }
+        const double loadSeconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t0).count();
+        std::printf("== %s (%s, %d steps, %.1f s)\n",
+                    dir.getFileName().toRawUTF8(),
+                    drums ? "drums" : "melody", model.numSteps(), loadSeconds);
+
+        auto printSeq = [&] (const char* tag, const cadence::magenta::Sequence& seq) {
+            std::printf("%s: %zu notes\n", tag, seq.notes.size());
+            for (const auto& n : seq.notes)
+                std::printf("  %.0f %.0f %.0f %.2f%s\n", (double) n.pitch,
+                            n.startStep, n.lengthSteps, (double) n.velocity,
+                            n.isDrum ? " drum" : "");
+        };
+
+        auto sampled = model.sample(0.9, 7);
+        printSeq("sample(t=0.9,seed=7)", sampled);
+
+        // Deterministic decode with z = 0: this is the reference check
+        // against the TensorFlow.js implementation.
+        std::vector<float> z((std::size_t) 256, 0.0f);
+        auto zero = model.decode(z, 0.0, 0);
+        printSeq("decode(z=0,t=0)", zero);
+
+        std::vector<float> zconst((std::size_t) 256, 0.7f);
+        auto constant = model.decode(zconst, 0.0, 0);
+        printSeq("decode(z=0.7,t=0)", constant);
+
+        // Encode a fixed melody/drum pattern, then reconstruct exactly.
+        cadence::magenta::Sequence fixed;
+        fixed.numSteps = model.numSteps();
+        fixed.stepsPerQuarter = 4;
+        if (drums)
+        {
+            const int pitches[] = { 36, 42, 38, 42, 36, 46, 38, 42 };
+            for (int i = 0; i < 16; ++i)
+            {
+                cadence::magenta::Note n;
+                n.pitch = pitches[i % 8];
+                n.startStep = i * 4.0;
+                n.lengthSteps = 1.0;
+                n.velocity = 0.8f;
+                n.isDrum = true;
+                fixed.notes.push_back(n);
+            }
+        }
+        else
+        {
+            const int pitches[] = { 60, 62, 63, 67, 65, 63, 62, 60 };
+            for (int i = 0; i < 16; ++i)
+            {
+                cadence::magenta::Note n;
+                n.pitch = pitches[i % 8];
+                n.startStep = i * 4.0;
+                n.lengthSteps = 3.0;
+                n.velocity = 0.8f;
+                fixed.notes.push_back(n);
+            }
+        }
+        auto encoded = model.encode(fixed);
+        std::printf("encode dims: %zu\n", encoded.size());
+        std::printf("encode head:");
+        for (std::size_t i = 0; i < juce::jmin<std::size_t>(8, encoded.size()); ++i)
+            std::printf(" %.7f", (double) encoded[i]);
+        std::printf("\n");
+        printSeq("reconstruct", model.decode(encoded, 0.0, 0));
+        std::printf("\n");
+        return 0;
+    };
+
+    const auto mel = modelRoot.getChildFile("mel_4bar_med_lokl");
+    const auto drums = modelRoot.getChildFile("drums_4bar_med_lokl");
+    if (mel.isDirectory())
+        loadOne(mel, false);
+    if (drums.isDirectory())
+        loadOne(drums, true);
+    return (mel.isDirectory() || drums.isDirectory()) ? 0 : 1;
+}
+
+int cmdAiTest(const juce::File& modelDir)
+{
+    // Build a small C-minor arrangement: a pad track with a i-VI-III-VII
+    // progression, so key/chord detection and generation have real context.
+    cadence::Project project;
+    project.sampleRate = 48000.0;
+    project.tempoBpm = 96.0;
+    project.nextTrackId = 2;
+    project.nextClipId = 2;
+
+    cadence::Track track;
+    track.id = 1;
+    track.type = cadence::Track::Type::Instrument;
+    track.name = "Lead";
+    track.instrument.name = "EZSynth";
+
+    cadence::Clip clip;
+    clip.id = 1;
+    clip.startSeconds = 0.0;
+    clip.lengthSeconds = 8.0;
+    auto midi = std::make_shared<cadence::MidiClipData>();
+    // i-VI-III-VII in C minor = Cm, Ab, Eb, Bb. The VI, III and VII are
+    // major triads in the natural minor scale, so each chord needs its own
+    // quality. Bars follow the project tempo (2.5 s at 96 BPM), not a guessed
+    // duration.
+    const int chordRoots[] = { 48, 56, 51, 58 }; // C, Ab, Eb, Bb
+    const int chordThirds[] = { 3, 4, 4, 4 };    // minor, major, major, major
+    const double barSeconds = (60.0 / project.tempoBpm) * 4.0;
+    clip.lengthSeconds = 4.0 * barSeconds;
+    for (int bar = 0; bar < 4; ++bar)
+    {
+        const int root = chordRoots[bar];
+        for (int interval : { 0, chordThirds[bar], 7 })
+        {
+            cadence::MidiNote note;
+            note.pitch = root + interval;
+            note.startSeconds = bar * barSeconds;
+            note.lengthSeconds = barSeconds;
+            note.velocity = 0.7f;
+            midi->notes.push_back(note);
+        }
+    }
+    clip.midi = midi;
+    track.clips.push_back(clip);
+    project.tracks.push_back(track);
+
+    cadence::ai::Service service;
+    service.setModelDir(modelDir);
+    std::printf("model dir: %s\n", modelDir.getFullPathName().toRawUTF8());
+    std::printf("melody model: %s, drums model: %s\n",
+                service.modelAvailable(cadence::ai::Mode::Melody) ? "yes" : "no",
+                service.modelAvailable(cadence::ai::Mode::Drums) ? "yes" : "no");
+
+    int failures = 0;
+    auto check = [&failures] (bool ok, const char* what) {
+        if (! ok)
+        {
+            std::fprintf(stderr, "ai-test: FAIL: %s\n", what);
+            ++failures;
+        }
+    };
+
+    cadence::ai::Result melodyResult;
+    for (const auto mode : { cadence::ai::Mode::Melody,
+                             cadence::ai::Mode::Bass,
+                             cadence::ai::Mode::Harmony,
+                             cadence::ai::Mode::Drums })
+    {
+        cadence::ai::Request request;
+        request.trackId = 1;
+        request.anchorSeconds = 0.0;
+        request.bars = 4;
+        request.mode = mode;
+        request.variations = 3;
+        request.seed = 12345;
+        request.prompt = mode == cadence::ai::Mode::Melody
+                             ? juce::String::fromUTF8("más oscuro, con arpegios")
+                             : juce::String();
+        const auto result = service.generate(project, request);
+        if (mode == cadence::ai::Mode::Melody)
+            melodyResult = result;
+        check(result.ok, "generation returned an error");
+        check(! result.notes.empty(), "generation produced no notes");
+        check(result.seed != 0, "generation did not report a seed");
+        std::printf("\n[%d] ok=%d provider=%s key=%s chords=%s start=%.2f notes=%zu seed=%d\n",
+                    (int) mode, result.ok ? 1 : 0, result.provider.toRawUTF8(),
+                    result.key.toRawUTF8(), result.chords.toRawUTF8(),
+                    result.startSeconds, result.notes.size(), result.seed);
+        if (result.error.isNotEmpty())
+            std::printf("  error: %s\n", result.error.toRawUTF8());
+        if (result.promptNote.isNotEmpty())
+            std::printf("  prompt: %s\n", result.promptNote.toRawUTF8());
+        if (result.contextNote.isNotEmpty())
+            std::printf("  heard: %s\n", result.contextNote.toRawUTF8());
+        int shown = 0;
+        for (const auto& n : result.notes)
+        {
+            if (shown++ >= 12) break;
+            std::printf("  %6.3f %5.3f pitch=%3d vel=%.2f%s\n",
+                        n.startSeconds, n.lengthSeconds, n.pitch,
+                        (double) n.velocity, n.isDrum ? " drum" : "");
+        }
+    }
+
+    // The synthetic fixture is a C-minor i-VI-III-VII progression, so the
+    // analysis must not drift to a relative key or enharmonic sharps.
+    check(melodyResult.key == "C minor", "wrong detected key");
+    check(melodyResult.chords == "Cm | Ab | Eb | Bb",
+          "wrong detected chord progression");
+    check(melodyResult.promptNote.containsIgnoreCase("minor")
+              && melodyResult.promptNote.containsIgnoreCase("arpeggio"),
+          "prompt interpretation lost the minor/arpeggio intent");
+
+    // A prompt can retarget the mode: the request says melody but the text
+    // asks for drums, so the result must switch to the drum path.
+    cadence::ai::Request drumPrompt;
+    drumPrompt.trackId = 1;
+    drumPrompt.mode = cadence::ai::Mode::Melody;
+    drumPrompt.bars = 4;
+    drumPrompt.variations = 1;
+    drumPrompt.seed = 999;
+    drumPrompt.prompt = juce::String::fromUTF8("haz una batería con groove");
+    const auto drumPromptResult = service.generate(project, drumPrompt);
+    check(drumPromptResult.ok, "prompt mode override failed to generate");
+    check(drumPromptResult.promptNote.containsIgnoreCase("mode drums"),
+          "prompt mode override was not reported");
+    bool promptAllDrums = ! drumPromptResult.notes.empty();
+    for (const auto& n : drumPromptResult.notes)
+        promptAllDrums = promptAllDrums && n.isDrum;
+    check(promptAllDrums, "prompt mode override did not produce drum notes");
+
+    // Long-form generation: 30 s at 96 BPM is 12 bars, i.e. three 4-bar model
+    // windows that must continue from the previous phrase and cover the full
+    // requested duration.
+    cadence::ai::Request longRequest;
+    longRequest.trackId = 1;
+    longRequest.mode = cadence::ai::Mode::Melody;
+    longRequest.bars = 4;             // legacy field; lengthSeconds wins
+    longRequest.lengthSeconds = 30.0;
+    longRequest.variations = 2;
+    longRequest.seed = 777;
+    longRequest.prompt = juce::String::fromUTF8("desarrolla una melodía larga");
+    const auto longResult = service.generate(project, longRequest);
+    check(longResult.ok, "long-form generation failed");
+    check(longResult.clipLengthSeconds >= 29.9,
+          "long-form clip is shorter than 30 s");
+    check(longResult.notes.size() >= 16,
+          "long-form generation produced too few notes");
+    double lastStart = 0.0;
+    int chunkNotes[3] = { 0, 0, 0 };
+    for (const auto& n : longResult.notes)
+    {
+        lastStart = juce::jmax(lastStart, n.startSeconds);
+        const int chunk = juce::jlimit(0, 2, (int) (n.startSeconds / 10.0));
+        ++chunkNotes[chunk];
+    }
+    check(lastStart > 25.0, "long-form generation stopped early");
+    check(chunkNotes[0] > 0 && chunkNotes[1] > 0 && chunkNotes[2] > 0,
+          "long-form generation left one of the three phrases empty");
+    check(longResult.contextNote.containsIgnoreCase("bars"),
+          "long-form context was not reported");
+    std::printf("\nlong form: ok=%d length=%.2fs bars=%s notes=%zu "
+                "phrases=%d/%d/%d last=%.2fs\n",
+                longResult.ok ? 1 : 0, longResult.clipLengthSeconds,
+                longResult.contextNote.toRawUTF8(),
+                longResult.notes.size(), chunkNotes[0], chunkNotes[1],
+                chunkNotes[2], lastStart);
+
+    // Audio "listening": a project with only a C-minor chord loop and an empty
+    // target instrument track. Generation must hear the audio, take its key
+    // and report the context instead of falling back to C major.
+    const auto chordFile = juce::File::getSpecialLocation(
+        juce::File::tempDirectory).getChildFile("cadence_ai_chord.wav");
+    const std::vector<int> cMinorChord { 48, 60, 63, 67, 70 }; // C3 + Cm7
+    check(writeChordWav(chordFile, 8.0, cMinorChord) == 0,
+          "could not write the audio-listening fixture");
+
+    juce::AudioFormatManager audioFormats;
+    audioFormats.registerBasicFormats();
+    cadence::AudioSourceData audioData;
+    const auto loaded = cadence::loadAudioSourceData(
+        audioFormats, chordFile, 48000.0, audioData);
+    check(loaded.wasOk(), "could not decode the audio-listening fixture");
+
+    cadence::Project audioProject;
+    audioProject.sampleRate = 48000.0;
+    audioProject.tempoBpm = 120.0;
+    audioProject.nextTrackId = 3;
+    audioProject.nextClipId = 2;
+    const cadence::SourceId sourceId = 1;
+    audioProject.sources[sourceId] =
+        std::make_shared<const cadence::AudioSourceData>(std::move(audioData));
+    audioProject.sourceFiles[sourceId] = chordFile.getFullPathName();
+
+    cadence::Track audioTrack;
+    audioTrack.id = 1;
+    audioTrack.type = cadence::Track::Type::Audio;
+    audioTrack.name = "Chord loop";
+    cadence::Clip audioClip;
+    audioClip.id = 1;
+    audioClip.sourceId = sourceId;
+    audioClip.startSeconds = 0.0;
+    audioClip.lengthSeconds = 8.0;
+    audioTrack.clips.push_back(audioClip);
+    audioProject.tracks.push_back(audioTrack);
+
+    cadence::Track targetTrack;
+    targetTrack.id = 2;
+    targetTrack.type = cadence::Track::Type::Instrument;
+    targetTrack.name = "Lead";
+    targetTrack.instrument.name = "EZSynth";
+    audioProject.tracks.push_back(targetTrack);
+
+    cadence::ai::Request listenRequest;
+    listenRequest.trackId = 2;
+    listenRequest.mode = cadence::ai::Mode::Melody;
+    listenRequest.lengthSeconds = 8.0;
+    listenRequest.variations = 1;
+    listenRequest.seed = 321;
+    listenRequest.useModel = false;
+    const auto listenResult = service.generate(audioProject, listenRequest);
+    check(listenResult.ok, "audio-context generation failed");
+    check(listenResult.key == "C minor",
+          "audio context did not drive key detection");
+    check(listenResult.contextNote.containsIgnoreCase("heard"),
+          "audio context was not reported");
+    check(listenResult.contextNote.containsIgnoreCase("audio"),
+          "audio context note is missing the audio mention");
+    std::printf("audio listen: key=%s chords=%s heard=%s\n",
+                listenResult.key.toRawUTF8(), listenResult.chords.toRawUTF8(),
+                listenResult.contextNote.toRawUTF8());
+
+    // End-to-end through the Engine: async job + apply + undo.
+    cadence::Engine engine;
+    engine.newProject(48000.0);
+    const auto engineTrack = engine.addTrack("AI Lead", 0,
+                                             cadence::Track::Type::Instrument);
+    engine.addMidiClip(engineTrack, 0.0, 8.0);
+    engine.setAiModelDir(modelDir);
+
+    cadence::AiGenerationRequest req;
+    req.trackId = engineTrack;
+    req.anchorSeconds = 0.0;
+    req.mode = cadence::AiMode::Melody;
+    req.bars = 4;
+    req.variations = 2;
+    req.seed = 42;
+    req.prompt = "menos notas, en Do menor";
+
+    if (! engine.startAiGeneration(req))
+    {
+        std::fprintf(stderr, "could not start async generation\n");
+        return 1;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now()
+                        + std::chrono::seconds(120);
+    while (engine.aiGenerationState() == cadence::Engine::kAiRunning
+           && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    const auto result = engine.aiGenerationResult();
+    std::printf("\nengine state=%d ok=%d provider=%s key=%s notes=%zu\n",
+                engine.aiGenerationState(), result.ok ? 1 : 0,
+                result.provider.toRawUTF8(), result.key.toRawUTF8(),
+                result.notes.size());
+    if (! result.ok)
+    {
+        std::fprintf(stderr, "generation failed: %s\n", result.error.toRawUTF8());
+        return 1;
+    }
+
+    cadence::ClipId applied = -1;
+    if (engine.applyAiGeneration(&applied).failed())
+    {
+        std::fprintf(stderr, "apply failed: %s\n", engine.lastErrorUtf8());
+        return 1;
+    }
+    std::printf("applied clip %lld with %d notes; undo=%d\n",
+                (long long) applied, engine.clipNoteCount(applied),
+                engine.canUndo() ? 1 : 0);
+    if (! engine.undo())
+    {
+        std::fprintf(stderr, "undo failed\n");
+        return 1;
+    }
+    std::printf("after undo clip exists=%d\n", engine.clipIsMidi(applied) ? 1 : 0);
+    const bool asyncOk = result.ok && engine.clipNoteCount(applied) == 0;
+    if (failures == 0 && asyncOk)
+        std::printf("\nai-test: all checks passed\n");
+    return failures == 0 && asyncOk ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
@@ -2889,6 +3333,24 @@ int main(int argc, char** argv)
         const bool mon = argc > 5 && std::strcmp(argv[5], "mon") == 0;
         return cmdPlugTest(argc > 2 ? argv[2] : const_cast<char*>("0"),
                            asInstrument, demo, rec, mon);
+    }
+
+    if (cmd == "ai-test")
+    {
+        const auto dir = argc >= 3
+            ? juce::File(juce::String::fromUTF8(argv[2]))
+            : cadence::ai::defaultModelDir();
+        return cmdAiTest(dir);
+    }
+
+    if (cmd == "vae-test")
+    {
+        if (argc < 3)
+        {
+            printUsage();
+            return 1;
+        }
+        return cmdVaeTest(juce::File(juce::String::fromUTF8(argv[2])));
     }
 
     if (cmd == "tone")

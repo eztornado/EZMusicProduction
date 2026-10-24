@@ -687,4 +687,123 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefNoMidi => 'MIDI デバイスが接続されていません';
+
+  @override
+  String get aiTitle => 'AI で生成';
+
+  @override
+  String aiTrackLabel(String name) {
+    return 'トラック: $name';
+  }
+
+  @override
+  String get aiModeMelody => 'メロディ';
+
+  @override
+  String get aiModeHarmony => 'ハーモニー';
+
+  @override
+  String get aiModeBass => 'ベース';
+
+  @override
+  String get aiModeDrums => 'ドラム';
+
+  @override
+  String get aiBars => '小節';
+
+  @override
+  String get aiLength => '長さ';
+
+  @override
+  String aiHeardLabel(Object text) {
+    return '聴取: $text';
+  }
+
+  @override
+  String get aiLongHint => '長いクリップは生成を速くするため候補を1つ使います。';
+
+  @override
+  String get aiVariations => 'バリエーション';
+
+  @override
+  String get aiTemperature => '創造性';
+
+  @override
+  String get aiPrompt => 'プロンプト（任意）';
+
+  @override
+  String get aiPromptHint => '例: 暗めに、アルペジオ付き、ハ短調で';
+
+  @override
+  String get aiHarmonize => 'ハーモニーを追加';
+
+  @override
+  String get aiReplaceClip => 'クリップを置き換える';
+
+  @override
+  String get aiGenerate => '生成';
+
+  @override
+  String get aiRegenerate => '再生成';
+
+  @override
+  String get aiApply => 'プロジェクトに適用';
+
+  @override
+  String get aiClose => '閉じる';
+
+  @override
+  String get aiGenerating => '生成中…';
+
+  @override
+  String get aiIdleHint => '種類を選んで「生成」を押してください。';
+
+  @override
+  String get aiNoModel => 'Magenta モデルが未インストールです: 内蔵ジェネレーターを使用します。';
+
+  @override
+  String get aiProviderLabel => 'エンジン';
+
+  @override
+  String get aiKeyLabel => 'キー';
+
+  @override
+  String get aiChordsLabel => 'コード';
+
+  @override
+  String get aiNotesLabel => 'ノート';
+
+  @override
+  String aiPromptUnderstood(String text) {
+    return '解釈: $text';
+  }
+
+  @override
+  String aiFailed(String error) {
+    return '生成できませんでした: $error';
+  }
+
+  @override
+  String get aiBusy => '生成がすでに実行中です';
+
+  @override
+  String get aiApplied => '生成したクリップを適用しました';
+
+  @override
+  String get aiGenerateClip => 'AI で生成…';
+
+  @override
+  String get aiRegenerateClip => 'AI で再生成…';
+
+  @override
+  String get aiGenerateAtPlayhead => 'AI でクリップを生成…';
+
+  @override
+  String get aiToolbarButton => 'AI';
+
+  @override
+  String get aiToolbarTooltip => '選択したインストゥルメントトラックに AI でクリップを生成';
+
+  @override
+  String get aiNoInstrumentTrack => 'AI 生成を使うにはインストゥルメントトラックを作成または選択してください。';
 }

@@ -12,12 +12,62 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace cadence {
 
 struct TrackCapture;
 using CaptureList = std::vector<std::shared_ptr<TrackCapture>>;
+
+// ---- AI clip generation ----
+
+enum class AiMode
+{
+    Melody = 0,
+    Drums = 1,
+    Bass = 2,
+    Harmony = 3
+};
+
+// What the UI asks for. The engine snapshots the project, analyses the
+// musical context around anchorSeconds and generates a clip of `bars` bars.
+struct AiGenerationRequest
+{
+    TrackId trackId = -1;
+    ClipId clipId = -1;
+    double anchorSeconds = 0.0;
+    AiMode mode = AiMode::Melody;
+    int bars = 4;                // total bars; the model runs in 4-bar windows
+    double lengthSeconds = 0.0;  // exact duration; 0 = bars * bar length
+    double temperature = 0.95;   // model sampling temperature
+    int variations = 1;          // candidates evaluated; best is kept
+    int seed = 0;                // 0 = derive from the clock
+    juce::String prompt;         // free text, Spanish or English
+    bool replaceClip = false;    // rewrite clipId instead of adding a clip
+    bool harmonize = false;      // add chord tones under the melody
+    bool useModel = true;        // false forces the built-in generator
+};
+
+// Result of one generation. Notes are clip-relative; startSeconds is the
+// timeline position where applyAiGeneration places a new clip.
+struct AiGenerationResult
+{
+    bool ok = false;
+    juce::String error;
+    juce::String provider;       // "Magenta MusicVAE (melody)" / "Context..."
+    juce::String key;            // "A minor"
+    juce::String chords;         // "Am | F | C | G"
+    juce::String promptNote;     // how the prompt was interpreted
+    juce::String contextNote;    // audio/MIDI context the generator heard
+    int seed = 0;
+    double clipLengthSeconds = 0.0;
+    double startSeconds = 0.0;
+    TrackId trackId = -1;
+    ClipId clipId = -1;
+    bool replaceClip = false;
+    std::vector<MidiNote> notes;
+};
 
 // Plugin scanner/instantiator: VST3 + AudioUnit on macOS (VST2 requires the
 // Steinberg headers; add JUCE_VST2_SDK_PATH to enable that format).
@@ -266,6 +316,8 @@ using CaptureList = std::vector<std::shared_ptr<TrackCapture>>;
 // snapshots), the audio device and the project transport. Phase 1's
 // single-file "tape" playback survives as a convenience (loadFile builds a
 // one-track project).
+namespace ai { class Service; }
+
 class Engine {
 public:
     Engine();
@@ -547,6 +599,30 @@ public:
     juce::Result midiClipSetNote(ClipId clipId, int noteIndex, int pitch,
                                  double startInClipSeconds, double lengthSeconds);
 
+    // ---- AI clip generation (Magenta MusicVAE + contextual generator) ----
+    // Generation runs on a worker thread: startAiGeneration returns
+    // immediately, aiGenerationState() reports progress, and
+    // aiGenerationResult() becomes valid when it reaches kAiReady.
+    enum AiState { kAiIdle = 0, kAiRunning = 1, kAiReady = 2, kAiFailed = 3 };
+
+    void setAiModelDir(const juce::File& dir);
+    juce::File aiModelDir() const;
+    bool aiModelAvailable(AiMode mode) const;
+    const char* aiModelDirUtf8() const;
+
+    bool startAiGeneration(const AiGenerationRequest& request);
+    int aiGenerationState() const { return aiState_.load(std::memory_order_acquire); }
+    bool aiGenerationRunning() const { return aiGenerationState() == kAiRunning; }
+    AiGenerationResult aiGenerationResult() const;
+    void clearAiGenerationResult();
+    void cancelAiGeneration();
+    // Applies the current result as ONE undo entry. A new clip is created at
+    // result.startSeconds, or the target clip is rewritten when replaceClip
+    // is set. Returns the resulting clip id through outClipId.
+    juce::Result applyAiGeneration(ClipId* outClipId = nullptr);
+    // Strings of the current result, valid until the next call on this engine.
+    const char* aiResultString(int field) const; // 0 error 1 provider 2 key 3 chords 4 prompt
+
     // ---- quantize (§7.5.2, non-destructive) ----
     // Moves note starts toward the nearest grid position. Non-cumulative:
     // re-quantizing always works from each note's original position unless
@@ -745,6 +821,17 @@ private:
     mutable std::vector<MidiNote> liveTakeNotes_;
     mutable TrackId liveTakeTrack_ = -1;
     static std::atomic<bool> debugLoopback_;
+
+    // AI generation worker (one job at a time).
+    std::unique_ptr<ai::Service> aiService_;
+    std::thread aiThread_;
+    mutable std::mutex aiMutex_;
+    std::atomic<int> aiState_ {kAiIdle};
+    std::atomic<bool> aiCancel_ {false};
+    AiGenerationResult aiResult_;
+    mutable std::string aiStringOut_;
+    void runAiGeneration(std::shared_ptr<const Project> project,
+                         AiGenerationRequest request);
 
     std::unique_ptr<OutputCallback> outputCallback_;
     std::unique_ptr<MidiInCallback> midiInCallback_;

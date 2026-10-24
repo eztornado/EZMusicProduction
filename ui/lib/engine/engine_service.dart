@@ -67,6 +67,85 @@ class FxSlotInfo {
   final bool bypass;
 }
 
+/// AI generation modes, matching the engine C ABI values.
+abstract final class AiMode {
+  static const melody = 0;
+  static const drums = 1;
+  static const bass = 2;
+  static const harmony = 3;
+}
+
+/// One note of an AI preview, in seconds relative to the result clip.
+class AiNote {
+  const AiNote(this.pitch, this.velocity, this.startSeconds, this.lengthSeconds);
+
+  final int pitch;
+  final double velocity;
+  final double startSeconds;
+  final double lengthSeconds;
+}
+
+/// Engine-owned AI job state plus its preview result.
+///
+/// [state]: 0 idle, 1 running, 2 ready, 3 failed. The notes are NOT in the
+/// project until [EngineService.applyAiGeneration] runs.
+class AiGenerationSnapshot {
+  const AiGenerationSnapshot({
+    this.state = 0,
+    this.ok = false,
+    this.error = '',
+    this.provider = '',
+    this.key = '',
+    this.chords = '',
+    this.promptNote = '',
+    this.contextNote = '',
+    this.seed = 0,
+    this.clipLengthSeconds = 0,
+    this.startSeconds = 0,
+    this.clipId = -1,
+    this.trackId = -1,
+    this.notes = const [],
+  });
+
+  static const idle = AiGenerationSnapshot();
+
+  final int state;
+  final bool ok;
+  final String error;
+  final String provider;
+  final String key;
+  final String chords;
+  final String promptNote;
+  final String contextNote;
+  final int seed;
+  final double clipLengthSeconds;
+  final double startSeconds;
+  final int clipId;
+  final int trackId;
+  final List<AiNote> notes;
+
+  bool get isRunning => state == 1;
+  bool get isReady => state == 2 && ok;
+  bool get isFailed => state == 3 || (state == 2 && !ok);
+
+  AiGenerationSnapshot copyWith({int? state}) => AiGenerationSnapshot(
+        state: state ?? this.state,
+        ok: ok,
+        error: error,
+        provider: provider,
+        key: key,
+        chords: chords,
+        promptNote: promptNote,
+        contextNote: contextNote,
+        seed: seed,
+        clipLengthSeconds: clipLengthSeconds,
+        startSeconds: startSeconds,
+        clipId: clipId,
+        trackId: trackId,
+        notes: notes,
+      );
+}
+
 const String kDefaultProjectsDir =
     '/Users/ivan/Music/EZMusicProduction/Projects';
 
@@ -81,6 +160,9 @@ class EngineService extends ChangeNotifier {
             dylibPath: dylibPath, attachHandleAddress: attachHandleAddress);
 
   int get engineHandleAddress => _engine.handleAddress;
+
+  /// Last engine-side error (empty when the last call succeeded).
+  String get lastError => _engine.lastError;
 
   static const _windowChannel =
       MethodChannel('com.ezmusicproduction/window');
@@ -164,6 +246,58 @@ class EngineService extends ChangeNotifier {
       }
     }
     return false;
+  }
+
+  /// Selected track, or null when the selection is stale.
+  TrackInfo? get selectedTrack {
+    final id = selectedTrackId;
+    if (id == null) return null;
+    for (final track in _snapshot.tracks) {
+      if (track.id == id) return track;
+    }
+    return null;
+  }
+
+  /// Track that owns the selected clip, or null when there is no selection.
+  TrackInfo? get selectedClipTrack {
+    final id = selectedClipId;
+    if (id == null) return null;
+    for (final track in _snapshot.tracks) {
+      for (final clip in track.clips) {
+        if (clip.id == id) return track;
+      }
+    }
+    return null;
+  }
+
+  /// Clip selected in the timeline, or null when the id is stale.
+  ClipInfo? get selectedClip {
+    final id = selectedClipId;
+    if (id == null) return null;
+    for (final track in _snapshot.tracks) {
+      for (final clip in track.clips) {
+        if (clip.id == id) return clip;
+      }
+    }
+    return null;
+  }
+
+  /// First instrument track, used as a fallback for toolbar actions.
+  TrackInfo? get firstInstrumentTrack {
+    for (final track in _snapshot.tracks) {
+      if (track.type == 1) return track;
+    }
+    return null;
+  }
+
+  /// Instrument track that AI actions should target: the selected track, the
+  /// owner of the selected clip, or the first instrument track.
+  TrackInfo? get aiTargetTrack {
+    final track = selectedTrack;
+    if (track != null && track.type == 1) return track;
+    final clipTrack = selectedClipTrack;
+    if (clipTrack != null && clipTrack.type == 1) return clipTrack;
+    return firstInstrumentTrack;
   }
   bool get canUndo => _engine.canUndo;
   bool get canRedo => _engine.canRedo;
@@ -545,6 +679,152 @@ class EngineService extends ChangeNotifier {
   void freezeClipQuantize(int clipId) {
     _engine.freezeClipQuantize(clipId);
     refresh();
+  }
+
+  // ---- AI clip generation ----
+
+  AiGenerationSnapshot _aiGeneration = AiGenerationSnapshot.idle;
+  int _aiStateSeen = 0;
+
+  /// Latest job state plus its preview. Poll with [pollAiGeneration] while
+  /// the dialog is open; nothing changes the project until
+  /// [applyAiGeneration].
+  AiGenerationSnapshot get aiGeneration => _aiGeneration;
+
+  String get aiModelDir => _engine.aiModelDir;
+  void setAiModelDir(String path) => _engine.setAiModelDir(path);
+
+  /// True when the Magenta checkpoint for [mode] is installed. Without it the
+  /// engine still generates procedurally.
+  bool aiModelAvailable(int mode) => _engine.aiModelAvailable(mode);
+
+  /// Queues a generation job. Returns false when a job is already running.
+  /// [seed] 0 makes the engine use a time-based seed.
+  bool startAiGeneration({
+    required int trackId,
+    int? clipId,
+    required double anchorSeconds,
+    required int mode,
+    int bars = 4,
+    double lengthSeconds = 0,
+    double temperature = 0.9,
+    int variations = 1,
+    int seed = 0,
+    String? prompt,
+    bool replaceClip = false,
+    bool harmonize = true,
+    bool useModel = true,
+  }) {
+    if (_engine.aiGenerationState == 1) {
+      statusMessage = L10n.current.aiBusy;
+      notifyListeners();
+      return false;
+    }
+    final started = _engine.startAiGeneration(
+      trackId: trackId,
+      clipId: clipId ?? -1,
+      anchorSeconds: anchorSeconds,
+      mode: mode,
+      bars: bars,
+      lengthSeconds: lengthSeconds,
+      temperature: temperature,
+      variations: variations,
+      seed: seed,
+      prompt: prompt,
+      replaceClip: replaceClip,
+      harmonize: harmonize,
+      useModel: useModel,
+    );
+    if (!started) {
+      statusMessage = _engine.lastError;
+      notifyListeners();
+      return false;
+    }
+    _aiGeneration = AiGenerationSnapshot(
+      state: 1,
+      trackId: trackId,
+      clipId: clipId ?? -1,
+      startSeconds: anchorSeconds,
+      seed: seed,
+    );
+    _aiStateSeen = 1;
+    notifyListeners();
+    return true;
+  }
+
+  /// Cheap state poll; safe to call at frame rate or from a dialog timer.
+  void pollAiGeneration() {
+    final state = _engine.aiGenerationState;
+    if (state == _aiStateSeen) return;
+    _aiStateSeen = state;
+    if (state == 0) {
+      _aiGeneration = AiGenerationSnapshot.idle;
+    } else if (state == 1) {
+      _aiGeneration = _aiGeneration.copyWith(state: 1);
+    } else {
+      _aiGeneration = _readAiResult(state);
+    }
+    notifyListeners();
+  }
+
+  AiGenerationSnapshot _readAiResult(int state) {
+    final notes = <AiNote>[];
+    final count = _engine.aiResultNoteCount;
+    for (var i = 0; i < count; i++) {
+      final n = _engine.aiResultNoteAt(i);
+      notes.add(AiNote(n.$1, n.$2, n.$3, n.$4));
+    }
+    return AiGenerationSnapshot(
+      state: state,
+      ok: _engine.aiResultOk,
+      error: _engine.aiResultString(0),
+      provider: _engine.aiResultString(1),
+      key: _engine.aiResultString(2),
+      chords: _engine.aiResultString(3),
+      promptNote: _engine.aiResultString(4),
+      contextNote: _engine.aiResultString(5),
+      seed: _engine.aiResultSeed,
+      clipLengthSeconds: _engine.aiResultClipLength,
+      startSeconds: _engine.aiResultStart,
+      clipId: _engine.aiResultClipId,
+      trackId: _engine.aiResultTrackId,
+      notes: notes,
+    );
+  }
+
+  /// Applies the ready preview as one undo entry. Returns the created or
+  /// rewritten clip id, or null when nothing was ready/failed.
+  int? applyAiGeneration() {
+    if (!_aiGeneration.isReady) return null;
+    final clipId = _engine.applyAiGeneration();
+    if (clipId < 0) {
+      statusMessage = _engine.lastError;
+      notifyListeners();
+      return null;
+    }
+    selectedClipId = clipId;
+    _engine.clearAiGeneration();
+    _aiGeneration = AiGenerationSnapshot.idle;
+    _aiStateSeen = 0;
+    statusMessage = L10n.current.aiApplied;
+    refresh();
+    return clipId;
+  }
+
+  void cancelAiGeneration() {
+    _engine.cancelAiGeneration();
+    _engine.clearAiGeneration();
+    _aiGeneration = AiGenerationSnapshot.idle;
+    _aiStateSeen = 0;
+    notifyListeners();
+  }
+
+  /// Discards a ready preview without touching the project.
+  void clearAiGeneration() {
+    _engine.clearAiGeneration();
+    _aiGeneration = AiGenerationSnapshot.idle;
+    _aiStateSeen = 0;
+    notifyListeners();
   }
 
   /// Read-and-reset meter peaks; poll once per frame at most.

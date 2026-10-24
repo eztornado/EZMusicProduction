@@ -829,6 +829,169 @@ CadenceResult cadence_engine_freeze_clip_quantize(CadenceEngine* engine, Cadence
                ? kCadenceErrorNotFound : kCadenceOk;
 }
 
+/* ---- AI clip generation ---- */
+
+void cadence_engine_set_ai_model_dir(CadenceEngine* engine, const char* utf8_path)
+{
+    if (engine == nullptr || utf8_path == nullptr)
+        return;
+    asEngine(engine)->setAiModelDir(juce::File(juce::String::fromUTF8(utf8_path)));
+}
+
+const char* cadence_engine_ai_model_dir(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->aiModelDirUtf8() : "";
+}
+
+int cadence_engine_ai_model_available(CadenceEngine* engine, int mode)
+{
+    if (engine == nullptr)
+        return 0;
+    const int m = mode < 0 || mode > 3 ? 0 : mode;
+    return asEngine(engine)->aiModelAvailable(static_cast<cadence::AiMode>(m)) ? 1 : 0;
+}
+
+int cadence_engine_start_ai_generation_long(CadenceEngine* engine,
+                                            CadenceTrackId track_id,
+                                            CadenceClipId clip_id,
+                                            double anchor_seconds,
+                                            int mode, int bars,
+                                            double length_seconds,
+                                            double temperature, int variations,
+                                            int seed, const char* utf8_prompt,
+                                            int replace_clip, int harmonize,
+                                            int use_model)
+{
+    if (engine == nullptr)
+        return 0;
+
+    cadence::AiGenerationRequest request;
+    request.trackId = track_id;
+    request.clipId = clip_id;
+    request.anchorSeconds = anchor_seconds;
+    request.mode = static_cast<cadence::AiMode>(
+        juce::jlimit(0, 3, mode));
+    request.bars = juce::jlimit(1, 64, bars);
+    request.lengthSeconds = juce::jlimit(0.0, 120.0, length_seconds);
+    request.temperature = juce::jlimit(0.1, 1.8, temperature);
+    request.variations = juce::jlimit(1, 8, variations);
+    request.seed = seed;
+    if (utf8_prompt != nullptr)
+        request.prompt = juce::String::fromUTF8(utf8_prompt);
+    request.replaceClip = replace_clip != 0;
+    request.harmonize = harmonize != 0;
+    request.useModel = use_model != 0;
+
+    return asEngine(engine)->startAiGeneration(request) ? 1 : 0;
+}
+
+int cadence_engine_start_ai_generation(CadenceEngine* engine,
+                                       CadenceTrackId track_id,
+                                       CadenceClipId clip_id,
+                                       double anchor_seconds,
+                                       int mode, int bars,
+                                       double temperature, int variations,
+                                       int seed, const char* utf8_prompt,
+                                       int replace_clip, int harmonize,
+                                       int use_model)
+{
+    // Legacy entry point: bars are the total length, capped at the original
+    // interactive range.
+    return cadence_engine_start_ai_generation_long(
+        engine, track_id, clip_id, anchor_seconds, mode,
+        juce::jlimit(1, 4, bars), 0.0, temperature, variations, seed,
+        utf8_prompt, replace_clip, harmonize, use_model);
+}
+
+int cadence_engine_ai_generation_state(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->aiGenerationState() : 0;
+}
+
+void cadence_engine_cancel_ai_generation(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->cancelAiGeneration();
+}
+
+void cadence_engine_clear_ai_generation(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->clearAiGenerationResult();
+}
+
+int cadence_engine_ai_result_ok(CadenceEngine* engine)
+{
+    return (engine != nullptr && asEngine(engine)->aiGenerationResult().ok) ? 1 : 0;
+}
+
+const char* cadence_engine_ai_result_string(CadenceEngine* engine, int field)
+{
+    return engine != nullptr ? asEngine(engine)->aiResultString(field) : "";
+}
+
+int cadence_engine_ai_result_seed(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->aiGenerationResult().seed : 0;
+}
+
+double cadence_engine_ai_result_clip_length(CadenceEngine* engine)
+{
+    return engine != nullptr
+        ? asEngine(engine)->aiGenerationResult().clipLengthSeconds : 0.0;
+}
+
+double cadence_engine_ai_result_start(CadenceEngine* engine)
+{
+    return engine != nullptr
+        ? asEngine(engine)->aiGenerationResult().startSeconds : 0.0;
+}
+
+CadenceClipId cadence_engine_ai_result_clip_id(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->aiGenerationResult().clipId : -1;
+}
+
+CadenceTrackId cadence_engine_ai_result_track_id(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->aiGenerationResult().trackId : -1;
+}
+
+int cadence_engine_ai_result_note_count(CadenceEngine* engine)
+{
+    return engine != nullptr
+        ? (int) asEngine(engine)->aiGenerationResult().notes.size() : 0;
+}
+
+void cadence_engine_ai_result_note_at(CadenceEngine* engine, int index,
+                                      int* out_pitch, float* out_velocity,
+                                      double* out_start, double* out_length)
+{
+    if (engine == nullptr || index < 0)
+        return;
+    const auto result = asEngine(engine)->aiGenerationResult();
+    if (index >= (int) result.notes.size())
+        return;
+    const auto& note = result.notes[(std::size_t) index];
+    if (out_pitch != nullptr) *out_pitch = note.pitch;
+    if (out_velocity != nullptr) *out_velocity = note.velocity;
+    if (out_start != nullptr) *out_start = note.startSeconds;
+    if (out_length != nullptr) *out_length = note.lengthSeconds;
+}
+
+CadenceResult cadence_engine_apply_ai_generation(CadenceEngine* engine,
+                                                 CadenceClipId* out_clip_id)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    cadence::ClipId clipId = -1;
+    if (asEngine(engine)->applyAiGeneration(&clipId).failed())
+        return kCadenceErrorInvalidArgument;
+    if (out_clip_id != nullptr)
+        *out_clip_id = clipId;
+    return kCadenceOk;
+}
+
 int cadence_engine_clip_is_midi(CadenceEngine* engine, CadenceClipId clip_id)
 {
     return (engine != nullptr && asEngine(engine)->clipIsMidi(clip_id)) ? 1 : 0;

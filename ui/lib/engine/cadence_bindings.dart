@@ -488,6 +488,53 @@ final class CadenceEngine {
     _lastError = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
         Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_last_error');
 
+    // ---- AI clip generation ----
+    _setAiModelDir = _lib.lookupFunction<Void Function(Pointer<Void>, Pointer<Utf8>),
+        void Function(Pointer<Void>, Pointer<Utf8>)>(
+        'cadence_engine_set_ai_model_dir');
+    _aiModelDir = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
+        Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_ai_model_dir');
+    _aiModelAvailable = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)>('cadence_engine_ai_model_available');
+    _startAiGeneration = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int64, Double, Int32, Int32,
+            Double, Double, Int32, Int32, Pointer<Utf8>, Int32, Int32, Int32),
+        int Function(Pointer<Void>, int, int, double, int, int, double, double,
+            int, int, Pointer<Utf8>, int, int, int)>(
+        'cadence_engine_start_ai_generation_long');
+    _aiGenerationState = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_ai_generation_state');
+    _cancelAiGeneration = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_cancel_ai_generation');
+    _clearAiGeneration = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_clear_ai_generation');
+    _aiResultOk = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_ai_result_ok');
+    _aiResultString = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int)>(
+        'cadence_engine_ai_result_string');
+    _aiResultSeed = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_ai_result_seed');
+    _aiResultClipLength = _lib.lookupFunction<Double Function(Pointer<Void>),
+        double Function(Pointer<Void>)>('cadence_engine_ai_result_clip_length');
+    _aiResultStart = _lib.lookupFunction<Double Function(Pointer<Void>),
+        double Function(Pointer<Void>)>('cadence_engine_ai_result_start');
+    _aiResultClipId = _lib.lookupFunction<Int64 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_ai_result_clip_id');
+    _aiResultTrackId = _lib.lookupFunction<Int64 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_ai_result_track_id');
+    _aiResultNoteCount = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_ai_result_note_count');
+    _aiResultNoteAt = _lib.lookupFunction<
+        Void Function(Pointer<Void>, Int32, Pointer<Int32>, Pointer<Float>,
+            Pointer<Double>, Pointer<Double>),
+        void Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Float>,
+            Pointer<Double>, Pointer<Double>)>('cadence_engine_ai_result_note_at');
+    _applyAiGeneration = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Int64>),
+        int Function(Pointer<Void>, Pointer<Int64>)>(
+        'cadence_engine_apply_ai_generation');
+
     _handle = attachHandleAddress != null
         ? Pointer<Void>.fromAddress(attachHandleAddress)
         : _create();
@@ -691,6 +738,27 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, Pointer<Utf8>, double) _render;
   late final int Function(Pointer<Void>, Pointer<Utf8>, double, int) _renderEx;
   late final Pointer<Utf8> Function(Pointer<Void>) _lastError;
+
+  // ---- AI clip generation ----
+  late final void Function(Pointer<Void>, Pointer<Utf8>) _setAiModelDir;
+  late final Pointer<Utf8> Function(Pointer<Void>) _aiModelDir;
+  late final int Function(Pointer<Void>, int) _aiModelAvailable;
+  late final int Function(Pointer<Void>, int, int, double, int, int, double,
+      double, int, int, Pointer<Utf8>, int, int, int) _startAiGeneration;
+  late final int Function(Pointer<Void>) _aiGenerationState;
+  late final void Function(Pointer<Void>) _cancelAiGeneration;
+  late final void Function(Pointer<Void>) _clearAiGeneration;
+  late final int Function(Pointer<Void>) _aiResultOk;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _aiResultString;
+  late final int Function(Pointer<Void>) _aiResultSeed;
+  late final double Function(Pointer<Void>) _aiResultClipLength;
+  late final double Function(Pointer<Void>) _aiResultStart;
+  late final int Function(Pointer<Void>) _aiResultClipId;
+  late final int Function(Pointer<Void>) _aiResultTrackId;
+  late final int Function(Pointer<Void>) _aiResultNoteCount;
+  late final void Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Float>,
+      Pointer<Double>, Pointer<Double>) _aiResultNoteAt;
+  late final int Function(Pointer<Void>, Pointer<Int64>) _applyAiGeneration;
 
   String get lastError => _lastError(_handle).toDartString();
 
@@ -907,6 +975,97 @@ final class CadenceEngine {
       _quantizeClipNotes(_handle, clipId, gridSeconds, swing, catchRange, maxMove,
           nonGridProtect ? 1 : 0, iterative ? 1 : 0, iterStrength);
   int resetClipQuantize(int clipId) => _resetClipQuantize(_handle, clipId);
+
+  // ---- AI clip generation ----
+
+  void setAiModelDir(String path) =>
+      _withUtf8(path, (p) => _setAiModelDir(_handle, p));
+  String get aiModelDir => _aiModelDir(_handle).toDartString();
+
+  /// [mode]: 0 melody, 1 drums, 2 bass, 3 harmony/chords.
+  bool aiModelAvailable(int mode) => _aiModelAvailable(_handle, mode) != 0;
+
+  /// Queues a generation job on the engine worker thread. Returns false when
+  /// another job is running or the target track/clip is invalid.
+  bool startAiGeneration({
+    required int trackId,
+    int clipId = -1,
+    required double anchorSeconds,
+    required int mode,
+    int bars = 4,
+    double lengthSeconds = 0.0,
+    double temperature = 0.9,
+    int variations = 1,
+    int seed = 0,
+    String? prompt,
+    bool replaceClip = false,
+    bool harmonize = true,
+    bool useModel = true,
+  }) =>
+      _withUtf8(
+          prompt ?? '',
+          (p) => _startAiGeneration(
+                  _handle,
+                  trackId,
+                  clipId,
+                  anchorSeconds,
+                  mode,
+                  bars,
+                  lengthSeconds,
+                  temperature,
+                  variations,
+                  seed,
+                  p,
+                  replaceClip ? 1 : 0,
+                  harmonize ? 1 : 0,
+                  useModel ? 1 : 0) !=
+              0);
+
+  /// 0 idle, 1 running, 2 ready, 3 failed.
+  int get aiGenerationState => _aiGenerationState(_handle);
+  void cancelAiGeneration() => _cancelAiGeneration(_handle);
+  void clearAiGeneration() => _clearAiGeneration(_handle);
+
+  bool get aiResultOk => _aiResultOk(_handle) != 0;
+
+  /// [field]: 0 error, 1 provider, 2 key, 3 chords, 4 prompt interpretation,
+  /// 5 heard context (audio/MIDI).
+  String aiResultString(int field) =>
+      _aiResultString(_handle, field).toDartString();
+  int get aiResultSeed => _aiResultSeed(_handle);
+  double get aiResultClipLength => _aiResultClipLength(_handle);
+  double get aiResultStart => _aiResultStart(_handle);
+  int get aiResultClipId => _aiResultClipId(_handle);
+  int get aiResultTrackId => _aiResultTrackId(_handle);
+  int get aiResultNoteCount => _aiResultNoteCount(_handle);
+
+  /// (pitch, velocity, start, length) of a preview result note.
+  (int, double, double, double) aiResultNoteAt(int index) {
+    final pitch = calloc<Int32>();
+    final vel = calloc<Float>();
+    final start = calloc<Double>();
+    final length = calloc<Double>();
+    try {
+      _aiResultNoteAt(_handle, index, pitch, vel, start, length);
+      return (pitch.value, vel.value, start.value, length.value);
+    } finally {
+      calloc.free(pitch);
+      calloc.free(vel);
+      calloc.free(start);
+      calloc.free(length);
+    }
+  }
+
+  /// Applies the ready result atomically. Returns the created/rewritten clip
+  /// id, or -1 on failure.
+  int applyAiGeneration() {
+    final out = calloc<Int64>();
+    try {
+      return _applyAiGeneration(_handle, out) == 0 ? out.value : -1;
+    } finally {
+      calloc.free(out);
+    }
+  }
 
   // ---- tempo / time signature ----
   double get tempoBpm => _tempoBpm(_handle);

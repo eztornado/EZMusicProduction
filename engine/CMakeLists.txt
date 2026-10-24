@@ -37,6 +37,8 @@ add_library(cadence_engine STATIC
     src/native_dialogs.mm
     src/model.cpp
     src/engine.cpp
+    src/magenta_vae.cpp
+    src/ai_generation.cpp
     src/ezq4.cpp
     src/ezinst.cpp
     src/ezsynth.cpp
@@ -56,6 +58,8 @@ target_compile_definitions(cadence_engine PUBLIC
     JUCE_USE_MP3AUDIOFORMAT=1)
 target_link_libraries(cadence_engine PUBLIC "-framework CoreAudioKit")
 target_link_libraries(cadence_engine PUBLIC "-framework UniformTypeIdentifiers")
+# BLAS for the Magenta MusicVAE LSTM layers (AI clip generation).
+target_link_libraries(cadence_engine PUBLIC "-framework Accelerate")
 
 target_link_libraries(cadence_engine
     PUBLIC
@@ -78,6 +82,8 @@ add_library(cadence_engine_shared SHARED
     src/native_dialogs.mm
     src/model.cpp
     src/engine.cpp
+    src/magenta_vae.cpp
+    src/ai_generation.cpp
     src/ezq4.cpp
     src/ezinst.cpp
     src/ezsynth.cpp
@@ -95,6 +101,7 @@ target_compile_definitions(cadence_engine_shared PRIVATE
     JUCE_USE_MP3AUDIOFORMAT=1)
 target_link_libraries(cadence_engine_shared PRIVATE "-framework CoreAudioKit")
 target_link_libraries(cadence_engine_shared PRIVATE "-framework UniformTypeIdentifiers")
+target_link_libraries(cadence_engine_shared PRIVATE "-framework Accelerate")
 target_link_libraries(cadence_engine_shared
     PRIVATE
         juce::juce_core

@@ -225,6 +225,69 @@ CadenceResult cadence_engine_quantize_clip_notes(CadenceEngine* engine, CadenceC
 CadenceResult cadence_engine_reset_clip_quantize(CadenceEngine* engine, CadenceClipId clip_id);
 CadenceResult cadence_engine_freeze_clip_quantize(CadenceEngine* engine, CadenceClipId clip_id);
 
+/* ---- AI clip generation ----
+   Generation runs on an engine worker thread. Start returns 1 when the job
+   was queued, 0 when another job is already running / the track is invalid.
+   Poll cadence_engine_ai_generation_state:
+     0 idle, 1 running, 2 ready, 3 failed.
+   When it reaches 2 or 3 read the result through the ai_result_* getters,
+   then apply it with cadence_engine_apply_ai_generation (one undo entry).
+   mode: 0 melody, 1 drums, 2 bass, 3 harmony/chords.
+   bars: 1..4 for the legacy call, 1..64 total for _long. temperature:
+   ~0.4..1.4. variations: 1..8.
+   length_seconds (only in _long): exact clip duration, capped at 120 s;
+   0 makes the engine use bars * bar length. Long requests are generated in
+   4-bar model windows that continue from the previous phrase.
+   prompt: free text in Spanish or English (may be NULL).
+   replace_clip: rewrite clip_id instead of inserting a new clip.
+   harmonize: add chord tones under the generated lead when appropriate.
+   use_model: 0 forces the built-in procedural generator (no checkpoints). */
+void cadence_engine_set_ai_model_dir(CadenceEngine* engine, const char* utf8_path);
+const char* cadence_engine_ai_model_dir(CadenceEngine* engine);
+int cadence_engine_ai_model_available(CadenceEngine* engine, int mode);
+
+int cadence_engine_start_ai_generation(CadenceEngine* engine,
+                                       CadenceTrackId track_id,
+                                       CadenceClipId clip_id,
+                                       double anchor_seconds,
+                                       int mode, int bars,
+                                       double temperature, int variations,
+                                       int seed, const char* utf8_prompt,
+                                       int replace_clip, int harmonize,
+                                       int use_model);
+int cadence_engine_start_ai_generation_long(CadenceEngine* engine,
+                                            CadenceTrackId track_id,
+                                            CadenceClipId clip_id,
+                                            double anchor_seconds,
+                                            int mode, int bars,
+                                            double length_seconds,
+                                            double temperature, int variations,
+                                            int seed, const char* utf8_prompt,
+                                            int replace_clip, int harmonize,
+                                            int use_model);
+int cadence_engine_ai_generation_state(CadenceEngine* engine);
+void cadence_engine_cancel_ai_generation(CadenceEngine* engine);
+void cadence_engine_clear_ai_generation(CadenceEngine* engine);
+
+int cadence_engine_ai_result_ok(CadenceEngine* engine);
+/* field: 0 error, 1 provider, 2 key, 3 chords, 4 prompt interpretation,
+   5 heard context (audio/MIDI). */
+const char* cadence_engine_ai_result_string(CadenceEngine* engine, int field);
+int cadence_engine_ai_result_seed(CadenceEngine* engine);
+double cadence_engine_ai_result_clip_length(CadenceEngine* engine);
+double cadence_engine_ai_result_start(CadenceEngine* engine);
+CadenceClipId cadence_engine_ai_result_clip_id(CadenceEngine* engine);
+CadenceTrackId cadence_engine_ai_result_track_id(CadenceEngine* engine);
+int cadence_engine_ai_result_note_count(CadenceEngine* engine);
+void cadence_engine_ai_result_note_at(CadenceEngine* engine, int index,
+                                      int* out_pitch, float* out_velocity,
+                                      double* out_start, double* out_length);
+
+/* Applies the ready result atomically (one undo entry). When out_clip_id is
+   non-NULL it receives the created/rewritten clip id. */
+CadenceResult cadence_engine_apply_ai_generation(CadenceEngine* engine,
+                                                 CadenceClipId* out_clip_id);
+
 CadenceResult cadence_engine_set_track_name(CadenceEngine* engine, CadenceTrackId track_id,
                                             const char* utf8_name);
 CadenceResult cadence_engine_set_track_color(CadenceEngine* engine, CadenceTrackId track_id,
