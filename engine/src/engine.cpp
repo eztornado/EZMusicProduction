@@ -9,6 +9,7 @@
 #include "native_dialogs.h"
 #include "piano_voice.h"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdlib>
@@ -921,7 +922,7 @@ void ProjectAudioSource::panicAllInstrumentTracks(const Project& project,
 void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host,
                                         int blockSize, bool deferHeavyPlugins)
 {
-    const std::scoped_lock lock(trackNodesMutex_);
+    std::unique_lock<std::mutex> lock(trackNodesMutex_);
 
     // Plugins are prepared at the DEVICE rate, not the project rate: the
     // audio callback hands them device-rate buffers. If the project rate is
@@ -1328,6 +1329,10 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
     // audio thread's first note.
     prepareInternalSynths(project, pluginRate);
 
+    lock.unlock();
+    if (pluginsChangedCallback_)
+        pluginsChangedCallback_();
+
     // Kick off the deferred job pump: one plugin load per message-loop
     // pass, so Flutter keeps painting between loads.
     if (! pluginJobs_.empty() && ! pluginJobsPumping_)
@@ -1397,7 +1402,7 @@ bool ProjectAudioSource::hasPendingPluginJobs() const
 void ProjectAudioSource::applyPluginJob(const PluginJob& job,
                                         PluginHost& host)
 {
-    const std::scoped_lock lock(trackNodesMutex_);
+    std::unique_lock<std::mutex> lock(trackNodesMutex_);
     auto& node = ensureNode(job.trackId);
     auto oldState = std::atomic_load(&node.state);
 
@@ -1547,6 +1552,10 @@ void ProjectAudioSource::applyPluginJob(const PluginJob& job,
     next->midiFxPreparedBlock = next->midiFx ? job.maxBlock : 0;
     std::atomic_store(&node.state,
                       std::shared_ptr<const TrackNodeState>(std::move(next)));
+
+    lock.unlock();
+    if (pluginsChangedCallback_)
+        pluginsChangedCallback_();
 }
 
 TrackAudioNode* ProjectAudioSource::nodeFor(TrackId trackId) const
@@ -1624,6 +1633,34 @@ std::shared_ptr<juce::AudioProcessor> ProjectAudioSource::masterFxProcessorFor(
         || slotIndex >= (int) chain->processors.size())
         return nullptr;
     return chain->processors[(size_t) slotIndex];
+}
+
+std::vector<juce::AudioProcessor*> ProjectAudioSource::liveProcessors() const
+{
+    const std::scoped_lock lock(trackNodesMutex_);
+    std::vector<juce::AudioProcessor*> out;
+    for (const auto& entry : trackNodes_)
+    {
+        const auto& node = entry.second;
+        if (node == nullptr)
+            continue;
+        auto state = std::atomic_load(&node->state);
+        if (state == nullptr)
+            continue;
+        if (state->instrument != nullptr)
+            out.push_back(state->instrument.get());
+        if (state->midiFx != nullptr)
+            out.push_back(state->midiFx.get());
+        if (state->fx != nullptr)
+            for (const auto& proc : state->fx->processors)
+                if (proc != nullptr)
+                    out.push_back(proc.get());
+    }
+    if (auto master = std::atomic_load(&masterFxChain_))
+        for (const auto& proc : master->processors)
+            if (proc != nullptr)
+                out.push_back(proc.get());
+    return out;
 }
 
 void ProjectAudioSource::processFxChain(const FxChain& chain,
@@ -2576,6 +2613,8 @@ Engine::Engine()
     pluginHost_.setup();
     transport_ = std::make_unique<ProjectAudioSource>();
     transport_->setPluginHost(&pluginHost_);
+    transport_->setPluginsChangedCallback(
+        [this] { closeOrphanedEditorWindows(); });
     outputCallback_ = std::make_unique<OutputCallback>(*this);
     midiInCallback_ = std::make_unique<MidiInCallback>(*this);
     previewWatchdog_ = std::make_unique<PreviewWatchdog>(*this);
@@ -2587,6 +2626,10 @@ Engine::Engine()
 Engine::~Engine()
 {
     shuttingDown_.store(true, std::memory_order_release);
+    // Close every plugin editor before the instances are torn down. Letting
+    // AppKit destroy a live VST3 window during process teardown crashed
+    // Analog Lab V inside its componentVisibilityChanged callback.
+    closeAllEditorWindows();
     if (audioHealthWatchdog_ != nullptr)
     {
         audioHealthWatchdog_->stopTimer();
@@ -5832,13 +5875,13 @@ juce::Result Engine::openPluginEditor(TrackId trackId, int slotIndex)
             // The slot's plugin changed (remove/reorder shifts slots): the
             // cached window shows the WRONG plugin's editor and keeps the
             // removed instance alive. Recreate for the current processor.
-            editorWindows_.erase(it);
-            it = editorWindows_.end();
+            retireEditorWindow(std::move(it->second.window));
+            it = editorWindows_.erase(it);
         }
         if (it == editorWindows_.end())
             it = editorWindows_
                      .emplace(key,
-                              EditorEntry{std::make_unique<PluginEditorWindow>(
+                              EditorEntry{std::make_shared<PluginEditorWindow>(
                                               proc),
                                           proc})
                      .first;
@@ -5878,13 +5921,16 @@ juce::Result Engine::openInstrumentEditor(TrackId trackId, ClipId clipId)
         auto it = editorWindows_.find(key);
         if (it != editorWindows_.end() && it->second.proc != proc)
         {
-            editorWindows_.erase(it);
-            it = editorWindows_.end();
+            // Never destroy a live VST3 editor synchronously here: this can
+            // run from the plugin's own window callback. Hide it now and
+            // release it on the next message-loop turn.
+            retireEditorWindow(std::move(it->second.window));
+            it = editorWindows_.erase(it);
         }
         if (it == editorWindows_.end())
             it = editorWindows_
                      .emplace(key,
-                              EditorEntry{std::make_unique<PluginEditorWindow>(
+                              EditorEntry{std::make_shared<PluginEditorWindow>(
                                               proc),
                                           proc})
                      .first;
@@ -5910,13 +5956,16 @@ juce::Result Engine::openMasterFxEditor(int slotIndex)
         auto it = editorWindows_.find(key);
         if (it != editorWindows_.end() && it->second.proc != proc)
         {
-            editorWindows_.erase(it);
-            it = editorWindows_.end();
+            // Never destroy a live VST3 editor synchronously here: this can
+            // run from the plugin's own window callback. Hide it now and
+            // release it on the next message-loop turn.
+            retireEditorWindow(std::move(it->second.window));
+            it = editorWindows_.erase(it);
         }
         if (it == editorWindows_.end())
             it = editorWindows_
                      .emplace(key,
-                              EditorEntry{std::make_unique<PluginEditorWindow>(
+                              EditorEntry{std::make_shared<PluginEditorWindow>(
                                               proc),
                                           proc})
                      .first;
@@ -5924,6 +5973,52 @@ juce::Result Engine::openMasterFxEditor(int slotIndex)
         it->second.window->toFront(true);
     });
     return result;
+}
+
+void Engine::retireEditorWindow(std::shared_ptr<juce::DocumentWindow> window)
+{
+    if (window == nullptr)
+        return;
+    // Hide immediately so the user cannot interact with a window whose
+    // processor is about to leave the graph; destroy it after the current
+    // callback returns.
+    window->setVisible(false);
+    if (retiredEditors_ == nullptr)
+        retiredEditors_ = std::make_shared<RetiredEditorList>();
+    auto retired = retiredEditors_;
+    retired->windows.push_back(std::move(window));
+    juce::MessageManager::callAsync([retired] { retired->windows.clear(); });
+}
+
+void Engine::closeOrphanedEditorWindows()
+{
+    if (shuttingDown_.load(std::memory_order_acquire) || transport_ == nullptr)
+        return;
+    const auto live = transport_->liveProcessors();
+    for (auto it = editorWindows_.begin(); it != editorWindows_.end();)
+    {
+        const auto* proc = it->second.proc.get();
+        if (proc == nullptr
+            || std::find(live.begin(), live.end(), proc) == live.end())
+        {
+            retireEditorWindow(std::move(it->second.window));
+            it = editorWindows_.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+void Engine::closeAllEditorWindows()
+{
+    for (auto& entry : editorWindows_)
+        if (entry.second.window != nullptr)
+            entry.second.window->setVisible(false);
+    editorWindows_.clear();
+    if (retiredEditors_ != nullptr)
+        retiredEditors_->windows.clear();
 }
 
 int Engine::pluginCount() const { return pluginHost_.pluginCount(); }

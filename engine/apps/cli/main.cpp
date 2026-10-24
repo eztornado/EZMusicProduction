@@ -46,6 +46,10 @@ void printUsage()
         "      restarts the UR22 while playing and checks device/position.\n"
         "  cadence-cli churntest\n"
         "      swaps instrument/fx snapshots while the audio thread renders.\n"
+        "  cadence-cli editortest\n"
+        "      replaces the plugin behind an open editor window.\n"
+        "  cadence-cli editorloadtest <project.ezmpp>\n"
+        "      opens Analog Lab V editors, replaces one, then tears down.\n"
         "  cadence-cli vae-test <models-dir>\n"
         "      loads the Magenta MusicVAE checkpoints and runs sample/encode/decode.\n"
         "  cadence-cli ai-test [models-dir]\n"
@@ -831,6 +835,105 @@ int cmdChurnTest()
     std::printf("churntest: 80 snapshot swaps while rendering — %s\n",
                 bad.load() ? "NaN/FAIL" : "ok");
     return bad.load() ? 1 : 0;
+}
+
+// Regression: replacing the plugin behind an open editor must not destroy
+// the live VST3 editor inside openInstrumentEditor()'s own callback. Analog
+// Lab V crashed in VST3PluginWindow::componentVisibilityChanged when the old
+// window was erased synchronously.
+int cmdEditorTest()
+{
+    juce::ScopedJuceInitialiser_GUI init;
+
+    cadence::Engine engine;
+    engine.newProject(44100);
+    const auto track = engine.addTrack("Editor", 0,
+                                       cadence::Track::Type::Instrument);
+
+    int synthIndex = -1;
+    int drumsIndex = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+    {
+        const juce::String name(engine.pluginNameAt(i));
+        if (name == "EZSynth")
+            synthIndex = i;
+        else if (name == "EZDrums")
+            drumsIndex = i;
+    }
+    if (synthIndex < 0 || drumsIndex < 0)
+    {
+        std::printf("editortest: skipped — built-in instruments not found\n");
+        return 0;
+    }
+
+    auto open = [&](int pluginIndex) {
+        if (engine.setTrackInstrumentPlugin(track, pluginIndex).failed())
+            return false;
+        return engine.openInstrumentEditor(track).wasOk();
+    };
+
+    bool ok = open(synthIndex);
+    ok = open(drumsIndex) && ok; // replaces the live EZSynth editor
+    ok = open(synthIndex) && ok; // replaces the live EZDrums editor
+
+    std::printf("editortest: instrument editor replacement — %s\n",
+                ok ? "ok" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+// Stress the editor lifetime with a real project: open Analog Lab V editors,
+// then replace the plugin behind one of them and tear the Engine down with
+// the windows still open. This is the exact path that produced the
+// PluginEditorWindow/VST3PluginWindow crash reports.
+int cmdEditorLoadTest(const char* path)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+        std::fprintf(stderr, "warn: device: %s\n", engine.lastErrorUtf8());
+    const auto loaded = engine.loadProject(juce::File(juce::String::fromUTF8(path)));
+    if (loaded.failed())
+    {
+        std::printf("editorloadtest: load failed: %s\n",
+                    loaded.getErrorMessage().toRawUTF8());
+        return 1;
+    }
+    while (engine.hasPendingPluginJobs())
+        engine.pumpOnePluginJob();
+
+    int synthIndex = -1;
+    for (int i = 0; i < engine.pluginCount(); ++i)
+        if (juce::String(engine.pluginNameAt(i)) == "EZSynth")
+            synthIndex = i;
+
+    int opened = 0;
+    int replaced = 0;
+    for (int i = 0; i < engine.trackCount(); ++i)
+    {
+        const auto id = engine.trackIdAt(i);
+        if (engine.trackType(id) != 1)
+            continue;
+        const juce::String name(engine.trackInstrumentName(id));
+        if (! name.containsIgnoreCase("Analog Lab"))
+            continue;
+        if (engine.openInstrumentEditor(id).wasOk())
+            ++opened;
+        if (synthIndex >= 0
+            && engine.setTrackInstrumentPlugin(id, synthIndex).wasOk())
+        {
+            // Replaces the live Analog Lab V instance while its editor is
+            // open; the old window must be retired, not destroyed inline.
+            if (engine.openInstrumentEditor(id).wasOk())
+                ++replaced;
+        }
+        break;
+    }
+
+    std::printf("editorloadtest: opened=%d replaced=%d — %s\n",
+                opened, replaced,
+                opened > 0 && replaced > 0 ? "ok" : "FAIL");
+    return opened > 0 && replaced > 0 ? 0 : 1;
 }
 
 // Regression test for the truncated-note bug: a noteOff clamped into every
@@ -3645,6 +3748,19 @@ int main(int argc, char** argv)
 
     if (cmd == "churntest")
         return cmdChurnTest();
+
+    if (cmd == "editortest")
+        return cmdEditorTest();
+
+    if (cmd == "editorloadtest")
+    {
+        if (argc < 3)
+        {
+            printUsage();
+            return 1;
+        }
+        return cmdEditorLoadTest(argv[2]);
+    }
 
     if (cmd == "chordtest")
         return cmdChordTest();

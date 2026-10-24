@@ -194,6 +194,14 @@ public:
     std::shared_ptr<juce::AudioProcessor> instrumentProcessorFor(TrackId trackId);
     std::shared_ptr<juce::AudioProcessor> midiFxProcessorFor(TrackId trackId);
     std::shared_ptr<juce::AudioProcessor> masterFxProcessorFor(int slotIndex);
+    // Processors currently referenced by any live track/master snapshot.
+    // Used by the Engine to close editor windows for removed plugins.
+    std::vector<juce::AudioProcessor*> liveProcessors() const;
+    // Called on the message thread after a reconcile/job swaps snapshots.
+    void setPluginsChangedCallback(std::function<void()> cb)
+    {
+        pluginsChangedCallback_ = std::move(cb);
+    }
     // Plugin-parameter automation (§7.12 v1.5): applies every param lane of
     // the track to its target processor at the block position (audio path).
     void applyParamAutomation(const Track& track, const TrackNodeState* state,
@@ -290,7 +298,7 @@ private:
 
     // Serialises message-thread rebuilds. The audio thread never takes this:
     // it only loads the node's immutable state snapshot.
-    std::mutex trackNodesMutex_;
+    mutable std::mutex trackNodesMutex_;
     std::map<TrackId, std::unique_ptr<TrackAudioNode>> trackNodes_;
     PluginHost* pluginHost_ = nullptr;
 
@@ -305,6 +313,7 @@ private:
     };
     std::vector<PluginJob> pluginJobs_;      // message thread only
     bool pluginJobsPumping_ = false;         // message thread only
+    std::function<void()> pluginsChangedCallback_; // message thread only
     void enqueuePluginJob(const Track& track, double rate, int maxBlock);
     bool jobQueuedFor(const Track& track, double rate, int maxBlock) const;
     void applyPluginJob(const PluginJob& job, PluginHost& host);
@@ -879,10 +888,22 @@ private:
     // slots, and a stale window would show the WRONG plugin's editor and
     // keep the removed instance alive.
     struct EditorEntry {
-        std::unique_ptr<juce::DocumentWindow> window;
+        std::shared_ptr<juce::DocumentWindow> window;
         std::shared_ptr<juce::AudioProcessor> proc;
     };
     std::map<std::uint64_t, EditorEntry> editorWindows_;
+    // Windows removed while a plugin editor callback may still be on the
+    // stack are hidden immediately but destroyed on the next message-loop
+    // turn. Destroying them synchronously from openInstrumentEditor() crashed
+    // Analog Lab V (VST3PluginWindow::componentVisibilityChanged).
+    struct RetiredEditorList {
+        std::vector<std::shared_ptr<juce::DocumentWindow>> windows;
+    };
+    std::shared_ptr<RetiredEditorList> retiredEditors_
+        = std::make_shared<RetiredEditorList>();
+    void retireEditorWindow(std::shared_ptr<juce::DocumentWindow> window);
+    void closeOrphanedEditorWindows();
+    void closeAllEditorWindows();
     std::atomic<bool> recording_ { false };
     std::atomic<double> recordStartSeconds_ { 0.0 };
     std::atomic<std::int64_t> recordStartSamples_ { 0 };
