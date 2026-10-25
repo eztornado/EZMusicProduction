@@ -404,6 +404,15 @@ final class CadenceEngine {
         Int32 Function(Pointer<Void>, Int64, Int64, Double),
         int Function(Pointer<Void>, int, int,
             double)>('cadence_engine_move_clip_to_track');
+    _moveClips = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Int64>, Pointer<Int64>,
+            Pointer<Double>, Int32),
+        int Function(Pointer<Void>, Pointer<Int64>, Pointer<Int64>,
+            Pointer<Double>, int)>('cadence_engine_move_clips');
+    _removeClips = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Int64>, Int32),
+        int Function(Pointer<Void>, Pointer<Int64>,
+            int)>('cadence_engine_remove_clips');
     _splitClip = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Double),
         int Function(Pointer<Void>, int,
             double)>('cadence_engine_split_clip');
@@ -700,6 +709,9 @@ final class CadenceEngine {
   late final void Function(Pointer<Void>) _pumpOnePluginJob;
   late final int Function(Pointer<Void>, int, double) _pasteClip;
   late final int Function(Pointer<Void>, int, int, double) _moveClipToTrack;
+  late final int Function(Pointer<Void>, Pointer<Int64>, Pointer<Int64>,
+      Pointer<Double>, int) _moveClips;
+  late final int Function(Pointer<Void>, Pointer<Int64>, int) _removeClips;
   late final int Function(Pointer<Void>, int, double) _splitClip;
   late final double Function(Pointer<Void>, int, double)
       _trackVolumeEffectiveAt;
@@ -1009,6 +1021,46 @@ final class CadenceEngine {
       _pasteClip(_handle, trackId, startSeconds) == 0;
   bool moveClipToTrack(int clipId, int trackId, double startSeconds) =>
       _moveClipToTrack(_handle, clipId, trackId, startSeconds) == 0;
+
+  /// Moves several clips as one undoable command (timeline group drag).
+  bool moveClips(List<int> clipIds, List<int> trackIds,
+      List<double> startSeconds) {
+    assert(clipIds.length == trackIds.length &&
+        clipIds.length == startSeconds.length);
+    if (clipIds.isEmpty) return true;
+    final clipPtr = calloc<Int64>(clipIds.length);
+    final trackPtr = calloc<Int64>(trackIds.length);
+    final startPtr = calloc<Double>(startSeconds.length);
+    try {
+      for (var i = 0; i < clipIds.length; i++) {
+        clipPtr[i] = clipIds[i];
+        trackPtr[i] = trackIds[i];
+        startPtr[i] = startSeconds[i];
+      }
+      return _moveClips(
+              _handle, clipPtr, trackPtr, startPtr, clipIds.length) ==
+          0;
+    } finally {
+      calloc.free(clipPtr);
+      calloc.free(trackPtr);
+      calloc.free(startPtr);
+    }
+  }
+
+  /// Removes several clips as one undoable command (timeline group delete).
+  bool removeClips(List<int> clipIds) {
+    if (clipIds.isEmpty) return true;
+    final clipPtr = calloc<Int64>(clipIds.length);
+    try {
+      for (var i = 0; i < clipIds.length; i++) {
+        clipPtr[i] = clipIds[i];
+      }
+      return _removeClips(_handle, clipPtr, clipIds.length) == 0;
+    } finally {
+      calloc.free(clipPtr);
+    }
+  }
+
   bool splitClip(int clipId, double timeSeconds) =>
       _splitClip(_handle, clipId, timeSeconds) == 0;
 

@@ -3,6 +3,7 @@
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cadence_ui/engine/engine_service.dart';
@@ -14,6 +15,26 @@ double _vPixels(WidgetTester tester) =>
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position
         .pixels;
+
+Future<void> _pumpTimeline(WidgetTester tester, EngineService service,
+    {double width = 2000, double height = 300}) async {
+  await tester.pumpWidget(MaterialApp(
+    locale: const Locale('es'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(
+      body: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: TimelineView(service: service, frameTick: ValueNotifier<int>(0)),
+        ),
+      ),
+    ),
+  ));
+  await tester.pump();
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -583,6 +604,144 @@ void main() {
         find.byType(Scrollable).first);
     expect(vState.position.pixels, greaterThan(0),
         reason: 'arrastrar el pulgar debe desplazar las pistas');
+  });
+
+  testWidgets('rubber band selects clips and the group moves as one undo',
+      (tester) async {
+    final service = EngineService();
+    addTearDown(service.dispose);
+    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    expect(error, isNull, reason: error ?? '');
+
+    await _pumpTimeline(tester, service);
+
+    // Start in empty row-2 space at 1 s and drag up/right to row 0 at 8 s.
+    // The rectangle crosses all three demo clips (0-3, 2-5, 4-7 s).
+    final marquee = await tester.startGesture(
+      Offset(
+        kHeaderWidth + 1 * kPixelsPerSecond,
+        kRulerHeight + 2 * kTrackRowHeight + 30,
+      ),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    // Move in steps (like a real mouse) so the rubber band updates.
+    for (var i = 0; i < 21; i++) {
+      await marquee.moveBy(const Offset(30, -6));
+      await tester.pump();
+    }
+    await marquee.up();
+    await tester.pump();
+
+    expect(service.selectedClipIds, {1, 2, 3},
+        reason: 'the rubber band must select every intersected clip');
+
+    // Grab the middle clip and drag the whole selection +90 px = +1 s.
+    final groupDrag = await tester.startGesture(
+      Offset(
+        kHeaderWidth + 3 * kPixelsPerSecond,
+        kRulerHeight + kTrackRowHeight + 30,
+      ),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    for (var i = 0; i < 6; i++) {
+      await groupDrag.moveBy(const Offset(15, 0));
+      await tester.pump();
+    }
+    await groupDrag.up();
+    await tester.pump();
+
+    final starts = <int, double>{
+      for (final track in service.snapshot.tracks)
+        for (final clip in track.clips) clip.id: clip.start,
+    };
+    expect(starts[1], closeTo(1.0, 1e-3));
+    expect(starts[2], closeTo(3.0, 1e-3));
+    expect(starts[3], closeTo(5.0, 1e-3));
+    expect(service.selectedClipIds, {1, 2, 3},
+        reason: 'the group stays selected after the move');
+
+    // One undo must restore all three clips (the engine batch edit is a
+    // single history entry).
+    service.undo();
+    await tester.pump();
+    final restored = <int, double>{
+      for (final track in service.snapshot.tracks)
+        for (final clip in track.clips) clip.id: clip.start,
+    };
+    expect(restored[1], closeTo(0.0, 1e-3));
+    expect(restored[2], closeTo(2.0, 1e-3));
+    expect(restored[3], closeTo(4.0, 1e-3));
+  });
+
+  testWidgets('Shift+click selects a range and Cmd+click toggles clips',
+      (tester) async {
+    final service = EngineService();
+    addTearDown(service.dispose);
+    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    expect(error, isNull, reason: error ?? '');
+
+    await _pumpTimeline(tester, service);
+
+    await tester.tapAt(Offset(kHeaderWidth + 45, kRulerHeight + 30));
+    await tester.pump();
+    expect(service.selectedClipIds, {1});
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.tapAt(Offset(
+      kHeaderWidth + 5 * kPixelsPerSecond,
+      kRulerHeight + 2 * kTrackRowHeight + 30,
+    ));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(service.selectedClipIds, {1, 2, 3},
+        reason: 'Shift+click selects the visual range between both clips');
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.tapAt(Offset(
+      kHeaderWidth + 3 * kPixelsPerSecond,
+      kRulerHeight + kTrackRowHeight + 30,
+    ));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+    expect(service.selectedClipIds, {1, 3},
+        reason: 'Cmd+click removes the middle clip from the group');
+  });
+
+  testWidgets('dragging a clip to the right edge auto-scrolls the timeline',
+      (tester) async {
+    final service = EngineService();
+    addTearDown(service.dispose);
+    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    expect(error, isNull, reason: error ?? '');
+
+    await _pumpTimeline(tester, service, width: 700);
+
+    final horizontal = tester.state<ScrollableState>(
+      find.byWidgetPredicate(
+        (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+      ),
+    );
+    expect(horizontal.position.pixels, 0.0);
+
+    final drag = await tester.startGesture(
+      Offset(kHeaderWidth + 45, kRulerHeight + 30),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    // Move to ~29 px from the right edge of the lane viewport and hold.
+    await drag.moveTo(Offset(kHeaderWidth + 450, kRulerHeight + 30));
+    await tester.pump();
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(horizontal.position.pixels, greaterThan(0),
+        reason: 'holding a clip drag at the edge must scroll horizontally');
+
+    await drag.up();
+    await tester.pump();
   });
 
 }

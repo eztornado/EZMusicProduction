@@ -1,5 +1,7 @@
 // Pure-logic tests for the timeline: hit-testing and snap grid.
 
+import 'dart:ui' show Rect;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cadence_ui/engine/project_snapshot.dart';
@@ -87,6 +89,30 @@ void main() {
       final hit = hitTestClipEdge(snapshot, Offset(268, row0)); // clip ends at 270 px
       expect(hit, isNotNull);
       expect(hit!.edge, ClipEdge.right);
+    });
+  });
+
+  group('clipsIntersecting', () {
+    final snapshot = _fixture();
+
+    test('rubber band selects every clip it crosses', () {
+      final rect = Rect.fromLTRB(
+        90, // 1 s
+        kRulerHeight,
+        300, // 3.33 s
+        kRulerHeight + 2 * kTrackRowHeight,
+      );
+      expect(clipsIntersecting(snapshot, rect), {1, 2});
+    });
+
+    test('empty rectangle selects nothing', () {
+      final rect = Rect.fromLTRB(
+        351, // 3.9 s, after clip 1
+        kRulerHeight + 30,
+        400,
+        kRulerHeight + 60,
+      );
+      expect(clipsIntersecting(snapshot, rect), isEmpty);
     });
   });
 

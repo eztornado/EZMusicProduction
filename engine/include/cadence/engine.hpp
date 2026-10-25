@@ -506,6 +506,16 @@ public:
     // position in one undo entry. Fades/offset are preserved.
     juce::Result moveClipToTrack(ClipId clipId, TrackId targetTrackId,
                                  double startSeconds);
+
+    // Group edit: moves several clips to their target tracks/positions as ONE
+    // undo entry (timeline rubber-band drag). All lookups and track-type
+    // checks run before anything is changed, so a bad target leaves the
+    // project untouched.
+    juce::Result moveClips(const std::vector<ClipId>& clipIds,
+                           const std::vector<TrackId>& targetTrackIds,
+                           const std::vector<double>& startSeconds);
+    // Group delete: removes several clips as ONE undo entry.
+    juce::Result removeClips(const std::vector<ClipId>& clipIds);
     // Splits a clip at the given timeline position into two clips (the right
     // part gets a new id); MIDI notes distribute by start position, crossing
     // notes truncate on the left side. One undo entry.

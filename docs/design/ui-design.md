@@ -305,7 +305,7 @@ Tipos v1: **Audio**, **Instrument (MIDI)**, **FX Bus** (para sends), **Group** (
 - **Cuerpo:** fondo = color de pista (alpha ~0.85), waveform en tinte más claro; nombre arriba-izquierda; borde 1 px, redondeo 4 px.
 - **Fade in/out:** handles triangulares en esquinas superiores (formato Cubase/Mixcraft), curva lineal por defecto, `⌥+drag` curva; auto-crossfade al solapar clips si "Auto crossfade" está activo (default ON, curva equal-gain de 10 ms ajustable).
 - **Trim:** drag del borde izquierdo/derecho (con snap); `⌘` durante trim desactiva snap; trim no destructivo (media file intacta, sándwich de offsets).
-- **Mover/copiar:** drag mueve (con snap); `⌥+drag` copia; `⌘+D` duplica adyacente; drag vertical entre pistas del mismo tipo permitido (audio↔audio, midi↔midi).
+- **Mover/copiar:** drag mueve (con snap); `⌥+drag` copia; `⌘+D` duplica adyacente; drag vertical entre pistas del mismo tipo permitido (audio↔audio, midi↔midi). Con varios clips seleccionados, drag del cuerpo mueve todo el grupo como **una sola entrada de undo**; las asas de borde/fade siguen editando solo el clip primario. Si alguna pista destino no admite el tipo del clip, el grupo conserva sus filas y solo se desplaza horizontalmente. Arrastrar cerca del borde horizontal del viewport hace **auto-scroll** continuo aunque el puntero no se mueva.
 - **Split:** `S` parte todos los clips bajo selección en el playhead; scissors tool (v1.5) parte en la posición del cursor.
 - **Mute de clip:** `⌥+M` o eraser… (v1.5); clip muted con hash diagonal y alpha 40 %.
 - **Loop pegs** (v1.5): borde inferior con asas ◀▶; arrastrar extiende repitiendo el clip con las repeticiones mostradas.

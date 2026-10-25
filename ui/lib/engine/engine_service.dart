@@ -210,14 +210,25 @@ class EngineService extends ChangeNotifier {
   int _peakGeneration = 0;
 
   /// UI-side selection (owned by Flutter per ui-design.md §9).
+  ///
+  /// [selectedClipId] is the primary clip (context menu, split, editor).
+  /// [selectedClipIds] is the full group selected with Shift/⌘/rubber band.
   int? selectedClipId;
+  final Set<int> _selectedClipIds = <int>{};
   int? selectedTrackId;
+
+  /// Immutable view of the timeline clip group.
+  Set<int> get selectedClipIds => Set.unmodifiable(_selectedClipIds);
+  bool isClipSelected(int clipId) => _selectedClipIds.contains(clipId);
 
   /// Clip currently open in the piano roll editor (null = closed).
   int? editorClipId;
 
   void openEditor(int clipId) {
     selectedClipId = clipId;
+    _selectedClipIds
+      ..clear()
+      ..add(clipId);
     editorClipId = clipId;
     _mixerOpen = false;
     _automationOpen = false;
@@ -406,12 +417,14 @@ class EngineService extends ChangeNotifier {
   void undo() {
     _engine.undo();
     selectedClipId = null; // the clip may no longer exist in this state
+    _selectedClipIds.clear();
     refresh();
   }
 
   void redo() {
     _engine.redo();
     selectedClipId = null;
+    _selectedClipIds.clear();
     refresh();
   }
 
@@ -441,10 +454,68 @@ class EngineService extends ChangeNotifier {
 
   int get selectedMidiInputIndex => _engine.selectedMidiInputIndex;
 
+  /// Selects a single clip (clears any group selection).
   void selectClip(int? clipId) {
-    if (selectedClipId == clipId) return;
+    final next = clipId == null ? const <int>{} : <int>{clipId};
+    if (selectedClipId == clipId && setEquals(next, _selectedClipIds)) return;
+    _selectedClipIds
+      ..clear()
+      ..addAll(next);
     selectedClipId = clipId;
     notifyListeners();
+  }
+
+  /// Replaces the selection with [clipIds]. [primary] drives the context
+  /// menu/split/editor; it defaults to the last id (visual order).
+  void selectClips(Iterable<int> clipIds, {int? primary}) {
+    final next = clipIds.toSet();
+    final nextPrimary = primary ?? (next.isEmpty ? null : next.last);
+    if (selectedClipId == nextPrimary && setEquals(next, _selectedClipIds)) {
+      return;
+    }
+    _selectedClipIds
+      ..clear()
+      ..addAll(next);
+    selectedClipId = nextPrimary;
+    notifyListeners();
+  }
+
+  /// Keeps the current group when [clipId] is already selected; otherwise
+  /// selects just that clip. Used when a drag starts on a clip.
+  void selectClipForDrag(int clipId) {
+    final alreadySelected = _selectedClipIds.contains(clipId);
+    final changed = !alreadySelected || selectedClipId != clipId;
+    if (!alreadySelected) {
+      _selectedClipIds
+        ..clear()
+        ..add(clipId);
+    }
+    selectedClipId = clipId;
+    if (changed) notifyListeners();
+  }
+
+  /// Shift+click toggles one clip in/out of the group.
+  void toggleClipSelection(int clipId) {
+    if (!_selectedClipIds.remove(clipId)) {
+      _selectedClipIds.add(clipId);
+      selectedClipId = clipId;
+    } else {
+      selectedClipId = _selectedClipIds.isEmpty ? null : _selectedClipIds.last;
+    }
+    notifyListeners();
+  }
+
+  void clearClipSelection() => selectClip(null);
+
+  /// ⌘A in the timeline: select every clip in visual order.
+  void selectAllClips() {
+    final ids = <int>[];
+    for (final track in _snapshot.tracks) {
+      for (final clip in track.clips) {
+        ids.add(clip.id);
+      }
+    }
+    selectClips(ids, primary: ids.isEmpty ? null : ids.last);
   }
 
   void moveClip(int clipId, double startSeconds) {
@@ -459,6 +530,26 @@ class EngineService extends ChangeNotifier {
     if (!result) return _engine.lastError;
     refresh();
     return null;
+  }
+
+  /// Moves a whole timeline selection as ONE undo entry. Every clip may
+  /// change track (same type required by the engine) and start position.
+  String? moveClips(
+    List<int> clipIds,
+    List<int> trackIds,
+    List<double> startSeconds,
+  ) {
+    final result = _engine.moveClips(clipIds, trackIds, startSeconds);
+    if (!result) return _engine.lastError;
+    refresh();
+    return null;
+  }
+
+  /// Deletes a whole timeline selection as ONE undo entry.
+  void removeClips(List<int> clipIds) {
+    if (clipIds.isEmpty) return;
+    _engine.removeClips(clipIds);
+    refresh();
   }
 
   /// Splits a clip at the given timeline position (one undo entry).
@@ -559,6 +650,9 @@ class EngineService extends ChangeNotifier {
       for (final c in clips) {
         if (c.start <= positionSeconds && positionSeconds <= c.end) {
           selectedClipId = c.id;
+          _selectedClipIds
+            ..clear()
+            ..add(c.id);
           break;
         }
       }
@@ -820,6 +914,9 @@ class EngineService extends ChangeNotifier {
       return null;
     }
     selectedClipId = clipId;
+    _selectedClipIds
+      ..clear()
+      ..add(clipId);
     _engine.clearAiGeneration();
     _aiGeneration = AiGenerationSnapshot.idle;
     _aiStateSeen = 0;
@@ -1307,10 +1404,19 @@ class EngineService extends ChangeNotifier {
   }
 
   void deleteSelectedClip() {
-    final id = selectedClipId;
-    if (id == null) return;
-    _engine.removeClip(id);
+    final ids = _selectedClipIds.toList();
+    if (ids.isEmpty) {
+      final id = selectedClipId;
+      if (id == null) return;
+      ids.add(id);
+    }
+    if (ids.length == 1) {
+      _engine.removeClip(ids.first);
+    } else {
+      _engine.removeClips(ids);
+    }
     selectedClipId = null;
+    _selectedClipIds.clear();
     refresh();
   }
 
@@ -1823,6 +1929,7 @@ class EngineService extends ChangeNotifier {
 
   void _resetSelection() {
     selectedClipId = null;
+    _selectedClipIds.clear();
     selectedTrackId = null;
     editorClipId = null;
     _mixerOpen = false;
@@ -1832,6 +1939,20 @@ class EngineService extends ChangeNotifier {
   /// Re-pulls the immutable document snapshot after any edit.
   void refresh() {
     _snapshot = pullSnapshot(_engine);
+
+    // Drop ids removed by an edit/undo so Shift/⌘/group drags never act on
+    // stale clips. Keep the primary consistent with the remaining group.
+    final validClipIds = <int>{};
+    for (final track in _snapshot.tracks) {
+      for (final clip in track.clips) {
+        validClipIds.add(clip.id);
+      }
+    }
+    _selectedClipIds.removeWhere((id) => !validClipIds.contains(id));
+    if (selectedClipId == null || !_selectedClipIds.contains(selectedClipId)) {
+      selectedClipId = _selectedClipIds.isEmpty ? null : _selectedClipIds.last;
+    }
+
     _peakGeneration++;
     _peakCache.clear();
     notifyListeners();

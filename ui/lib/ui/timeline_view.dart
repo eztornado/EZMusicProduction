@@ -5,6 +5,7 @@
 // drag (selected clip) = fades. Snap to beat, ⌘ bypasses. Each completed
 // gesture commits one engine command (one undo entry).
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -33,6 +34,40 @@ const double kMinClipSeconds = 0.05;
 
 const double kSnapBeatSeconds = 0.5; // default; overridden by project tempo
 
+// Rubber-band / edge auto-scroll (§8.1): a drag near the viewport border
+// keeps scrolling even while the pointer is stationary.
+const double kMarqueeThresholdPx = 3;
+const double kAutoScrollEdgePx = 40;
+const double kAutoScrollMaxStepPx = 22;
+
+/// Clip rectangle in timeline content coordinates (x = seconds * pps,
+/// y = ruler + track row). Shared by painting, hit-testing and the marquee.
+Rect clipContentRect(ClipInfo clip, int trackIndex,
+    {double pixelsPerSecond = kPixelsPerSecond}) {
+  return Rect.fromLTWH(
+    clip.start * pixelsPerSecond,
+    kRulerHeight + trackIndex * kTrackRowHeight + 22,
+    math.max(4.0, clip.length * pixelsPerSecond),
+    kTrackRowHeight - 32,
+  );
+}
+
+/// Ids of every clip whose painted rectangle intersects [rect], in visual
+/// order (track row, then clip-list order). Used by the rubber band.
+Set<int> clipsIntersecting(ProjectSnapshot snapshot, Rect rect,
+    {double pixelsPerSecond = kPixelsPerSecond}) {
+  final hits = <int>{};
+  for (var row = 0; row < snapshot.tracks.length; row++) {
+    for (final clip in snapshot.tracks[row].clips) {
+      if (rect.overlaps(
+          clipContentRect(clip, row, pixelsPerSecond: pixelsPerSecond))) {
+        hits.add(clip.id);
+      }
+    }
+  }
+  return hits;
+}
+
 /// Track that owns [clipId], or null when the id is stale.
 TrackInfo? _trackForClip(ProjectSnapshot snapshot, int clipId) {
   for (final track in snapshot.tracks) {
@@ -53,6 +88,42 @@ ClipInfo? _clipById(ProjectSnapshot snapshot, int clipId) {
 }
 
 enum ClipEdge { move, left, right }
+
+/// One clip captured at the start of a group drag. Keeps the original row,
+/// track and start so the whole group can be moved by a shared delta.
+class _ClipDrag {
+  const _ClipDrag({
+    required this.clipId,
+    required this.start,
+    required this.length,
+    required this.row,
+    required this.trackId,
+    required this.trackType,
+  });
+
+  final int clipId;
+  final double start;
+  final double length;
+  final int row;
+  final int trackId;
+  final int trackType;
+}
+
+/// A clip plus the row it must paint on (which may be a cross-track drag
+/// preview target rather than its source row).
+class _ClipDraw {
+  const _ClipDraw({
+    required this.clip,
+    required this.track,
+    required this.row,
+    required this.order,
+  });
+
+  final ClipInfo clip;
+  final TrackInfo track;
+  final int row;
+  final int order;
+}
 
 ({ClipInfo clip, ClipEdge edge})? hitTestClipEdge(
   ProjectSnapshot snapshot,
@@ -188,10 +259,33 @@ class _TimelineViewState extends State<TimelineView> {
   bool _dragFadeIn = false;
   double _origStart = 0, _origLength = 0, _origOffset = 0, _maxEnd = 0;
   double _origFade = 0;
-  double _previewStart = 0, _previewLength = 0, _previewFade = -1;
+  double _previewFade = -1;
   bool _didMove = false;
-  double _panStartDx = 0; // absolute drag: pointer x at gesture start
-  // Edge hit at the RAW press (pre-slop), consumed by _onPanStart.
+  // Gesture coordinates. Content = viewport + current scroll offset; keeping
+  // both lets edge auto-scroll advance the gesture while the pointer rests.
+  double _panStartContentX = 0;
+  double _panStartContentY = 0;
+  double _pointerViewportX = 0;
+  double _pointerViewportY = 0;
+  double _pointerContentX = 0;
+  double _pointerContentY = 0;
+  int _dragSourceType = 0;
+  // Group drag: every selected clip gets a preview start and (optionally) a
+  // target row. A single clip uses the same maps.
+  List<_ClipDrag> _dragGroup = const [];
+  Map<int, double> _previewStarts = const {};
+  Map<int, double> _previewLengths = const {};
+  Map<int, int> _previewRows = const {};
+  // Rubber-band selection.
+  bool _marqueeActive = false;
+  bool _marqueeMoved = false;
+  Offset? _marqueeStartContent;
+  Offset? _marqueeCurrentContent;
+  Set<int> _marqueeBase = const {};
+  int? _selectionAnchorClipId;
+  double? _pendingSeekContentX;
+  Timer? _autoScrollTimer;
+  // Edge hit at the RAW press (pre-slop), consumed by _onPointerDown.
   ({ClipInfo clip, ClipEdge edge})? _pressHit;
   // Trim affordance: the clip edge under the pointer (cursor + highlight).
   int? _hoverClipId;
@@ -220,11 +314,8 @@ class _TimelineViewState extends State<TimelineView> {
     }
   }
 
-  int _dragTargetRow = -1; // row the clip is being dragged over
-  int _dragSourceType = 0;
-
-  int _rowAt(double viewportDy) =>
-      ((_contentDy(viewportDy) - kRulerHeight) / kTrackRowHeight).floor();
+  int _rowAtContent(double contentDy) =>
+      ((contentDy - kRulerHeight) / kTrackRowHeight).floor();
 
   bool get _snapBypassed =>
       HardwareKeyboard.instance.isLogicalKeyPressed(
@@ -260,30 +351,325 @@ class _TimelineViewState extends State<TimelineView> {
   double _contentDy(double viewportDy) =>
       viewportDy + (_vScroll.hasClients ? _vScroll.offset : 0.0);
 
-  void _onTapUp(TapUpDetails details) {
-    final local = Offset(
-      _contentDx(details.localPosition.dx),
-      _contentDy(details.localPosition.dy),
-    );
-    final clipId = hitTestClip(
-      widget.service.snapshot,
-      local,
-      pixelsPerSecond: _pps,
-    );
-    if (clipId != null) {
-      widget.service.selectClip(clipId);
-      // Clicking the timeline moves key focus here so S / Delete work.
-      FocusScope.of(context).requestFocus(_focusNode);
+  /// Visual order used by Shift+click: top row first, then clip start.
+  List<int> _orderedClipIds(ProjectSnapshot snapshot) {
+    final entries = <({int id, int row, double start})>[];
+    for (var row = 0; row < snapshot.tracks.length; row++) {
+      for (final clip in snapshot.tracks[row].clips) {
+        entries.add((id: clip.id, row: row, start: clip.start));
+      }
+    }
+    entries.sort((a, b) {
+      final byRow = a.row.compareTo(b.row);
+      return byRow != 0 ? byRow : a.start.compareTo(b.start);
+    });
+    return [for (final e in entries) e.id];
+  }
+
+  void _selectRangeTo(int clipId) {
+    final ordered = _orderedClipIds(widget.service.snapshot);
+    final anchor = _selectionAnchorClipId;
+    final anchorIndex = anchor == null ? -1 : ordered.indexOf(anchor);
+    final targetIndex = ordered.indexOf(clipId);
+    if (anchorIndex < 0 || targetIndex < 0) {
+      widget.service.selectClips([clipId], primary: clipId);
+      _selectionAnchorClipId = clipId;
       return;
     }
-    widget.service.selectClip(null);
-    // Ruler or empty space: move the playhead to the clicked position.
-    final seconds = (_contentDx(details.localPosition.dx) / _pps).clamp(
-      0.0,
-      double.infinity,
+    final lo = math.min(anchorIndex, targetIndex);
+    final hi = math.max(anchorIndex, targetIndex);
+    widget.service.selectClips(ordered.sublist(lo, hi + 1), primary: clipId);
+  }
+
+  List<_ClipDrag> _buildDragGroup(Set<int> ids) {
+    final snapshot = widget.service.snapshot;
+    final group = <_ClipDrag>[];
+    for (var row = 0; row < snapshot.tracks.length; row++) {
+      final track = snapshot.tracks[row];
+      for (final clip in track.clips) {
+        if (!ids.contains(clip.id)) continue;
+        group.add(
+          _ClipDrag(
+            clipId: clip.id,
+            start: clip.start,
+            length: clip.length,
+            row: row,
+            trackId: track.id,
+            trackType: track.type,
+          ),
+        );
+      }
+    }
+    return group;
+  }
+
+  /// Target row for every dragged clip. If any clip would leave the project
+  /// or land on a different track type, the whole group stays on its
+  /// original rows (the horizontal move still applies).
+  Map<int, int> _targetRowsFor(int rowDelta) {
+    final snapshot = widget.service.snapshot;
+    final original = <int, int>{for (final g in _dragGroup) g.clipId: g.row};
+    if (rowDelta == 0) return original;
+
+    final target = <int, int>{};
+    for (final g in _dragGroup) {
+      final row = g.row + rowDelta;
+      if (row < 0 || row >= snapshot.tracks.length) return original;
+      if (snapshot.tracks[row].type != g.trackType) return original;
+      target[g.clipId] = row;
+    }
+    return target;
+  }
+
+  void _startAutoScroll() {
+    _autoScrollTimer ??= Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) => _autoScrollTick(),
     );
-    widget.service.seek(seconds);
-    FocusScope.of(context).requestFocus(_focusNode);
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
+  /// Timer-driven edge scroll: while a clip drag or marquee rests near the
+  /// left/right (or top/bottom) border, the view keeps moving and the
+  /// gesture continues under the stationary pointer.
+  void _autoScrollTick() {
+    if (!_marqueeActive && _dragClipId == null) {
+      _stopAutoScroll();
+      return;
+    }
+    final h = _hScroll.hasClients ? _hScroll.position : null;
+    final v = _vScroll.hasClients ? _vScroll.position : null;
+    var stepX = 0.0;
+    var stepY = 0.0;
+
+    if (h != null) {
+      final fromLeft = _pointerViewportX;
+      final fromRight = h.viewportDimension - _pointerViewportX;
+      if (fromLeft < kAutoScrollEdgePx) {
+        stepX = -_edgeSpeed(fromLeft);
+      } else if (fromRight < kAutoScrollEdgePx) {
+        stepX = _edgeSpeed(fromRight);
+      }
+    }
+    if (v != null) {
+      final fromTop = _pointerViewportY;
+      final fromBottom = v.viewportDimension - _pointerViewportY;
+      if (fromTop < kAutoScrollEdgePx) {
+        stepY = -_edgeSpeed(fromTop);
+      } else if (fromBottom < kAutoScrollEdgePx) {
+        stepY = _edgeSpeed(fromBottom);
+      }
+    }
+    if (stepX == 0 && stepY == 0) return;
+
+    final oldX = h?.pixels ?? 0;
+    final oldY = v?.pixels ?? 0;
+    if (h != null && stepX != 0) {
+      _hScroll.jumpTo((oldX + stepX).clamp(0.0, h.maxScrollExtent));
+    }
+    if (v != null && stepY != 0) {
+      _vScroll.jumpTo((oldY + stepY).clamp(0.0, v.maxScrollExtent));
+    }
+    final dx = (h?.pixels ?? oldX) - oldX;
+    final dy = (v?.pixels ?? oldY) - oldY;
+    if (dx == 0 && dy == 0) return;
+
+    if (_marqueeActive) _marqueeMoved = true;
+    _syncGestureAfterScroll();
+  }
+
+  void _syncGestureAfterScroll() {
+    _pointerContentX = _contentDx(_pointerViewportX);
+    _pointerContentY = _contentDy(_pointerViewportY);
+    if (_marqueeActive) {
+      _marqueeCurrentContent = Offset(_pointerContentX, _pointerContentY);
+      _updateMarquee();
+    } else if (_dragClipId != null) {
+      _updateDragPreviewFromContent();
+    }
+  }
+
+  double _edgeSpeed(double distance) {
+    final t = (1 - distance / kAutoScrollEdgePx).clamp(0.0, 1.0);
+    return kAutoScrollMaxStepPx * t;
+  }
+
+  void _updateMarquee() {
+    final start = _marqueeStartContent;
+    final current = _marqueeCurrentContent;
+    if (start == null || current == null) return;
+
+    final rect = Rect.fromPoints(start, current);
+    if ((current - start).distance > kMarqueeThresholdPx) {
+      _marqueeMoved = true;
+    }
+    final hits = clipsIntersecting(
+      widget.service.snapshot,
+      rect,
+      pixelsPerSecond: _pps,
+    );
+    final next = <int>{..._marqueeBase, ...hits};
+    widget.service.selectClips(
+      next,
+      primary: hits.isNotEmpty ? hits.last : (next.isEmpty ? null : next.last),
+    );
+    setState(() {});
+  }
+
+  void _updateDragPreviewFromContent() {
+    if (_dragClipId == null) return;
+    final snapshot = widget.service.snapshot;
+    const minLen = kMinClipSeconds;
+
+    if (_previewFade >= 0) {
+      _previewFade = (_origFade + (_pointerContentX - _panStartContentX) / _pps)
+          .clamp(0.0, _origLength)
+          .toDouble();
+      _didMove = _previewFade != _origFade;
+      setState(() {});
+      return;
+    }
+
+    switch (_dragEdge) {
+      case ClipEdge.move:
+        final rawDelta = (_pointerContentX - _panStartContentX) / _pps;
+        final snapped = snapSeconds(
+          _origStart + rawDelta,
+          bypass: !widget.service.snapToGrid || _snapBypassed,
+          beatSeconds: snapshot.beatSeconds,
+        );
+        var delta = snapped - _origStart;
+        final minStart = _dragGroup.isEmpty
+            ? _origStart
+            : _dragGroup.map((g) => g.start).reduce(math.min);
+        if (delta < -minStart) delta = -minStart;
+
+        final starts = <int, double>{
+          for (final g in _dragGroup) g.clipId: g.start + delta,
+        };
+        if (starts.isEmpty && _dragClipId != null) {
+          starts[_dragClipId!] = _origStart + delta;
+        }
+        final rowDelta =
+            _rowAtContent(_pointerContentY) - _rowAtContent(_panStartContentY);
+        final rows = _targetRowsFor(rowDelta);
+        final rowsChanged = _dragGroup.any(
+          (g) => (rows[g.clipId] ?? g.row) != g.row,
+        );
+        _previewStarts = starts;
+        _previewLengths = const {};
+        _previewRows = rows;
+        _didMove = delta.abs() > 1e-9 || rowsChanged;
+      case ClipEdge.left:
+        // Left-extension limit: AUDIO clips stop where their source starts
+        // (offset); MIDI clips are free to 0. Values stay ABSOLUTE from the
+        // gesture start, so no gesture-slop pixel is lost.
+        final minStart = _dragSourceType == 1
+            ? 0.0
+            : (_origStart - _origOffset > 0 ? _origStart - _origOffset : 0.0);
+        final maxStart = _origStart + _origLength - minLen;
+        var raw = _origStart + (_pointerContentX - _panStartContentX) / _pps;
+        if (widget.service.snapToGrid && !_snapBypassed) {
+          raw = snapSeconds(
+            raw,
+            bypass: false,
+            beatSeconds: snapshot.beatSeconds,
+          );
+        }
+        final previewStart = raw.clamp(minStart, maxStart).toDouble();
+        final previewLength = _origLength + (_origStart - previewStart);
+        _previewStarts = {_dragClipId!: previewStart};
+        _previewLengths = {_dragClipId!: previewLength};
+        _previewRows = {
+          _dragClipId!: _dragGroup.isEmpty
+              ? _rowAtContent(_panStartContentY)
+              : _dragGroup.single.row,
+        };
+        _didMove = previewStart != _origStart || previewLength != _origLength;
+      case ClipEdge.right:
+        final minEnd = _origStart + minLen;
+        var raw =
+            _origStart +
+            _origLength +
+            (_pointerContentX - _panStartContentX) / _pps;
+        if (widget.service.snapToGrid && !_snapBypassed) {
+          raw = snapSeconds(
+            raw,
+            bypass: false,
+            beatSeconds: snapshot.beatSeconds,
+          );
+        }
+        final end = raw
+            .clamp(minEnd, _maxEnd > minEnd ? _maxEnd : minEnd)
+            .toDouble();
+        final previewLength = end - _origStart;
+        _previewStarts = {_dragClipId!: _origStart};
+        _previewLengths = {_dragClipId!: previewLength};
+        _previewRows = {
+          _dragClipId!: _dragGroup.isEmpty
+              ? _rowAtContent(_panStartContentY)
+              : _dragGroup.single.row,
+        };
+        _didMove = previewLength != _origLength;
+    }
+    setState(() {});
+  }
+
+  void _commitGroupMove() {
+    final snapshot = widget.service.snapshot;
+    if (_dragGroup.length > 1) {
+      final ids = <int>[];
+      final trackIds = <int>[];
+      final starts = <double>[];
+      for (final g in _dragGroup) {
+        final row = _previewRows[g.clipId] ?? g.row;
+        if (row < 0 || row >= snapshot.tracks.length) continue;
+        ids.add(g.clipId);
+        trackIds.add(snapshot.tracks[row].id);
+        starts.add(_previewStarts[g.clipId] ?? g.start);
+      }
+      if (ids.isNotEmpty) {
+        widget.service.moveClips(ids, trackIds, starts);
+        final primaryRow =
+            _previewRows[_dragClipId] ?? _rowAtContent(_panStartContentY);
+        if (primaryRow >= 0 && primaryRow < snapshot.tracks.length) {
+          widget.service.selectTrack(snapshot.tracks[primaryRow].id);
+        }
+      }
+      return;
+    }
+
+    final g = _dragGroup.isEmpty ? null : _dragGroup.single;
+    if (g == null) return;
+    final row = _previewRows[g.clipId] ?? g.row;
+    final start = _previewStarts[g.clipId] ?? g.start;
+    if (row != g.row && row >= 0 && row < snapshot.tracks.length) {
+      final targetTrack = snapshot.tracks[row];
+      final error = widget.service.moveClipToTrack(
+        g.clipId,
+        targetTrack.id,
+        start,
+      );
+      if (error == null) widget.service.selectTrack(targetTrack.id);
+    } else {
+      widget.service.moveClip(g.clipId, start);
+    }
+  }
+
+  double _contentSeconds(ProjectSnapshot snapshot) {
+    var seconds = snapshot.durationSeconds < kTimelineWidthSeconds
+        ? kTimelineWidthSeconds
+        : snapshot.durationSeconds + 4;
+    for (final entry in _previewStarts.entries) {
+      final length =
+          _previewLengths[entry.key] ?? _findClip(entry.key)?.length ?? 0;
+      seconds = math.max(seconds, entry.value + length + 4);
+    }
+    return seconds;
   }
 
   /// Right-click on a clip: split at playhead / delete. On empty space the
@@ -299,7 +685,14 @@ class _TimelineViewState extends State<TimelineView> {
       pixelsPerSecond: _pps,
     );
     if (clipId == null) return;
-    widget.service.selectClip(clipId);
+    // Right-clicking a clip that is already part of a group keeps the group
+    // (Delete in the menu then removes the whole selection); otherwise it
+    // becomes the new single selection.
+    if (!widget.service.isClipSelected(clipId)) {
+      widget.service.selectClip(clipId);
+    } else {
+      widget.service.selectClipForDrag(clipId);
+    }
     final clip = _clipById(widget.service.snapshot, clipId);
     final midi = clip?.isMidi ?? false;
     final overlay =
@@ -389,14 +782,23 @@ class _TimelineViewState extends State<TimelineView> {
   }
 
   // Raw pointer interaction (no gesture arena): the Listener receives every
-  // event, so clip drags are deterministic regardless of what the (inert)
-  // scrollable's recognizer does with the arena. Begin on DOWN, update on
-  // MOVE, commit on UP — absolute positioning from the press point.
+  // event, so clip drags/marquees are deterministic regardless of what the
+  // (inert) scrollable's recognizer does with the arena.
   void _onPointerDown(PointerDownEvent d) {
     final snapshot = widget.service.snapshot;
     if (d.buttons != kPrimaryButton) return;
-    // _panStartDx/_pressHit were captured by the raw onPointerDown above
-    // (this IS that handler — begin the drag here, pre-slop).
+
+    _pointerViewportX = d.localPosition.dx;
+    _pointerViewportY = d.localPosition.dy;
+    _pointerContentX = _contentDx(_pointerViewportX);
+    _pointerContentY = _contentDy(_pointerViewportY);
+    _panStartContentX = _pointerContentX;
+    _panStartContentY = _pointerContentY;
+    FocusScope.of(context).requestFocus(_focusNode);
+
+    final keyboard = HardwareKeyboard.instance;
+    final additive = keyboard.isShiftPressed || keyboard.isMetaPressed;
+    final contentPoint = Offset(_pointerContentX, _pointerContentY);
 
     // Fade drags live on the corners ONLY with Alt held — the corners are
     // the trim handle (Mixcraft-style); a plain corner grab must trim, not
@@ -405,10 +807,7 @@ class _TimelineViewState extends State<TimelineView> {
         ? hitTestFadeHandle(
             snapshot,
             widget.service.selectedClipId,
-            Offset(
-              _contentDx(d.localPosition.dx),
-              _contentDy(d.localPosition.dy),
-            ),
+            contentPoint,
             pixelsPerSecond: _pps,
           )
         : null;
@@ -418,116 +817,148 @@ class _TimelineViewState extends State<TimelineView> {
         _dragClipId = clip.id;
         _dragEdge = ClipEdge.move;
         _dragFadeIn = fadeHit.$2;
+        _dragSourceType = clip.isMidi ? 1 : 0;
+        _origStart = clip.start;
+        _origLength = clip.length;
+        _origOffset = clip.offset;
+        _maxEnd = clip.start + clip.maxLength;
         _origFade = _dragFadeIn ? clip.fadeIn : clip.fadeOut;
         _previewFade = _origFade;
+        _dragGroup = _buildDragGroup({clip.id});
+        _previewStarts = const {};
+        _previewLengths = const {};
+        _previewRows = const {};
         _didMove = false;
+        _startAutoScroll();
         return;
       }
     }
 
     final hit = _pressHit;
     _pressHit = null;
+
     if (hit == null) {
-      widget.service.selectClip(null);
+      // Ruler click: seek on release. Empty lane: rubber-band selection.
+      if (_pointerContentY < kRulerHeight) {
+        _pendingSeekContentX = _pointerContentX;
+        if (!additive) {
+          widget.service.selectClip(null);
+          _selectionAnchorClipId = null;
+        }
+        return;
+      }
+
+      if (!additive) {
+        widget.service.selectClip(null);
+        _selectionAnchorClipId = null;
+      }
+      _marqueeActive = true;
+      _marqueeMoved = false;
+      _marqueeBase = additive ? widget.service.selectedClipIds : <int>{};
+      _marqueeStartContent = contentPoint;
+      _marqueeCurrentContent = contentPoint;
+      _startAutoScroll();
+      setState(() {});
       return;
     }
-    widget.service.selectClip(hit.clip.id);
+
+    // Additive click: Shift extends a range, ⌘ toggles one clip.
+    if (additive) {
+      if (keyboard.isMetaPressed) {
+        widget.service.toggleClipSelection(hit.clip.id);
+        if (widget.service.isClipSelected(hit.clip.id)) {
+          _selectionAnchorClipId = hit.clip.id;
+        }
+      } else {
+        _selectRangeTo(hit.clip.id);
+        _selectionAnchorClipId ??= hit.clip.id;
+      }
+      setState(() {});
+      return;
+    }
+
+    if (!widget.service.isClipSelected(hit.clip.id)) {
+      widget.service.selectClip(hit.clip.id);
+    } else {
+      widget.service.selectClipForDrag(hit.clip.id);
+    }
+    _selectionAnchorClipId = hit.clip.id;
+
     _dragClipId = hit.clip.id;
     _dragEdge = hit.edge;
     _dragFadeIn = false;
-    _dragTargetRow = _rowAt(d.localPosition.dy);
     _dragSourceType = hit.clip.isMidi ? 1 : 0;
     _origStart = hit.clip.start;
     _origLength = hit.clip.length;
     _origOffset = hit.clip.offset;
     _maxEnd = hit.clip.start + hit.clip.maxLength;
-    _previewStart = hit.clip.start;
-    _previewLength = hit.clip.length;
     _previewFade = -1;
     _didMove = false;
+
+    // Body drags move the whole selection; edges/fades always edit one clip.
+    final ids = hit.edge == ClipEdge.move
+        ? widget.service.selectedClipIds
+        : <int>{hit.clip.id};
+    _dragGroup = _buildDragGroup(ids);
+    _previewStarts = {for (final g in _dragGroup) g.clipId: g.start};
+    _previewLengths = const {};
+    _previewRows = {for (final g in _dragGroup) g.clipId: g.row};
+    _startAutoScroll();
+    setState(() {});
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    if (_dragClipId == null) return;
     if (event.buttons & kPrimaryButton == 0) return;
-    final snapshot = widget.service.snapshot;
-    const minLen = kMinClipSeconds;
+    _pointerViewportX = event.localPosition.dx;
+    _pointerViewportY = event.localPosition.dy;
+    _pointerContentX = _contentDx(_pointerViewportX);
+    _pointerContentY = _contentDy(_pointerViewportY);
 
-    if (_previewFade >= 0) {
-      _previewFade = (_origFade + (event.localPosition.dx - _panStartDx) / _pps)
-          .clamp(0.0, _origLength)
-          .toDouble();
-      _didMove = _previewFade != _origFade;
+    if (_marqueeActive) {
+      _marqueeCurrentContent = Offset(_pointerContentX, _pointerContentY);
+      _updateMarquee();
+      return;
+    }
+    if (_dragClipId == null) return;
+    _updateDragPreviewFromContent();
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    _stopAutoScroll();
+
+    final pendingSeek = _pendingSeekContentX;
+    if (pendingSeek != null) {
+      _pendingSeekContentX = null;
+      widget.service.seek((pendingSeek / _pps).clamp(0.0, double.infinity));
+      _resetGesture();
       setState(() {});
       return;
     }
 
-    switch (_dragEdge) {
-      case ClipEdge.move:
-        // Absolute positioning from the gesture start: no pixel loss from
-        // gesture slop, and the pointer's row drives cross-track moves.
-        _previewStart = snapSeconds(
-          _origStart + (event.localPosition.dx - _panStartDx) / _pps,
-          bypass: !widget.service.snapToGrid || _snapBypassed,
-          beatSeconds: snapshot.beatSeconds,
-        );
-        _previewStart = _previewStart.clamp(0.0, double.infinity);
-        _previewLength = _origLength;
-        final row = _rowAt(event.localPosition.dy);
-        if (row >= 0 && row < snapshot.tracks.length) {
-          final target = snapshot.tracks[row];
-          if (target.type == _dragSourceType) _dragTargetRow = row;
-        }
-      case ClipEdge.left:
-        // Trims snap to the grid when "Rejilla" is on (⌘ bypasses); free
-        // otherwise. ABSOLUTE from the gesture start.
-        // Left-extension limit: AUDIO clips stop where their source starts
-        // (offset); MIDI clips are free to 0 — their hidden notes come back
-        // when the border is extended (the old clamp locked the border at
-        // the current start forever, so a left trim could never be undone
-        // by dragging outward).
-        final minStart = _dragSourceType == 1
-            ? 0.0
-            : (_origStart - _origOffset > 0 ? _origStart - _origOffset : 0.0);
-        final maxStart = _origStart + _origLength - minLen;
-        var raw = _origStart + (event.localPosition.dx - _panStartDx) / _pps;
-        if (widget.service.snapToGrid && !_snapBypassed) {
-          raw = snapSeconds(
-            raw,
-            bypass: false,
-            beatSeconds: snapshot.beatSeconds,
-          );
-        }
-        _previewStart = raw.clamp(minStart, maxStart).toDouble();
-        _previewLength = _origLength + (_origStart - _previewStart);
-      case ClipEdge.right:
-        final minEnd = _origStart + minLen;
-        var raw =
-            _origStart +
-            _origLength +
-            (event.localPosition.dx - _panStartDx) / _pps;
-        if (widget.service.snapToGrid && !_snapBypassed) {
-          raw = snapSeconds(
-            raw,
-            bypass: false,
-            beatSeconds: snapshot.beatSeconds,
-          );
-        }
-        final end = raw
-            .clamp(minEnd, _maxEnd > minEnd ? _maxEnd : minEnd)
-            .toDouble();
-        _previewStart = _origStart;
-        _previewLength = end - _origStart;
-    }
-    if (_previewStart != _origStart || _previewLength != _origLength) {
-      _didMove = true;
-    }
-    setState(() {});
-  }
+    if (_marqueeActive) {
+      final moved = _marqueeMoved;
+      _marqueeActive = false;
+      _marqueeStartContent = null;
+      _marqueeCurrentContent = null;
+      _marqueeBase = const {};
+      _marqueeMoved = false;
 
-  void _onPointerUp(PointerUpEvent event) {
+      if (!moved) {
+        // Plain click on empty space: deselect (unless additive) and seek.
+        if (!HardwareKeyboard.instance.isShiftPressed &&
+            !HardwareKeyboard.instance.isMetaPressed) {
+          widget.service.selectClip(null);
+          _selectionAnchorClipId = null;
+        }
+        widget.service.seek(
+          (_pointerContentX / _pps).clamp(0.0, double.infinity),
+        );
+      }
+      setState(() {});
+      return;
+    }
+
     final clipId = _dragClipId;
-    final snapshot = widget.service.snapshot;
     if (clipId != null && _didMove) {
       if (_previewFade >= 0) {
         // Fade drag: one command, one undo entry.
@@ -542,60 +973,42 @@ class _TimelineViewState extends State<TimelineView> {
       } else {
         switch (_dragEdge) {
           case ClipEdge.move:
-            final originalRow = _rowAtOfClip(clipId);
-            if (_dragTargetRow >= 0 &&
-                _dragTargetRow < snapshot.tracks.length &&
-                _dragTargetRow != originalRow) {
-              final targetTrack = snapshot.tracks[_dragTargetRow];
-              final error = widget.service.moveClipToTrack(
-                clipId,
-                targetTrack.id,
-                _previewStart,
-              );
-              if (error == null) {
-                widget.service.selectTrack(targetTrack.id);
-              }
-            } else {
-              widget.service.moveClip(clipId, _previewStart);
-            }
+            _commitGroupMove();
           case ClipEdge.left || ClipEdge.right:
+            final start = _previewStarts[clipId] ?? _origStart;
+            final length = _previewLengths[clipId] ?? _origLength;
             // Offset grows when the left border moves INWARD (the source
-            // window slides forward) — the old inverted sign made the
-            // engine clamp it to 0 and the whole content translated.
-            final newOffset = _origOffset + (_previewStart - _origStart);
-            widget.service.trimClip(
-              clipId,
-              _previewStart,
-              newOffset,
-              _previewLength,
-            );
+            // window slides forward).
+            final newOffset = _origOffset + (start - _origStart);
+            widget.service.trimClip(clipId, start, newOffset, length);
         }
       }
     }
-    _dragClipId = null;
-    _didMove = false;
-    _dragTargetRow = -1;
-    _previewFade = -1;
+    _resetGesture();
     setState(() {});
   }
 
   void _onPointerCancel(PointerCancelEvent event) {
-    _dragClipId = null;
-    _didMove = false;
-    _dragTargetRow = -1;
-    _previewFade = -1;
-    _pressHit = null;
+    _stopAutoScroll();
+    _marqueeActive = false;
+    _marqueeMoved = false;
+    _marqueeStartContent = null;
+    _marqueeCurrentContent = null;
+    _marqueeBase = const {};
+    _pendingSeekContentX = null;
+    _resetGesture();
     setState(() {});
   }
 
-  int _rowAtOfClip(int clipId) {
-    final tracks = widget.service.snapshot.tracks;
-    for (var i = 0; i < tracks.length; i++) {
-      for (final c in tracks[i].clips) {
-        if (c.id == clipId) return i;
-      }
-    }
-    return -1;
+  void _resetGesture() {
+    _dragClipId = null;
+    _didMove = false;
+    _previewFade = -1;
+    _dragGroup = const [];
+    _previewStarts = const {};
+    _previewLengths = const {};
+    _previewRows = const {};
+    _pressHit = null;
   }
 
   /// Opens the native macOS file picker and imports the selected audio.
@@ -614,9 +1027,23 @@ class _TimelineViewState extends State<TimelineView> {
   void _onKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent) return;
     final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.keyA &&
+        HardwareKeyboard.instance.isMetaPressed) {
+      widget.service.selectAllClips();
+      _selectionAnchorClipId = widget.service.selectedClipId;
+      return;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      widget.service.clearClipSelection();
+      _selectionAnchorClipId = null;
+      return;
+    }
     if (key == LogicalKeyboardKey.delete ||
         key == LogicalKeyboardKey.backspace) {
       widget.service.deleteSelectedClip();
+      _selectionAnchorClipId = null;
+      return;
     }
     if (key == LogicalKeyboardKey.keyS) {
       final clipId = widget.service.selectedClipId;
@@ -628,6 +1055,7 @@ class _TimelineViewState extends State<TimelineView> {
 
   @override
   void dispose() {
+    _stopAutoScroll();
     widget.frameTick.removeListener(_followPlayhead);
     _focusNode.dispose();
     _hScroll.dispose();
@@ -642,10 +1070,9 @@ class _TimelineViewState extends State<TimelineView> {
       animation: widget.service,
       builder: (context, _) {
         final snapshot = widget.service.snapshot;
-        final seconds = snapshot.durationSeconds < kTimelineWidthSeconds
-            ? kTimelineWidthSeconds
-            : snapshot.durationSeconds + 4;
-        final width = seconds * _pps;
+        // Include the live preview so a group dragged past the current
+        // project end can keep scrolling instead of hitting the old edge.
+        final width = _contentSeconds(snapshot) * _pps;
         final rowsHeight = snapshot.tracks.length * kTrackRowHeight;
 
         return KeyboardListener(
@@ -803,7 +1230,6 @@ class _TimelineViewState extends State<TimelineView> {
                           // after the gesture slop (~9 px), which shoves a real
                           // edge grab out of the hot zone.
                           onPointerDown: (d) {
-                            _panStartDx = d.localPosition.dx;
                             _pressHit = hitTestClipEdge(
                               widget.service.snapshot,
                               Offset(
@@ -818,7 +1244,6 @@ class _TimelineViewState extends State<TimelineView> {
                           onPointerUp: _onPointerUp,
                           onPointerCancel: _onPointerCancel,
                           child: GestureDetector(
-                            onTapUp: _onTapUp,
                             onSecondaryTapUp: _onSecondaryTapUp,
                             child: Container(
                               color: const Color(0xFF16171B),
@@ -870,7 +1295,10 @@ class _TimelineViewState extends State<TimelineView> {
                                                 ),
                                                 painter: _TimelinePainter(
                                                   snapshot: snapshot,
-                                                  selectedClipId: widget
+                                                  selectedClipIds: widget
+                                                      .service
+                                                      .selectedClipIds,
+                                                  primaryClipId: widget
                                                       .service
                                                       .selectedClipId,
                                                   dragClipId: _dragClipId,
@@ -878,10 +1306,23 @@ class _TimelineViewState extends State<TimelineView> {
                                                   hoverIsLeft:
                                                       _hoverEdge ==
                                                       ClipEdge.left,
-                                                  previewStart: _previewStart,
-                                                  previewLength: _previewLength,
+                                                  previewStarts: _previewStarts,
+                                                  previewLengths:
+                                                      _previewLengths,
+                                                  previewRows: _previewRows,
                                                   previewFade: _previewFade,
                                                   previewFadeIsIn: _dragFadeIn,
+                                                  marqueeRect:
+                                                      _marqueeMoved &&
+                                                          _marqueeStartContent !=
+                                                              null &&
+                                                          _marqueeCurrentContent !=
+                                                              null
+                                                      ? Rect.fromPoints(
+                                                          _marqueeStartContent!,
+                                                          _marqueeCurrentContent!,
+                                                        )
+                                                      : null,
                                                   pixelsPerSecond: _pps,
                                                   barSeconds:
                                                       snapshot.barSeconds,
@@ -1394,14 +1835,17 @@ class _MSButton extends StatelessWidget {
 class _TimelinePainter extends CustomPainter {
   _TimelinePainter({
     required this.snapshot,
-    required this.selectedClipId,
+    required this.selectedClipIds,
+    required this.primaryClipId,
     required this.dragClipId,
     this.hoverClipId,
     this.hoverIsLeft = false,
-    required this.previewStart,
-    required this.previewLength,
+    this.previewStarts = const {},
+    this.previewLengths = const {},
+    this.previewRows = const {},
     required this.previewFade,
     required this.previewFadeIsIn,
+    this.marqueeRect,
     required this.pixelsPerSecond,
     required this.barSeconds,
     required this.peaksFor,
@@ -1413,14 +1857,17 @@ class _TimelinePainter extends CustomPainter {
   final Listenable? repaint;
 
   final ProjectSnapshot snapshot;
-  final int? selectedClipId;
+  final Set<int> selectedClipIds;
+  final int? primaryClipId;
   final int? dragClipId;
   final int? hoverClipId; // clip edge under the pointer (trim affordance)
   final bool hoverIsLeft;
-  final double previewStart;
-  final double previewLength;
+  final Map<int, double> previewStarts;
+  final Map<int, double> previewLengths;
+  final Map<int, int> previewRows;
   final double previewFade; // >= 0 while a fade is being dragged
   final bool previewFadeIsIn;
+  final Rect? marqueeRect;
   final double pixelsPerSecond;
   final double barSeconds;
   final PeakData? Function(ClipInfo clip) peaksFor;
@@ -1475,8 +1922,9 @@ class _TimelinePainter extends CustomPainter {
       Offset(0, kRulerHeight) & Size(size.width, size.height - kRulerHeight),
     );
     canvas.translate(0, -vOffset);
+    // Row backgrounds first; clips are then drawn by TARGET row so a
+    // cross-track drag previews in its destination lane.
     for (var i = 0; i < snapshot.tracks.length; i++) {
-      final track = snapshot.tracks[i];
       final top = kRulerHeight + i * kTrackRowHeight;
       final rowColor = i.isEven
           ? const Color(0xFF1B1D22)
@@ -1490,136 +1938,152 @@ class _TimelinePainter extends CustomPainter {
         Offset(size.width, top + kTrackRowHeight),
         Paint()..color = const Color(0xFF23262E),
       );
+    }
 
-      final color = trackColor(track.colorIndex);
+    final items = <_ClipDraw>[];
+    var order = 0;
+    for (var i = 0; i < snapshot.tracks.length; i++) {
+      final track = snapshot.tracks[i];
       for (final clip in track.clips) {
-        final dragging = clip.id == dragClipId;
-        final start = dragging ? previewStart : clip.start;
-        final length = dragging ? previewLength : clip.length;
-        final left = start * pixelsPerSecond;
-        final clipWidth = (length * pixelsPerSecond)
-            .clamp(4.0, size.width)
-            .toDouble();
-        final rect = Rect.fromLTWH(
-          left,
-          top + 22,
-          clipWidth,
-          kTrackRowHeight - 32,
+        final row = previewRows[clip.id] ?? i;
+        if (row < 0 || row >= snapshot.tracks.length) continue;
+        items.add(
+          _ClipDraw(clip: clip, track: track, row: row, order: order++),
         );
-        final rounded = RRect.fromRectAndRadius(rect, const Radius.circular(4));
-        canvas.drawRRect(
-          rounded,
-          Paint()..color = color.withValues(alpha: 0.82),
+      }
+    }
+    items.sort((a, b) {
+      final byRow = a.row.compareTo(b.row);
+      return byRow != 0 ? byRow : a.order.compareTo(b.order);
+    });
+
+    for (final item in items) {
+      final clip = item.clip;
+      final start = previewStarts[clip.id] ?? clip.start;
+      final length = previewLengths[clip.id] ?? clip.length;
+      final top = kRulerHeight + item.row * kTrackRowHeight;
+      final color = trackColor(item.track.colorIndex);
+      final dragging =
+          previewStarts.containsKey(clip.id) ||
+          (clip.id == dragClipId && previewFade >= 0);
+      final left = start * pixelsPerSecond;
+      final clipWidth = (length * pixelsPerSecond)
+          .clamp(4.0, size.width)
+          .toDouble();
+      final rect = Rect.fromLTWH(
+        left,
+        top + 22,
+        clipWidth,
+        kTrackRowHeight - 32,
+      );
+      final rounded = RRect.fromRectAndRadius(rect, const Radius.circular(4));
+      canvas.drawRRect(rounded, Paint()..color = color.withValues(alpha: 0.82));
+
+      // Content: waveform for audio clips, mini piano-roll for MIDI.
+      // Clipped to the clip rect: a TRIMMED clip must not paint its notes
+      // beyond the (shortened) end — that read as "the trim did nothing,
+      // the midi is still there".
+      canvas.save();
+      canvas.clipRect(rounded.outerRect);
+      if (clip.isMidi) {
+        var minP = 127;
+        var maxP = 0;
+        for (final note in clip.notes) {
+          minP = math.min(minP, note.pitch);
+          maxP = math.max(maxP, note.pitch);
+        }
+        if (minP > maxP) {
+          minP = 48;
+          maxP = 84;
+        }
+        final range = math.max(1, maxP - minP + 1);
+        final slot = rect.height / range;
+        final notePaint = Paint()..color = Colors.white.withValues(alpha: 0.8);
+        for (final note in clip.notes) {
+          final nx = left + note.start * pixelsPerSecond;
+          final nw = (note.length * pixelsPerSecond).clamp(2.0, clipWidth);
+          final ny = rect.bottom - (note.pitch - minP + 1) * slot;
+          canvas.drawRect(
+            Rect.fromLTWH(nx, ny, nw, math.max(2.0, slot)),
+            notePaint,
+          );
+        }
+      } else {
+        final peaks = peaksFor(clip);
+        if (peaks != null) {
+          final wavePaint = Paint()
+            ..color = Colors.white.withValues(alpha: 0.55)
+            ..strokeWidth = 1;
+          final center = rect.center.dy;
+          final half = rect.height / 2 - 1;
+          final n = peaks.mins.length;
+          for (var px = 0; px < n; px++) {
+            final x = left + px + 0.5;
+            if (x > left + clipWidth) break;
+            final y1 = center - (peaks.maxs[px] * half).clamp(-half, half);
+            final y2 = center - (peaks.mins[px] * half).clamp(-half, half);
+            canvas.drawLine(Offset(x, y1), Offset(x, y2), wavePaint);
+          }
+        }
+      }
+      canvas.restore();
+
+      // Fade wedges (dark overlay triangle from full height to zero).
+      final fadeIn = dragging && previewFade >= 0 && previewFadeIsIn
+          ? previewFade
+          : clip.fadeIn;
+      final fadeOut = dragging && previewFade >= 0 && !previewFadeIsIn
+          ? previewFade
+          : clip.fadeOut;
+      final fadePaint = Paint()..color = const Color(0xE616171B);
+      if (fadeIn > 0) {
+        final fx = (fadeIn * pixelsPerSecond).clamp(0.0, clipWidth);
+        canvas.drawPath(
+          Path()
+            ..moveTo(left, rect.bottom)
+            ..lineTo(left, rect.top)
+            ..lineTo(left + fx, rect.top)
+            ..close(),
+          fadePaint,
         );
-
-        // Content: waveform for audio clips, mini piano-roll for MIDI.
-        // Clipped to the clip rect: a TRIMMED clip must not paint its notes
-        // beyond the (shortened) end — that read as "the trim did nothing,
-        // the midi is still there".
-        canvas.save();
-        canvas.clipRect(rounded.outerRect);
-        if (clip.isMidi) {
-          var minP = 127;
-          var maxP = 0;
-          for (final note in clip.notes) {
-            minP = math.min(minP, note.pitch);
-            maxP = math.max(maxP, note.pitch);
-          }
-          if (minP > maxP) {
-            minP = 48;
-            maxP = 84;
-          }
-          final range = math.max(1, maxP - minP + 1);
-          final slot = rect.height / range;
-          final notePaint = Paint()
-            ..color = Colors.white.withValues(alpha: 0.8);
-          for (final note in clip.notes) {
-            final nx = left + note.start * pixelsPerSecond;
-            final nw = (note.length * pixelsPerSecond).clamp(2.0, clipWidth);
-            final ny = rect.bottom - (note.pitch - minP + 1) * slot;
-            canvas.drawRect(
-              Rect.fromLTWH(nx, ny, nw, math.max(2.0, slot)),
-              notePaint,
-            );
-          }
-        } else {
-          final peaks = peaksFor(clip);
-          if (peaks != null) {
-            final wavePaint = Paint()
-              ..color = Colors.white.withValues(alpha: 0.55)
-              ..strokeWidth = 1;
-            final center = rect.center.dy;
-            final half = rect.height / 2 - 1;
-            final n = peaks.mins.length;
-            for (var px = 0; px < n; px++) {
-              final x = left + px + 0.5;
-              if (x > left + clipWidth) break;
-              final y1 = center - (peaks.maxs[px] * half).clamp(-half, half);
-              final y2 = center - (peaks.mins[px] * half).clamp(-half, half);
-              canvas.drawLine(Offset(x, y1), Offset(x, y2), wavePaint);
-            }
-          }
-        }
-        canvas.restore();
-
-        // Fade wedges (dark overlay triangle from full height to zero).
-        final fadeIn = dragging && previewFade >= 0 && previewFadeIsIn
-            ? previewFade
-            : clip.fadeIn;
-        final fadeOut = dragging && previewFade >= 0 && !previewFadeIsIn
-            ? previewFade
-            : clip.fadeOut;
-        final fadePaint = Paint()..color = const Color(0xE616171B);
-        if (fadeIn > 0) {
-          final fx = (fadeIn * pixelsPerSecond).clamp(0.0, clipWidth);
-          canvas.drawPath(
-            Path()
-              ..moveTo(left, rect.bottom)
-              ..lineTo(left, rect.top)
-              ..lineTo(left + fx, rect.top)
-              ..close(),
-            fadePaint,
-          );
-        }
-        if (fadeOut > 0) {
-          final fx = (fadeOut * pixelsPerSecond).clamp(0.0, clipWidth);
-          canvas.drawPath(
-            Path()
-              ..moveTo(left + clipWidth, rect.bottom)
-              ..lineTo(left + clipWidth, rect.top)
-              ..lineTo(left + clipWidth - fx, rect.top)
-              ..close(),
-            fadePaint,
-          );
-        }
-
-        final isSelected = clip.id == selectedClipId || dragging;
-        canvas.drawRRect(
-          rounded,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = isSelected ? 2 : 1
-            ..color = isSelected ? _accent : color,
+      }
+      if (fadeOut > 0) {
+        final fx = (fadeOut * pixelsPerSecond).clamp(0.0, clipWidth);
+        canvas.drawPath(
+          Path()
+            ..moveTo(left + clipWidth, rect.bottom)
+            ..lineTo(left + clipWidth, rect.top)
+            ..lineTo(left + clipWidth - fx, rect.top)
+            ..close(),
+          fadePaint,
         );
+      }
 
-        if (isSelected) {
-          // Trim grips.
-          final grip = Paint()
-            ..color = _accent.withValues(alpha: 0.9)
-            ..strokeWidth = 2;
-          canvas.drawLine(
-            Offset(left + 3, top + 26),
-            Offset(left + 3, top + kTrackRowHeight - 10),
-            grip,
-          );
-          canvas.drawLine(
-            Offset(left + clipWidth - 3, top + 26),
-            Offset(left + clipWidth - 3, top + kTrackRowHeight - 10),
-            grip,
-          );
-          // Fade handles: painted nothing — corners are the TRIM handle;
-          // fades are Alt+drag on the corners (§7.3, Mixcraft-style trim).
-        }
+      final isSelected = selectedClipIds.contains(clip.id) || dragging;
+      canvas.drawRRect(
+        rounded,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = isSelected ? 2 : 1
+          ..color = isSelected ? _accent : color,
+      );
+
+      if (clip.id == primaryClipId) {
+        // Trim grips on the primary clip only: with a group selected the
+        // accent border marks the rest without cluttering every clip.
+        final grip = Paint()
+          ..color = _accent.withValues(alpha: 0.9)
+          ..strokeWidth = 2;
+        canvas.drawLine(
+          Offset(left + 3, top + 26),
+          Offset(left + 3, top + kTrackRowHeight - 10),
+          grip,
+        );
+        canvas.drawLine(
+          Offset(left + clipWidth - 3, top + 26),
+          Offset(left + clipWidth - 3, top + kTrackRowHeight - 10),
+          grip,
+        );
       }
     }
 
@@ -1641,20 +2105,40 @@ class _TimelinePainter extends CustomPainter {
       }
     }
 
+    // Rubber-band rectangle (content coordinates; the canvas is already
+    // translated by the vertical scroll and clipped to the lane area).
+    final marquee = marqueeRect;
+    if (marquee != null && marquee.width > 0 && marquee.height > 0) {
+      canvas.drawRect(
+        marquee,
+        Paint()..color = _accent.withValues(alpha: 0.12),
+      );
+      canvas.drawRect(
+        marquee,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = _accent.withValues(alpha: 0.9),
+      );
+    }
+
     canvas.restore(); // end of the translated (scrolling) lane area
   }
 
   @override
   bool shouldRepaint(_TimelinePainter oldDelegate) =>
       oldDelegate.snapshot != snapshot ||
-      oldDelegate.selectedClipId != selectedClipId ||
+      !setEquals(oldDelegate.selectedClipIds, selectedClipIds) ||
+      oldDelegate.primaryClipId != primaryClipId ||
       oldDelegate.dragClipId != dragClipId ||
       oldDelegate.hoverClipId != hoverClipId ||
       oldDelegate.hoverIsLeft != hoverIsLeft ||
-      oldDelegate.previewStart != previewStart ||
-      oldDelegate.previewLength != previewLength ||
+      !mapEquals(oldDelegate.previewStarts, previewStarts) ||
+      !mapEquals(oldDelegate.previewLengths, previewLengths) ||
+      !mapEquals(oldDelegate.previewRows, previewRows) ||
       oldDelegate.previewFade != previewFade ||
       oldDelegate.previewFadeIsIn != previewFadeIsIn ||
+      oldDelegate.marqueeRect != marqueeRect ||
       oldDelegate.vOffset != vOffset ||
       oldDelegate.pixelsPerSecond != pixelsPerSecond;
 }

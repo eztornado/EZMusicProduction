@@ -1,6 +1,7 @@
 #include <cadence/cadence_engine.h>
 
 #include <cmath>
+#include <vector>
 
 #include "cadence/engine.hpp"
 
@@ -1096,8 +1097,48 @@ CadenceResult cadence_engine_move_clip_to_track(CadenceEngine* engine, CadenceCl
                ? kCadenceErrorNotFound : kCadenceOk;
 }
 
+CadenceResult cadence_engine_move_clips(CadenceEngine* engine,
+                                        const CadenceClipId* clip_ids,
+                                        const CadenceTrackId* track_ids,
+                                        const double* start_seconds,
+                                        int count)
+{
+    if (engine == nullptr || clip_ids == nullptr || track_ids == nullptr
+        || start_seconds == nullptr)
+        return kCadenceErrorNullArgument;
+    if (count < 0)
+        return kCadenceErrorInvalidArgument;
+    if (count == 0)
+        return kCadenceOk;
+    for (int i = 0; i < count; ++i)
+        if (! std::isfinite(start_seconds[i]))
+            return kCadenceErrorInvalidArgument;
+
+    const std::vector<cadence::ClipId> clipIds(clip_ids, clip_ids + count);
+    const std::vector<cadence::TrackId> trackIds(track_ids, track_ids + count);
+    const std::vector<double> starts(start_seconds, start_seconds + count);
+    return asEngine(engine)->moveClips(clipIds, trackIds, starts).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
+CadenceResult cadence_engine_remove_clips(CadenceEngine* engine,
+                                          const CadenceClipId* clip_ids,
+                                          int count)
+{
+    if (engine == nullptr || clip_ids == nullptr)
+        return kCadenceErrorNullArgument;
+    if (count < 0)
+        return kCadenceErrorInvalidArgument;
+    if (count == 0)
+        return kCadenceOk;
+
+    const std::vector<cadence::ClipId> clipIds(clip_ids, clip_ids + count);
+    return asEngine(engine)->removeClips(clipIds).failed()
+               ? kCadenceErrorNotFound : kCadenceOk;
+}
+
 CadenceResult cadence_engine_split_clip(CadenceEngine* engine, CadenceClipId clip_id,
-                                        double time_seconds)
+                                       double time_seconds)
 {
     if (engine == nullptr)
         return kCadenceErrorNullArgument;

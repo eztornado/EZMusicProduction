@@ -199,6 +199,17 @@ CadenceResult cadence_engine_set_clip_fades(CadenceEngine* engine, CadenceClipId
                                             double fade_in_seconds, double fade_out_seconds);
 CadenceResult cadence_engine_move_clip_to_track(CadenceEngine* engine, CadenceClipId clip_id,
                                                 CadenceTrackId track_id, double start_seconds);
+/* Group edits (timeline multi-selection): all clips are moved/removed as ONE
+   undo entry. Arrays must have `count` elements; track_ids[i] is the target
+   track for clip_ids[i]. */
+CadenceResult cadence_engine_move_clips(CadenceEngine* engine,
+                                        const CadenceClipId* clip_ids,
+                                        const CadenceTrackId* track_ids,
+                                        const double* start_seconds,
+                                        int count);
+CadenceResult cadence_engine_remove_clips(CadenceEngine* engine,
+                                          const CadenceClipId* clip_ids,
+                                          int count);
 CadenceResult cadence_engine_split_clip(CadenceEngine* engine, CadenceClipId clip_id,
                                         double time_seconds);
 

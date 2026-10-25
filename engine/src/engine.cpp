@@ -3702,6 +3702,41 @@ juce::Result Engine::removeClip(ClipId clipId)
     });
 }
 
+juce::Result Engine::removeClips(const std::vector<ClipId>& clipIds)
+{
+    if (clipIds.empty())
+        return juce::Result::ok();
+
+    return editProject([&] (Project& project) {
+        // Validate first: a missing id must not leave a half-applied edit.
+        for (const auto clipId : clipIds)
+        {
+            if (project.findClip(clipId) == nullptr)
+            {
+                fail("clip not found: " + juce::String((int) clipId));
+                return false;
+            }
+        }
+
+        for (const auto clipId : clipIds)
+        {
+            for (auto& track : project.tracks)
+            {
+                auto& clips = track.clips;
+                const auto it = std::find_if(clips.begin(), clips.end(),
+                                             [clipId] (const Clip& c)
+                                             { return c.id == clipId; });
+                if (it != clips.end())
+                {
+                    clips.erase(it);
+                    break;
+                }
+            }
+        }
+        return true;
+    });
+}
+
 juce::Result Engine::setClipStart(ClipId clipId, double seconds)
 {
     return editProject([&] (Project& project) {
@@ -3831,6 +3866,88 @@ juce::Result Engine::moveClipToTrack(ClipId clipId, TrackId targetTrackId,
                                    [clipId](const Clip& c) { return c.id == clipId; }),
                     clips.end());
         target->clips.push_back(std::move(moved));
+        return true;
+    });
+}
+
+juce::Result Engine::moveClips(const std::vector<ClipId>& clipIds,
+                               const std::vector<TrackId>& targetTrackIds,
+                               const std::vector<double>& startSeconds)
+{
+    if (clipIds.size() != targetTrackIds.size()
+        || clipIds.size() != startSeconds.size())
+        return juce::Result::fail("moveClips: array size mismatch");
+
+    if (clipIds.empty())
+        return juce::Result::ok();
+
+    return editProject([&] (Project& project) {
+        struct Move
+        {
+            Clip clip;
+            TrackId sourceTrackId = 0;
+            TrackId targetTrackId = 0;
+            double startSeconds = 0.0;
+        };
+
+        std::vector<Move> moves;
+        moves.reserve(clipIds.size());
+
+        // Validate the whole group before touching the project.
+        for (size_t i = 0; i < clipIds.size(); ++i)
+        {
+            const Track* sourceTrack = nullptr;
+            const Clip* source = project.findClip(clipIds[i], &sourceTrack);
+            Track* target = project.findTrack(targetTrackIds[i]);
+            if (source == nullptr || sourceTrack == nullptr || target == nullptr)
+            {
+                fail("clip or target track not found");
+                return false;
+            }
+            if (! std::isfinite(startSeconds[i]))
+            {
+                fail("invalid clip start");
+                return false;
+            }
+            if (target->id != sourceTrack->id && target->type != sourceTrack->type)
+            {
+                fail("cannot move a clip between different track types");
+                return false;
+            }
+            moves.push_back({ *source, sourceTrack->id, target->id,
+                              std::max(0.0, startSeconds[i]) });
+        }
+
+        // Same-track moves only change the start; cross-track moves are
+        // applied afterwards so the source vectors stay valid while we read
+        // the validated copies above.
+        for (auto& move : moves)
+        {
+            if (move.sourceTrackId != move.targetTrackId)
+                continue;
+            if (Clip* clip = project.findClip(move.clip.id))
+                clip->startSeconds = move.startSeconds;
+        }
+
+        for (auto& move : moves)
+        {
+            if (move.sourceTrackId == move.targetTrackId)
+                continue;
+
+            Track* sourceTrack = project.findTrack(move.sourceTrackId);
+            if (sourceTrack == nullptr)
+                continue;
+            auto& clips = sourceTrack->clips;
+            clips.erase(std::remove_if(clips.begin(), clips.end(),
+                                       [&move] (const Clip& c)
+                                       { return c.id == move.clip.id; }),
+                        clips.end());
+
+            Clip moved = move.clip;
+            moved.startSeconds = move.startSeconds;
+            if (Track* target = project.findTrack(move.targetTrackId))
+                target->clips.push_back(std::move(moved));
+        }
         return true;
     });
 }

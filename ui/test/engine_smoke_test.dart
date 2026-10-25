@@ -178,6 +178,40 @@ void main() {
     wav.deleteSync();
   });
 
+  test('group clip moves and deletes are one undo entry', () {
+    engine.newProject(48000);
+    final trackA = engine.addTrack('A', 0);
+    final trackB = engine.addTrack('B', 3);
+    final wav = writeSineWav('/tmp/cadence_test_group.wav');
+    final clipA = engine.addClip(trackA, wav.path, 0.0, 1.0);
+    final clipB = engine.addClip(trackB, wav.path, 2.0, 1.0);
+    expect(engine.trackClipCount(trackA), 1);
+    expect(engine.trackClipCount(trackB), 1);
+
+    // Move both clips to track B at 1 s and 3 s, as one history entry.
+    expect(engine.moveClips([clipA, clipB], [trackB, trackB], [1.0, 3.0]), isTrue);
+    expect(engine.trackClipCount(trackA), 0);
+    expect(engine.trackClipCount(trackB), 2);
+    expect(engine.clipStart(clipA), 1.0);
+    expect(engine.clipStart(clipB), 3.0);
+
+    expect(engine.undo(), isTrue);
+    expect(engine.trackClipCount(trackA), 1);
+    expect(engine.trackClipCount(trackB), 1);
+    expect(engine.clipStart(clipA), 0.0);
+    expect(engine.clipStart(clipB), 2.0);
+
+    // Group delete is also atomic.
+    expect(engine.removeClips([clipA, clipB]), isTrue);
+    expect(engine.trackClipCount(trackA), 0);
+    expect(engine.trackClipCount(trackB), 0);
+    expect(engine.undo(), isTrue);
+    expect(engine.trackClipCount(trackA), 1);
+    expect(engine.trackClipCount(trackB), 1);
+
+    wav.deleteSync();
+  });
+
   test('clip waveform peaks are served per pixel', () {
     engine.newProject(48000);
     final trackId = engine.addTrack('W', 0);
