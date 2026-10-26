@@ -187,6 +187,7 @@ The engine still uses `cadence` internally as its namespace, C ABI prefix and dy
 - [`docs/design/ui-design.md`](docs/design/ui-design.md) — UI specification: information architecture, visual system, mixer, piano roll, keymap, FFI contract and roadmap.
 - [`docs/design/cubase-import.md`](docs/design/cubase-import.md) — how the `.cpr` reader works, what it covers and its limitations.
 - [`docs/design/i18n.md`](docs/design/i18n.md) — interface languages and error reporting.
+- [`docs/design/remote-control.md`](docs/design/remote-control.md) — LAN remote-control server: WebSocket + JSON protocol, pairing, commands and events for the companion app.
 
 ## Contributing
 

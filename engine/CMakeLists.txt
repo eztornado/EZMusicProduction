@@ -45,6 +45,7 @@ add_library(cadence_engine STATIC
     src/ezorq.cpp
     src/ezdrums.cpp
     src/ezarp.cpp
+    src/remote_server.cpp
     src/c_api.cpp)
 
 target_include_directories(cadence_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -90,6 +91,7 @@ add_library(cadence_engine_shared SHARED
     src/ezorq.cpp
     src/ezdrums.cpp
     src/ezarp.cpp
+    src/remote_server.cpp
     src/c_api.cpp)
 target_include_directories(cadence_engine_shared PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(cadence_engine_shared PRIVATE cxx_std_20)

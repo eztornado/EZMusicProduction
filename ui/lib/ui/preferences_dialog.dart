@@ -9,6 +9,7 @@ import '../engine/engine_service.dart';
 import '../l10n/l10n.dart';
 import '../l10n/locale_store.dart';
 import 'app_alert.dart';
+import 'remote_control_panel.dart';
 
 Future<void> showPreferencesDialog(
     BuildContext context, EngineService service) {
@@ -126,6 +127,15 @@ class _PreferencesBodyState extends State<_PreferencesBody> {
               _languageChip(context, '日本語', const Locale('ja')),
             ],
           ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Divider(height: 1, color: Color(0xFF32363F)),
+          ),
+          // ---- control remoto por LAN ----
+          Text(l10n.prefSectionRemote,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
+          const SizedBox(height: 6),
+          RemoteControlPanel(service: service),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
             child: Divider(height: 1, color: Color(0xFF32363F)),

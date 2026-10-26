@@ -67,7 +67,10 @@ class AppLocalizationsJa extends AppLocalizations {
   String get appMenuAutomation => 'オートメーション';
 
   @override
-  String get appMenuPreferences => '環境設定（オーディオ・MIDI）';
+  String get appMenuPreferences => '環境設定（オーディオ・MIDI・リモート）';
+
+  @override
+  String get appMenuRemote => 'リモートコントロール';
 
   @override
   String get transportTempoTimeSig => 'テンポと拍子';
@@ -638,7 +641,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get alertTechnicalDetail => '技術的な詳細';
 
   @override
-  String get prefTitle => '環境設定 — オーディオと MIDI';
+  String get prefTitle => '環境設定 — オーディオ、MIDI、リモートコントロール';
 
   @override
   String get prefSectionLanguage => '言語';
@@ -806,4 +809,52 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get aiNoInstrumentTrack => 'AI 生成を使うにはインストゥルメントトラックを作成または選択してください。';
+
+  @override
+  String get prefSectionRemote => 'リモートコントロール';
+
+  @override
+  String get prefRemoteEnable => 'LAN リモートコントロールを有効にする';
+
+  @override
+  String get prefRemotePort => 'ポート';
+
+  @override
+  String get prefRemoteCode => 'ペアリングコード';
+
+  @override
+  String get prefRemoteCopy => 'コピー';
+
+  @override
+  String get prefRemoteCopied => 'コードをコピーしました';
+
+  @override
+  String get prefRemoteNewCode => '新しいコード';
+
+  @override
+  String get prefRemoteAddress => 'アドレス';
+
+  @override
+  String prefRemoteClients(int count) {
+    return '$count クライアント接続中';
+  }
+
+  @override
+  String prefRemoteRunning(int port) {
+    return 'ポート $port でサーバー稼働中';
+  }
+
+  @override
+  String get prefRemoteStopped => 'サーバー停止中';
+
+  @override
+  String get prefRemoteWarning => 'コードを知っているローカルネットワーク上の誰でもこの DAW を操作できます。';
+
+  @override
+  String prefRemoteError(String error) {
+    return '起動できませんでした: $error';
+  }
+
+  @override
+  String get prefRemoteHelp => 'リモートアプリでこのアドレスとコードを入力してください。';
 }

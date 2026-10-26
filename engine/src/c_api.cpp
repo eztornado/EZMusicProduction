@@ -309,6 +309,44 @@ const char* cadence_engine_plugin_param_name(CadenceEngine* engine,
                : "";
 }
 
+float cadence_engine_plugin_param_value(CadenceEngine* engine,
+                                        CadenceTrackId track_id,
+                                        int slot_kind, int slot_index,
+                                        int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamValue(track_id, slot_kind,
+                                                    slot_index, param_index)
+               : 0.0f;
+}
+
+const char* cadence_engine_plugin_param_text(CadenceEngine* engine,
+                                             CadenceTrackId track_id,
+                                             int slot_kind, int slot_index,
+                                             int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamText(track_id, slot_kind,
+                                                   slot_index, param_index)
+               : "";
+}
+
+CadenceResult cadence_engine_set_plugin_param_value(CadenceEngine* engine,
+                                                    CadenceTrackId track_id,
+                                                    int slot_kind,
+                                                    int slot_index,
+                                                    int param_index,
+                                                    float value)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (! std::isfinite(value))
+        return kCadenceErrorInvalidArgument;
+    const auto r = asEngine(engine)->setPluginParamValue(
+        track_id, slot_kind, slot_index, param_index, value);
+    return r.failed() ? kCadenceErrorNotFound : kCadenceOk;
+}
+
 CadenceResult cadence_engine_track_lane_auto_at(CadenceEngine* engine,
                                                 CadenceTrackId track_id, int lane,
                                                 int index, double* out_time,
@@ -675,6 +713,60 @@ CadenceResult cadence_engine_load_file(CadenceEngine* engine, const char* utf8_p
         return kCadenceErrorNullArgument;
     const auto r = asEngine(engine)->loadFile(juce::File(juce::String::fromUTF8(utf8_path)));
     return r.failed() ? kCadenceErrorLoadFailed : kCadenceOk;
+}
+
+CadenceResult cadence_engine_remote_start(CadenceEngine* engine, int port,
+                                          const char* utf8_token)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    if (port < 0 || port > 65535)
+        return kCadenceErrorInvalidArgument;
+    const auto token = utf8_token != nullptr ? juce::String::fromUTF8(utf8_token)
+                                             : juce::String();
+    const auto r = asEngine(engine)->startRemoteServer(port, token);
+    return r.failed() ? kCadenceErrorNetwork : kCadenceOk;
+}
+
+void cadence_engine_remote_stop(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->stopRemoteServer();
+}
+
+int cadence_engine_remote_running(CadenceEngine* engine)
+{
+    return (engine != nullptr && asEngine(engine)->remoteServerRunning()) ? 1 : 0;
+}
+
+int cadence_engine_remote_port(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->remoteServerPort() : 0;
+}
+
+int cadence_engine_remote_client_count(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->remoteServerClientCount() : 0;
+}
+
+const char* cadence_engine_remote_token(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->remoteServerToken() : "";
+}
+
+const char* cadence_engine_remote_last_error(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->remoteServerLastError() : "";
+}
+
+int cadence_engine_pump_remote(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->pumpRemoteCommands() : 0;
+}
+
+uint64_t cadence_engine_project_revision(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->projectRevision() : 0;
 }
 
 CadenceResult cadence_engine_play(CadenceEngine* engine)

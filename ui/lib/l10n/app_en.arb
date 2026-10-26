@@ -20,7 +20,8 @@
   "appMenuMixer": "Mixer",
   "appMenuPianoRoll": "Piano roll",
   "appMenuAutomation": "Auto",
-  "appMenuPreferences": "Preferences (audio, MIDI)",
+  "appMenuPreferences": "Preferences (audio, MIDI, remote)",
+  "appMenuRemote": "Remote control",
 
   "transportTempoTimeSig": "Tempo and time signature",
   "transportTempoHint": "Tempo (BPM, 20–300)",
@@ -204,7 +205,7 @@
   "alertClose": "Close",
   "alertTechnicalDetail": "Technical details",
 
-  "prefTitle": "Preferences — Audio and MIDI",
+  "prefTitle": "Preferences — Audio, MIDI and remote control",
   "prefSectionLanguage": "Language",
   "prefLanguageSystem": "Follow system",
   "prefOutputDevice": "Output device",
@@ -256,5 +257,22 @@
   "aiGenerateAtPlayhead": "Generate clip with AI…",
   "aiToolbarButton": "AI",
   "aiToolbarTooltip": "Generate a clip with AI on the selected instrument track",
-  "aiNoInstrumentTrack": "Create or select an instrument track to generate with AI."
+  "aiNoInstrumentTrack": "Create or select an instrument track to generate with AI.",
+  "prefSectionRemote": "Remote control",
+  "prefRemoteEnable": "Enable LAN remote control",
+  "prefRemotePort": "Port",
+  "prefRemoteCode": "Pairing code",
+  "prefRemoteCopy": "Copy",
+  "prefRemoteCopied": "Code copied",
+  "prefRemoteNewCode": "New code",
+  "prefRemoteAddress": "Address",
+  "prefRemoteClients": "{count} client(s) connected",
+  "@prefRemoteClients": { "placeholders": { "count": { "type": "int" } } },
+  "prefRemoteRunning": "Server running on port {port}",
+  "@prefRemoteRunning": { "placeholders": { "port": { "type": "int" } } },
+  "prefRemoteStopped": "Server stopped",
+  "prefRemoteWarning": "Anyone on your local network with the code can control this DAW.",
+  "prefRemoteError": "Could not start: {error}",
+  "@prefRemoteError": { "placeholders": { "error": { "type": "String" } } },
+  "prefRemoteHelp": "Open the remote app and enter this address and code."
 }

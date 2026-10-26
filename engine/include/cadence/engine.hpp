@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -267,6 +268,10 @@ public:
     static constexpr int kMeterTracks = 64;
     float masterPeak(int channel);
     float trackPeak(int trackIndex);
+    // Independent read-and-reset peaks for remote clients. Reading these does
+    // not steal the peaks the local meters display.
+    float remoteMasterPeak(int channel);
+    float remoteTrackPeak(int trackIndex);
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;
@@ -307,6 +312,8 @@ private:
     const bool debugArp_ = std::getenv("CADENCE_ARP_DBG") != nullptr;
     std::atomic<std::uint32_t> masterPeaks_[2] {{0}, {0}};
     std::atomic<std::uint32_t> trackPeaks_[kMeterTracks] {};
+    std::atomic<std::uint32_t> remoteMasterPeaks_[2] {{0}, {0}};
+    std::atomic<std::uint32_t> remoteTrackPeaks_[kMeterTracks] {};
 
     // Live MIDI monitoring (external input → armed instrument tracks).
     std::mutex externalMutex_;
@@ -394,11 +401,24 @@ struct MidiNoteEdit {
     double lengthSeconds = 0.0;
 };
 
+// Partial mixer update: every field left empty keeps its current value. Used
+// by remote-control clients so a fader move is one engine edit, not one per
+// field. recordUndo=false lets a live drag avoid flooding the undo history.
+struct TrackMixUpdate {
+    std::optional<float> volume;
+    std::optional<float> pan;
+    std::optional<bool> mute;
+    std::optional<bool> solo;
+    std::optional<juce::String> name;
+    std::optional<int> colorIndex;
+};
+
 // Phase 2 engine: owns the project document (published as immutable
 // snapshots), the audio device and the project transport. Phase 1's
 // single-file "tape" playback survives as a convenience (loadFile builds a
 // one-track project).
 namespace ai { class Service; }
+class RemoteServer;
 
 class Engine {
 public:
@@ -551,6 +571,18 @@ public:
     int pluginParamCount(TrackId trackId, int slotKind, int slotIndex) const;
     const char* pluginParamName(TrackId trackId, int slotKind, int slotIndex,
                                 int paramIndex) const;
+    // Normalised (0..1) parameter value / human-readable text. Used by the
+    // remote-control API to adjust effects and instruments. Both calls touch
+    // the live plug-in, so they must run on the message thread.
+    float pluginParamValue(TrackId trackId, int slotKind, int slotIndex,
+                           int paramIndex) const;
+    const char* pluginParamText(TrackId trackId, int slotKind, int slotIndex,
+                                int paramIndex) const;
+    // Sets a normalised (0..1) parameter value on the live plug-in. Must run
+    // on the message thread (host notification may reach the editor).
+    juce::Result setPluginParamValue(TrackId trackId, int slotKind,
+                                     int slotIndex, int paramIndex,
+                                     float normalisedValue);
     int trackVolumeAutoCount(TrackId trackId) const;
     AutomationPoint trackVolumeAutoAt(TrackId trackId, int index) const;
 
@@ -587,7 +619,13 @@ public:
     juce::Result setTrackPan(TrackId trackId, float pan);           // -1..+1
     juce::Result setTrackMute(TrackId trackId, bool muted);
     juce::Result setTrackSolo(TrackId trackId, bool soloed);
+    // Applies the provided mixer fields in ONE edit. recordUndo=false is for
+    // live remote fader drags: the change is published but no undo entry is
+    // recorded.
+    juce::Result setTrackMix(TrackId trackId, const TrackMixUpdate& update,
+                             bool recordUndo = true);
     juce::Result setMasterGain(float linearGain); // 0..4
+    juce::Result setMasterGainEx(float linearGain, bool recordUndo);
 
     juce::Result addTrackFx(TrackId trackId, int pluginIndex);   // appends an fx slot
     juce::Result removeTrackFx(TrackId trackId, int slotIndex);
@@ -656,6 +694,7 @@ public:
     int trackInputChannel(TrackId trackId) const;
 
     void setMetronome(bool on);
+    bool metronomeEnabled() const { return transport_->metronomeEnabled(); }
 
     // ---- tempo / time signature (project-wide; feeds ruler, metronome,
     // quantize grid and snapping). Undoable edits. ----
@@ -811,6 +850,10 @@ public:
     // thread is the only writer). trackIndex is the position in the snapshot.
     float meterTrackPeak(int trackIndex);
     float meterMasterPeak(int channel);
+    // Independent peaks for remote clients: reading them does not consume the
+    // values the local mixer displays.
+    float remoteMeterTrackPeak(int trackIndex);
+    float remoteMeterMasterPeak(int channel);
 
     // ---- transport ----
 
@@ -842,6 +885,34 @@ public:
         return std::atomic_load(&project_);
     }
 
+    // ---- remote control (WebSocket server) ----
+    // Starts a LAN WebSocket + JSON control server. Pass port 0 for an
+    // ephemeral port and an empty token to let the engine generate a 6-digit
+    // pairing code. The server accepts commands over WebSocket and pushes
+    // transport, project and meter events to every connected client.
+    // See docs/design/remote-control.md for the full protocol.
+    juce::Result startRemoteServer(int port = 47823,
+                                   const juce::String& token = {});
+    void stopRemoteServer();
+    bool remoteServerRunning() const;
+    int remoteServerPort() const;
+    int remoteServerClientCount() const;
+    const char* remoteServerToken() const;
+    const char* remoteServerLastError() const;
+    // Drains queued remote commands. MUST be called on the engine's message
+    // thread (the Flutter main thread). The macOS app calls it from its frame
+    // ticker; headless tests call it while waiting for responses. Returns the
+    // number of commands executed. Messages already processed through JUCE's
+    // async queue are not counted twice (the queue is shared).
+    int pumpRemoteCommands();
+
+    // Monotonic document revision, bumped on every publish (edits, undo,
+    // redo, load). Remote clients use it to request/sync snapshots.
+    std::uint64_t projectRevision() const
+    {
+        return projectRevision_.load(std::memory_order_acquire);
+    }
+
     // UTF-8 text of the most recent failure; stable until the next failure.
     const char* lastErrorUtf8() const { return lastErrorUtf8_.c_str(); }
 
@@ -866,7 +937,8 @@ private:
     void pushUndoLocked();
     // Runs mutate() on a snapshot copy; on success records one undo entry and
     // publishes. mutate() returns false after calling fail().
-    juce::Result editProject(const std::function<bool(Project&)>& mutate);
+    juce::Result editProject(const std::function<bool(Project&)>& mutate,
+                             bool recordUndo = true);
     juce::Result fail(const juce::String& message) const;
 
     std::atomic<bool> audioReady_ {false};
@@ -897,6 +969,10 @@ private:
     void renderPreview(float* const* outputChannelData, int numOutputChannels,
                        int numFrames);
     std::shared_ptr<const Project> project_; // accessed with std::atomic_load/store
+    std::atomic<std::uint64_t> projectRevision_ { 0 };
+    // LAN remote-control server (WebSocket). Shared because pending command
+    // callbacks hold a weak reference while they wait for the message thread.
+    std::shared_ptr<RemoteServer> remoteServer_;
     juce::File projectFile_;                 // last save/load location
     juce::String selectedMidiInputId_;
     double midiInputLatencyMs_ = 0.0;        // persisted in device settings
@@ -906,6 +982,8 @@ private:
     std::vector<std::shared_ptr<const Project>> redoStack_;
     mutable std::string lastErrorUtf8_;
     mutable std::string stringOut_; // backing store for read-access strings
+    mutable std::string remoteTokenUtf8_;    // backing store for remoteToken()
+    mutable std::string remoteLastErrorUtf8_; // backing store for remote errors
     mutable std::mutex editMutex_;
     std::shared_ptr<const CaptureList> captures_; // accessed with std::atomic_*
     // Open plugin editor windows (message thread only). Key: track<<16 | slot

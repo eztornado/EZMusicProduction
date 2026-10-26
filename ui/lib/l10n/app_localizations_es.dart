@@ -67,7 +67,10 @@ class AppLocalizationsEs extends AppLocalizations {
   String get appMenuAutomation => 'Auto';
 
   @override
-  String get appMenuPreferences => 'Preferencias (audio, MIDI)';
+  String get appMenuPreferences => 'Preferencias (audio, MIDI, remoto)';
+
+  @override
+  String get appMenuRemote => 'Control remoto';
 
   @override
   String get transportTempoTimeSig => 'Tempo y compás';
@@ -644,7 +647,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get alertTechnicalDetail => 'Detalles técnicos';
 
   @override
-  String get prefTitle => 'Preferencias — Audio y MIDI';
+  String get prefTitle => 'Preferencias — Audio, MIDI y control remoto';
 
   @override
   String get prefSectionLanguage => 'Idioma';
@@ -816,4 +819,54 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get aiNoInstrumentTrack =>
       'Crea o selecciona una pista de instrumento para generar con IA.';
+
+  @override
+  String get prefSectionRemote => 'Control remoto';
+
+  @override
+  String get prefRemoteEnable => 'Activar control remoto por LAN';
+
+  @override
+  String get prefRemotePort => 'Puerto';
+
+  @override
+  String get prefRemoteCode => 'Código de emparejamiento';
+
+  @override
+  String get prefRemoteCopy => 'Copiar';
+
+  @override
+  String get prefRemoteCopied => 'Código copiado';
+
+  @override
+  String get prefRemoteNewCode => 'Nuevo código';
+
+  @override
+  String get prefRemoteAddress => 'Dirección';
+
+  @override
+  String prefRemoteClients(int count) {
+    return '$count cliente(s) conectado(s)';
+  }
+
+  @override
+  String prefRemoteRunning(int port) {
+    return 'Servidor activo en el puerto $port';
+  }
+
+  @override
+  String get prefRemoteStopped => 'Servidor detenido';
+
+  @override
+  String get prefRemoteWarning =>
+      'Cualquiera en tu red local que tenga el código puede controlar esta DAW.';
+
+  @override
+  String prefRemoteError(String error) {
+    return 'No se pudo iniciar: $error';
+  }
+
+  @override
+  String get prefRemoteHelp =>
+      'Abre la app remota y escribe esta dirección y el código.';
 }

@@ -187,6 +187,7 @@ El motor sigue usando `cadence` internamente como namespace, prefijo de la C ABI
 - [`docs/design/ui-design.md`](docs/design/ui-design.md) — especificación de UI: arquitectura de información, sistema visual, mezclador, piano roll, keymap, contrato FFI y hoja de ruta.
 - [`docs/design/cubase-import.md`](docs/design/cubase-import.md) — cómo funciona el lector de `.cpr`, qué cubre y sus limitaciones.
 - [`docs/design/i18n.md`](docs/design/i18n.md) — idiomas de la interfaz y presentación de errores.
+- [`docs/design/remote-control.md`](docs/design/remote-control.md) — servidor de control remoto por LAN: protocolo WebSocket + JSON, emparejamiento, comandos y eventos para la app compañera.
 
 ## Contribuir
 

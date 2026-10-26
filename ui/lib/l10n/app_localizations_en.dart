@@ -67,7 +67,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appMenuAutomation => 'Auto';
 
   @override
-  String get appMenuPreferences => 'Preferences (audio, MIDI)';
+  String get appMenuPreferences => 'Preferences (audio, MIDI, remote)';
+
+  @override
+  String get appMenuRemote => 'Remote control';
 
   @override
   String get transportTempoTimeSig => 'Tempo and time signature';
@@ -643,7 +646,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get alertTechnicalDetail => 'Technical details';
 
   @override
-  String get prefTitle => 'Preferences — Audio and MIDI';
+  String get prefTitle => 'Preferences — Audio, MIDI and remote control';
 
   @override
   String get prefSectionLanguage => 'Language';
@@ -815,4 +818,54 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get aiNoInstrumentTrack =>
       'Create or select an instrument track to generate with AI.';
+
+  @override
+  String get prefSectionRemote => 'Remote control';
+
+  @override
+  String get prefRemoteEnable => 'Enable LAN remote control';
+
+  @override
+  String get prefRemotePort => 'Port';
+
+  @override
+  String get prefRemoteCode => 'Pairing code';
+
+  @override
+  String get prefRemoteCopy => 'Copy';
+
+  @override
+  String get prefRemoteCopied => 'Code copied';
+
+  @override
+  String get prefRemoteNewCode => 'New code';
+
+  @override
+  String get prefRemoteAddress => 'Address';
+
+  @override
+  String prefRemoteClients(int count) {
+    return '$count client(s) connected';
+  }
+
+  @override
+  String prefRemoteRunning(int port) {
+    return 'Server running on port $port';
+  }
+
+  @override
+  String get prefRemoteStopped => 'Server stopped';
+
+  @override
+  String get prefRemoteWarning =>
+      'Anyone on your local network with the code can control this DAW.';
+
+  @override
+  String prefRemoteError(String error) {
+    return 'Could not start: $error';
+  }
+
+  @override
+  String get prefRemoteHelp =>
+      'Open the remote app and enter this address and code.';
 }

@@ -20,7 +20,8 @@
   "appMenuMixer": "ミキサー",
   "appMenuPianoRoll": "ピアノロール",
   "appMenuAutomation": "オートメーション",
-  "appMenuPreferences": "環境設定（オーディオ・MIDI）",
+  "appMenuPreferences": "環境設定（オーディオ・MIDI・リモート）",
+  "appMenuRemote": "リモートコントロール",
 
   "transportTempoTimeSig": "テンポと拍子",
   "transportTempoHint": "テンポ（BPM、20〜300）",
@@ -204,7 +205,7 @@
   "alertClose": "閉じる",
   "alertTechnicalDetail": "技術的な詳細",
 
-  "prefTitle": "環境設定 — オーディオと MIDI",
+  "prefTitle": "環境設定 — オーディオ、MIDI、リモートコントロール",
   "prefSectionLanguage": "言語",
   "prefLanguageSystem": "システムに従う",
   "prefOutputDevice": "出力デバイス",
@@ -256,5 +257,22 @@
   "aiGenerateAtPlayhead": "AI でクリップを生成…",
   "aiToolbarButton": "AI",
   "aiToolbarTooltip": "選択したインストゥルメントトラックに AI でクリップを生成",
-  "aiNoInstrumentTrack": "AI 生成を使うにはインストゥルメントトラックを作成または選択してください。"
+  "aiNoInstrumentTrack": "AI 生成を使うにはインストゥルメントトラックを作成または選択してください。",
+  "prefSectionRemote": "リモートコントロール",
+  "prefRemoteEnable": "LAN リモートコントロールを有効にする",
+  "prefRemotePort": "ポート",
+  "prefRemoteCode": "ペアリングコード",
+  "prefRemoteCopy": "コピー",
+  "prefRemoteCopied": "コードをコピーしました",
+  "prefRemoteNewCode": "新しいコード",
+  "prefRemoteAddress": "アドレス",
+  "prefRemoteClients": "{count} クライアント接続中",
+  "@prefRemoteClients": { "placeholders": { "count": { "type": "int" } } },
+  "prefRemoteRunning": "ポート {port} でサーバー稼働中",
+  "@prefRemoteRunning": { "placeholders": { "port": { "type": "int" } } },
+  "prefRemoteStopped": "サーバー停止中",
+  "prefRemoteWarning": "コードを知っているローカルネットワーク上の誰でもこの DAW を操作できます。",
+  "prefRemoteError": "起動できませんでした: {error}",
+  "@prefRemoteError": { "placeholders": { "error": { "type": "String" } } },
+  "prefRemoteHelp": "リモートアプリでこのアドレスとコードを入力してください。"
 }

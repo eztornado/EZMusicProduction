@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'engine/engine_service.dart';
 import 'l10n/l10n.dart';
 import 'l10n/locale_store.dart';
+import 'remote/remote_settings.dart';
 import 'ui/ai_generation_dialog.dart'
     show defaultAiModeForTrack, showAiGenerationDialog;
 import 'ui/app_alert.dart';
@@ -27,6 +28,7 @@ import 'ui/mixer_zone.dart';
 import 'ui/project_dialogs.dart';
 import 'ui/piano_roll.dart';
 import 'ui/preferences_dialog.dart';
+import 'ui/remote_dialog.dart';
 import 'ui/timeline_view.dart';
 import 'ui/transport_bar.dart';
 
@@ -34,6 +36,9 @@ Future<void> main(List<String> args) async {
   // Idioma elegido en Preferencias (~/Music/Cadence/ui_settings.json). Cada
   // ventana es un proceso aparte, asi que lo lee tambien la principal.
   LocaleStore.load();
+  // Preferencias del control remoto (mismo fichero de interfaz). Solo la
+  // ventana principal arranca el servidor; las sub-ventanas comparten motor.
+  RemoteSettings.load();
   // Sub-window engines relaunch main with ['multi_window', windowId, json].
   if (args.isNotEmpty && args[0] == 'multi_window') {
     final conf = args.length > 2 && args[2].isNotEmpty
@@ -321,6 +326,28 @@ class _HomePageState extends State<HomePage>
     // The audio device opens lazily on the first play/record call.
     // The project starts EMPTY: open yours with Abrir (⌘O).
     service.updateWindowTitle();
+    if (RemoteSettings.enabled) _startRemoteServer();
+  }
+
+  /// Arranca el servidor de control remoto si el usuario lo dejó activo en
+  /// Preferencias. El puerto y el código se persisten para que la app remota
+  /// pueda reconectar tras reiniciar la DAW.
+  void _startRemoteServer() {
+    final service = _service;
+    if (service == null) return;
+    final error = service.startRemoteServer(
+      port: RemoteSettings.port,
+      token: RemoteSettings.token,
+    );
+    if (error != null) {
+      debugPrint('Remote server: $error');
+      return;
+    }
+    RemoteSettings.save(
+      enabled: true,
+      port: service.remoteServerPort,
+      token: service.remoteServerToken,
+    );
   }
 
   /// Toolbar entry point: generate on the active instrument track at the
@@ -528,6 +555,24 @@ class _HomePageState extends State<HomePage>
                   },
                   label: context.l10n.appMenuAutomation,
                   icon: Icons.show_chart,
+                ),
+                ListenableBuilder(
+                  listenable: service,
+                  builder: (context, _) {
+                    final running = service.remoteServerRunning;
+                    return IconButton(
+                      tooltip: context.l10n.appMenuRemote,
+                      icon: Icon(
+                        running ? Icons.wifi_tethering : Icons.wifi_tethering_off,
+                        size: 18,
+                        color: running
+                            ? const Color(0xFF3DD68C)
+                            : const Color(0xFFE9EBF0),
+                      ),
+                      onPressed: () =>
+                          showRemoteControlDialog(context, service),
+                    );
+                  },
                 ),
                 IconButton(
                   tooltip: context.l10n.appMenuPreferences,

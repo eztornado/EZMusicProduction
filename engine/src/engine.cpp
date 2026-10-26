@@ -8,6 +8,7 @@
 #include "ezarp.h"
 #include "native_dialogs.h"
 #include "piano_voice.h"
+#include "remote_server.h"
 
 #include <algorithm>
 #include <bit>
@@ -1719,6 +1720,8 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         info.clearActiveBufferRegion();
         for (auto& peak : masterPeaks_)
             peak.store(0, std::memory_order_relaxed);
+        for (auto& peak : remoteMasterPeaks_)
+            peak.store(0, std::memory_order_relaxed);
         return;
     }
 
@@ -1749,15 +1752,18 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         const int numOut = std::min(2, info.buffer->getNumChannels());
         for (int ch = 0; ch < numOut; ++ch)
         {
-            masterPeaks_[ch].store(
-                std::bit_cast<std::uint32_t>(
-                    absMax(masterBuffer_.getReadPointer(ch, 0), numSamples)),
-                std::memory_order_relaxed);
+            const auto peak = std::bit_cast<std::uint32_t>(
+                absMax(masterBuffer_.getReadPointer(ch, 0), numSamples));
+            masterPeaks_[ch].store(peak, std::memory_order_relaxed);
+            remoteMasterPeaks_[ch].store(peak, std::memory_order_relaxed);
             info.buffer->copyFrom(ch, info.startSample, masterBuffer_, ch, 0,
                                   numSamples);
         }
         if (numOut < 2)
+        {
             masterPeaks_[1].store(0, std::memory_order_relaxed);
+            remoteMasterPeaks_[1].store(0, std::memory_order_relaxed);
+        }
     };
 
     if (! playing_.load())
@@ -1790,6 +1796,8 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         info.clearActiveBufferRegion();
         for (auto& peak : masterPeaks_)
             peak.store(0, std::memory_order_relaxed);
+        for (auto& peak : remoteMasterPeaks_)
+            peak.store(0, std::memory_order_relaxed);
         return;
     }
 
@@ -1821,6 +1829,7 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         if (track.mute || (anySolo && ! track.solo))
         {
             trackPeaks_[meterSlot].store(0, std::memory_order_relaxed);
+            remoteTrackPeaks_[meterSlot].store(0, std::memory_order_relaxed);
             continue;
         }
 
@@ -2124,6 +2133,9 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
 
             trackPeaks_[meterSlot].store(std::bit_cast<std::uint32_t>(trackPeak),
                                          std::memory_order_relaxed);
+            remoteTrackPeaks_[meterSlot].store(
+                std::bit_cast<std::uint32_t>(trackPeak),
+                std::memory_order_relaxed);
             continue;
         }
 
@@ -2234,6 +2246,9 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
 
         trackPeaks_[meterSlot].store(std::bit_cast<std::uint32_t>(trackPeak),
                                      std::memory_order_relaxed);
+        remoteTrackPeaks_[meterSlot].store(
+            std::bit_cast<std::uint32_t>(trackPeak),
+            std::memory_order_relaxed);
     }
 
     // Metronome click: accent on the beat that starts a bar (4/4 fixed until
@@ -2357,6 +2372,22 @@ float ProjectAudioSource::trackPeak(int trackIndex)
     if (trackIndex < 0 || trackIndex >= kMeterTracks)
         return 0.0f;
     return std::bit_cast<float>(trackPeaks_[trackIndex].exchange(0, std::memory_order_relaxed));
+}
+
+float ProjectAudioSource::remoteMasterPeak(int channel)
+{
+    if (channel < 0 || channel > 1)
+        return 0.0f;
+    return std::bit_cast<float>(
+        remoteMasterPeaks_[channel].exchange(0, std::memory_order_relaxed));
+}
+
+float ProjectAudioSource::remoteTrackPeak(int trackIndex)
+{
+    if (trackIndex < 0 || trackIndex >= kMeterTracks)
+        return 0.0f;
+    return std::bit_cast<float>(
+        remoteTrackPeaks_[trackIndex].exchange(0, std::memory_order_relaxed));
 }
 
 // ---------- OutputCallback (single audio callback: capture + mix) ----------
@@ -2629,6 +2660,13 @@ Engine::Engine()
 Engine::~Engine()
 {
     shuttingDown_.store(true, std::memory_order_release);
+    // Stop accepting commands before any engine member is torn down: the
+    // server threads call back into the Engine while they are running.
+    if (remoteServer_ != nullptr)
+    {
+        remoteServer_->stop();
+        remoteServer_.reset();
+    }
     // Close every plugin editor before the instances are torn down. Letting
     // AppKit destroy a live VST3 window during process teardown crashed
     // Analog Lab V inside its componentVisibilityChanged callback.
@@ -2718,6 +2756,67 @@ void Engine::runOnMessageThread(const std::function<void()>& fn)
         done.signal();
     });
     done.wait();
+}
+
+// ---- remote control (WebSocket server) ----
+
+juce::Result Engine::startRemoteServer(int port, const juce::String& token)
+{
+    if (port < 0 || port > 65535)
+        return fail("puerto de control remoto no válido");
+    if (remoteServer_ == nullptr)
+    {
+        remoteServer_ = std::make_shared<RemoteServer>(*this);
+        remoteServer_->bindSelf(remoteServer_);
+    }
+    const auto result = remoteServer_->start(port, token);
+    if (result.failed())
+        lastErrorUtf8_ = result.getErrorMessage().toStdString();
+    return result;
+}
+
+void Engine::stopRemoteServer()
+{
+    if (remoteServer_ != nullptr)
+        remoteServer_->stop();
+}
+
+bool Engine::remoteServerRunning() const
+{
+    return remoteServer_ != nullptr && remoteServer_->isRunning();
+}
+
+int Engine::remoteServerPort() const
+{
+    return remoteServer_ != nullptr ? remoteServer_->port() : 0;
+}
+
+int Engine::remoteServerClientCount() const
+{
+    return remoteServer_ != nullptr ? remoteServer_->clientCount() : 0;
+}
+
+const char* Engine::remoteServerToken() const
+{
+    remoteTokenUtf8_ = remoteServer_ != nullptr
+                           ? remoteServer_->token().toStdString()
+                           : std::string();
+    return remoteTokenUtf8_.c_str();
+}
+
+const char* Engine::remoteServerLastError() const
+{
+    remoteLastErrorUtf8_ = remoteServer_ != nullptr
+                               ? remoteServer_->lastError().toStdString()
+                               : std::string();
+    return remoteLastErrorUtf8_.c_str();
+}
+
+int Engine::pumpRemoteCommands()
+{
+    if (remoteServer_ == nullptr)
+        return 0;
+    return remoteServer_->pumpCommands();
 }
 
 juce::Result Engine::addClipFromPath(TrackId trackId, const juce::String& path,
@@ -3472,6 +3571,9 @@ void Engine::publish(std::shared_ptr<const Project> project,
                      bool deferHeavyPlugins)
 {
     std::atomic_store(&project_, project);
+    // Bump before touching plugin nodes: remote clients only need to know
+    // that a new immutable document is available.
+    projectRevision_.fetch_add(1, std::memory_order_release);
     transport_->setProject(project);
 
     // Rebuild fx/instrument plugin nodes whose config changed. Plugin
@@ -3607,7 +3709,8 @@ void Engine::pushUndoLocked()
     redoStack_.clear();
 }
 
-juce::Result Engine::editProject(const std::function<bool(Project&)>& mutate)
+juce::Result Engine::editProject(const std::function<bool(Project&)>& mutate,
+                                 bool recordUndo)
 {
     const std::scoped_lock lock(editMutex_);
 
@@ -3618,7 +3721,8 @@ juce::Result Engine::editProject(const std::function<bool(Project&)>& mutate)
     if (! mutate(*project))
         return juce::Result::fail(juce::String(lastErrorUtf8_));
 
-    pushUndoLocked();
+    if (recordUndo)
+        pushUndoLocked();
     publish(std::move(project));
     return juce::Result::ok();
 }
@@ -4841,6 +4945,63 @@ const char* Engine::pluginParamName(TrackId trackId, int slotKind,
     return stringOut_.c_str();
 }
 
+float Engine::pluginParamValue(TrackId trackId, int slotKind, int slotIndex,
+                               int paramIndex) const
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    if (proc == nullptr)
+        return 0.0f;
+    const auto& params = proc->getParameters();
+    if (paramIndex < 0 || paramIndex >= (int) params.size())
+        return 0.0f;
+    auto* p = params[(size_t) paramIndex];
+    return p != nullptr ? juce::jlimit(0.0f, 1.0f, p->getValue()) : 0.0f;
+}
+
+const char* Engine::pluginParamText(TrackId trackId, int slotKind,
+                                    int slotIndex, int paramIndex) const
+{
+    stringOut_.clear();
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    if (proc == nullptr)
+        return stringOut_.c_str();
+    const auto& params = proc->getParameters();
+    if (paramIndex < 0 || paramIndex >= (int) params.size())
+        return stringOut_.c_str();
+    if (auto* p = params[(size_t) paramIndex])
+        stringOut_ = p->getCurrentValueAsText().toStdString();
+    return stringOut_.c_str();
+}
+
+juce::Result Engine::setPluginParamValue(TrackId trackId, int slotKind,
+                                         int slotIndex, int paramIndex,
+                                         float normalisedValue)
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    if (proc == nullptr)
+        return fail("plugin not found");
+    const auto& params = proc->getParameters();
+    if (paramIndex < 0 || paramIndex >= (int) params.size())
+        return fail("parameter not found");
+    auto* p = params[(size_t) paramIndex];
+    if (p == nullptr)
+        return fail("parameter not found");
+    p->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, normalisedValue));
+    return juce::Result::ok();
+}
+
 float Engine::trackVolumeEffectiveAt(TrackId trackId,
                                      double timeSeconds) const
 {
@@ -4951,12 +5112,55 @@ juce::Result Engine::setTrackSolo(TrackId trackId, bool soloed)
     });
 }
 
+juce::Result Engine::setTrackMix(TrackId trackId, const TrackMixUpdate& update,
+                                 bool recordUndo)
+{
+    if (update.volume.has_value()
+        && (! std::isfinite(*update.volume) || *update.volume < 0.0f
+            || *update.volume > 2.0f))
+        return fail("volumen de pista no válido");
+    if (update.pan.has_value()
+        && (! std::isfinite(*update.pan) || *update.pan < -1.0f
+            || *update.pan > 1.0f))
+        return fail("pan de pista no válido");
+    if (update.colorIndex.has_value()
+        && (*update.colorIndex < 0 || *update.colorIndex > 15))
+        return fail("color de pista no válido");
+
+    return editProject([&] (Project& project) {
+        Track* track = project.findTrack(trackId);
+        if (track == nullptr)
+        {
+            fail("track not found: " + juce::String((int) trackId));
+            return false;
+        }
+        if (update.volume.has_value())
+            track->volume = *update.volume;
+        if (update.pan.has_value())
+            track->pan = *update.pan;
+        if (update.mute.has_value())
+            track->mute = *update.mute;
+        if (update.solo.has_value())
+            track->solo = *update.solo;
+        if (update.name.has_value() && update.name->isNotEmpty())
+            track->name = *update.name;
+        if (update.colorIndex.has_value())
+            track->colorIndex = *update.colorIndex;
+        return true;
+    }, recordUndo);
+}
+
 juce::Result Engine::setMasterGain(float linearGain)
+{
+    return setMasterGainEx(linearGain, true);
+}
+
+juce::Result Engine::setMasterGainEx(float linearGain, bool recordUndo)
 {
     return editProject([&] (Project& project) {
         project.masterGain = juce::jlimit(0.0f, 4.0f, linearGain);
         return true;
-    });
+    }, recordUndo);
 }
 
 void Engine::setMetronome(bool on)
@@ -5632,6 +5836,16 @@ double Engine::clipFadeOut(ClipId clipId) const
 float Engine::meterTrackPeak(int trackIndex)
 {
     return transport_->trackPeak(trackIndex);
+}
+
+float Engine::remoteMeterTrackPeak(int trackIndex)
+{
+    return transport_->remoteTrackPeak(trackIndex);
+}
+
+float Engine::remoteMeterMasterPeak(int channel)
+{
+    return transport_->remoteMasterPeak(channel);
 }
 
 int Engine::clipPeaks(ClipId clipId, double startSeconds, double lengthSeconds,

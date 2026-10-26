@@ -211,8 +211,14 @@ abstract class AppLocalizations {
   /// No description provided for @appMenuPreferences.
   ///
   /// In es, this message translates to:
-  /// **'Preferencias (audio, MIDI)'**
+  /// **'Preferencias (audio, MIDI, remoto)'**
   String get appMenuPreferences;
+
+  /// No description provided for @appMenuRemote.
+  ///
+  /// In es, this message translates to:
+  /// **'Control remoto'**
+  String get appMenuRemote;
 
   /// No description provided for @transportTempoTimeSig.
   ///
@@ -1231,7 +1237,7 @@ abstract class AppLocalizations {
   /// No description provided for @prefTitle.
   ///
   /// In es, this message translates to:
-  /// **'Preferencias — Audio y MIDI'**
+  /// **'Preferencias — Audio, MIDI y control remoto'**
   String get prefTitle;
 
   /// No description provided for @prefSectionLanguage.
@@ -1539,6 +1545,90 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Crea o selecciona una pista de instrumento para generar con IA.'**
   String get aiNoInstrumentTrack;
+
+  /// No description provided for @prefSectionRemote.
+  ///
+  /// In es, this message translates to:
+  /// **'Control remoto'**
+  String get prefSectionRemote;
+
+  /// No description provided for @prefRemoteEnable.
+  ///
+  /// In es, this message translates to:
+  /// **'Activar control remoto por LAN'**
+  String get prefRemoteEnable;
+
+  /// No description provided for @prefRemotePort.
+  ///
+  /// In es, this message translates to:
+  /// **'Puerto'**
+  String get prefRemotePort;
+
+  /// No description provided for @prefRemoteCode.
+  ///
+  /// In es, this message translates to:
+  /// **'Código de emparejamiento'**
+  String get prefRemoteCode;
+
+  /// No description provided for @prefRemoteCopy.
+  ///
+  /// In es, this message translates to:
+  /// **'Copiar'**
+  String get prefRemoteCopy;
+
+  /// No description provided for @prefRemoteCopied.
+  ///
+  /// In es, this message translates to:
+  /// **'Código copiado'**
+  String get prefRemoteCopied;
+
+  /// No description provided for @prefRemoteNewCode.
+  ///
+  /// In es, this message translates to:
+  /// **'Nuevo código'**
+  String get prefRemoteNewCode;
+
+  /// No description provided for @prefRemoteAddress.
+  ///
+  /// In es, this message translates to:
+  /// **'Dirección'**
+  String get prefRemoteAddress;
+
+  /// No description provided for @prefRemoteClients.
+  ///
+  /// In es, this message translates to:
+  /// **'{count} cliente(s) conectado(s)'**
+  String prefRemoteClients(int count);
+
+  /// No description provided for @prefRemoteRunning.
+  ///
+  /// In es, this message translates to:
+  /// **'Servidor activo en el puerto {port}'**
+  String prefRemoteRunning(int port);
+
+  /// No description provided for @prefRemoteStopped.
+  ///
+  /// In es, this message translates to:
+  /// **'Servidor detenido'**
+  String get prefRemoteStopped;
+
+  /// No description provided for @prefRemoteWarning.
+  ///
+  /// In es, this message translates to:
+  /// **'Cualquiera en tu red local que tenga el código puede controlar esta DAW.'**
+  String get prefRemoteWarning;
+
+  /// No description provided for @prefRemoteError.
+  ///
+  /// In es, this message translates to:
+  /// **'No se pudo iniciar: {error}'**
+  String prefRemoteError(String error);
+
+  /// No description provided for @prefRemoteHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Abre la app remota y escribe esta dirección y el código.'**
+  String get prefRemoteHelp;
 }
 
 class _AppLocalizationsDelegate

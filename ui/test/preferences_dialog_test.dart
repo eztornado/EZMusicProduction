@@ -33,6 +33,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Preferencias — Audio y MIDI'), findsOneWidget);
+    expect(find.text('Preferencias — Audio, MIDI y control remoto'),
+        findsOneWidget);
+    expect(find.text('Activar control remoto por LAN'), findsOneWidget);
   });
 }

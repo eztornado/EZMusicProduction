@@ -22,7 +22,8 @@
   "appMenuMixer": "Mixer",
   "appMenuPianoRoll": "Piano roll",
   "appMenuAutomation": "Auto",
-  "appMenuPreferences": "Preferencias (audio, MIDI)",
+  "appMenuPreferences": "Preferencias (audio, MIDI, remoto)",
+  "appMenuRemote": "Control remoto",
 
   "transportTempoTimeSig": "Tempo y compás",
   "transportTempoHint": "Tempo (BPM, 20–300)",
@@ -236,7 +237,7 @@
   "alertClose": "Cerrar",
   "alertTechnicalDetail": "Detalles técnicos",
 
-  "prefTitle": "Preferencias — Audio y MIDI",
+  "prefTitle": "Preferencias — Audio, MIDI y control remoto",
   "prefSectionLanguage": "Idioma",
   "prefLanguageSystem": "Seguir al sistema",
   "prefOutputDevice": "Dispositivo de salida",
@@ -293,5 +294,22 @@
   "aiGenerateAtPlayhead": "Generar clip con IA…",
   "aiToolbarButton": "IA",
   "aiToolbarTooltip": "Generar un clip con IA en la pista de instrumento seleccionada",
-  "aiNoInstrumentTrack": "Crea o selecciona una pista de instrumento para generar con IA."
+  "aiNoInstrumentTrack": "Crea o selecciona una pista de instrumento para generar con IA.",
+  "prefSectionRemote": "Control remoto",
+  "prefRemoteEnable": "Activar control remoto por LAN",
+  "prefRemotePort": "Puerto",
+  "prefRemoteCode": "Código de emparejamiento",
+  "prefRemoteCopy": "Copiar",
+  "prefRemoteCopied": "Código copiado",
+  "prefRemoteNewCode": "Nuevo código",
+  "prefRemoteAddress": "Dirección",
+  "prefRemoteClients": "{count} cliente(s) conectado(s)",
+  "@prefRemoteClients": { "placeholders": { "count": { "type": "int" } } },
+  "prefRemoteRunning": "Servidor activo en el puerto {port}",
+  "@prefRemoteRunning": { "placeholders": { "port": { "type": "int" } } },
+  "prefRemoteStopped": "Servidor detenido",
+  "prefRemoteWarning": "Cualquiera en tu red local que tenga el código puede controlar esta DAW.",
+  "prefRemoteError": "No se pudo iniciar: {error}",
+  "@prefRemoteError": { "placeholders": { "error": { "type": "String" } } },
+  "prefRemoteHelp": "Abre la app remota y escribe esta dirección y el código."
 }

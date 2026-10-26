@@ -45,6 +45,7 @@ abstract final class CadenceResult {
   static const errorInvalidArgument = 5;
   static const errorNotFound = 6;
   static const errorRenderFailed = 7;
+  static const errorNetwork = 8;
 }
 
 /// High-level handle around one CadenceEngine instance.
@@ -375,6 +376,18 @@ final class CadenceEngine {
         Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32),
         Pointer<Utf8> Function(Pointer<Void>, int, int, int,
             int)>('cadence_engine_plugin_param_name');
+    _pluginParamValue = _lib.lookupFunction<
+        Float Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        double Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_value');
+    _pluginParamText = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_text');
+    _setPluginParamValue = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32, Int32, Float),
+        int Function(Pointer<Void>, int, int, int, int,
+            double)>('cadence_engine_set_plugin_param_value');
     _trackLaneAutoAt = _lib.lookupFunction<
         Int32 Function(Pointer<Void>, Int64, Int32, Int32, Pointer<Double>,
             Pointer<Double>),
@@ -513,6 +526,29 @@ final class CadenceEngine {
             int)>('cadence_engine_render_ex');
     _lastError = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
         Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_last_error');
+
+    // ---- remote control (LAN WebSocket server) ----
+    _remoteStart = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int32, Pointer<Utf8>),
+        int Function(Pointer<Void>, int,
+            Pointer<Utf8>)>('cadence_engine_remote_start');
+    _remoteStop = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_remote_stop');
+    _remoteRunning = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_remote_running');
+    _remotePort = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_remote_port');
+    _remoteClientCount = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_remote_client_count');
+    _remoteToken = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
+        Pointer<Utf8> Function(Pointer<Void>)>('cadence_engine_remote_token');
+    _remoteLastError = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
+        Pointer<Utf8> Function(Pointer<Void>)>(
+        'cadence_engine_remote_last_error');
+    _pumpRemote = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_pump_remote');
+    _projectRevision = _lib.lookupFunction<Uint64 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_project_revision');
 
     // ---- AI clip generation ----
     _setAiModelDir = _lib.lookupFunction<Void Function(Pointer<Void>, Pointer<Utf8>),
@@ -733,6 +769,12 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int, int, int) _pluginParamCount;
   late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int)
       _pluginParamName;
+  late final double Function(Pointer<Void>, int, int, int, int)
+      _pluginParamValue;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int)
+      _pluginParamText;
+  late final int Function(Pointer<Void>, int, int, int, int, double)
+      _setPluginParamValue;
 
   late final int Function(Pointer<Void>, int, int, Pointer<Double>, Pointer<Double>)
       _trackVolumeAutoAt;
@@ -777,6 +819,17 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, Pointer<Utf8>, double, int) _renderEx;
   late final Pointer<Utf8> Function(Pointer<Void>) _lastError;
 
+  // ---- remote control (LAN WebSocket server) ----
+  late final int Function(Pointer<Void>, int, Pointer<Utf8>) _remoteStart;
+  late final void Function(Pointer<Void>) _remoteStop;
+  late final int Function(Pointer<Void>) _remoteRunning;
+  late final int Function(Pointer<Void>) _remotePort;
+  late final int Function(Pointer<Void>) _remoteClientCount;
+  late final Pointer<Utf8> Function(Pointer<Void>) _remoteToken;
+  late final Pointer<Utf8> Function(Pointer<Void>) _remoteLastError;
+  late final int Function(Pointer<Void>) _pumpRemote;
+  late final int Function(Pointer<Void>) _projectRevision;
+
   // ---- AI clip generation ----
   late final void Function(Pointer<Void>, Pointer<Utf8>) _setAiModelDir;
   late final Pointer<Utf8> Function(Pointer<Void>) _aiModelDir;
@@ -799,6 +852,32 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, Pointer<Int64>) _applyAiGeneration;
 
   String get lastError => _lastError(_handle).toDartString();
+
+  // ---- remote control (LAN WebSocket server) ----
+
+  /// Starts (or restarts) the LAN control server. [port] 0 picks an ephemeral
+  /// port; an empty [token] makes the engine generate a 6-digit pairing code.
+  int startRemoteServer({int port = 0, String token = ''}) {
+    final tokenPtr = token.toNativeUtf8();
+    try {
+      return _remoteStart(_handle, port, tokenPtr);
+    } finally {
+      calloc.free(tokenPtr);
+    }
+  }
+
+  void stopRemoteServer() => _remoteStop(_handle);
+  bool get remoteServerRunning => _remoteRunning(_handle) != 0;
+  int get remoteServerPort => _remotePort(_handle);
+  int get remoteServerClientCount => _remoteClientCount(_handle);
+  String get remoteServerToken => _remoteToken(_handle).toDartString();
+  String get remoteServerLastError => _remoteLastError(_handle).toDartString();
+
+  /// Drains queued remote commands. Must run on the engine's message thread.
+  int pumpRemoteCommands() => _pumpRemote(_handle);
+
+  /// Monotonic document revision, bumped on every edit/undo/load.
+  int get projectRevision => _projectRevision(_handle);
 
   int initialise() => _initialise(_handle);
 
@@ -993,6 +1072,20 @@ final class CadenceEngine {
           int trackId, int slotKind, int slotIndex, int paramIndex) =>
       _pluginParamName(_handle, trackId, slotKind, slotIndex, paramIndex)
           .toDartString();
+  /// Normalised (0..1) parameter value.
+  double pluginParamValue(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamValue(_handle, trackId, slotKind, slotIndex, paramIndex);
+  /// Human-readable parameter value (e.g. "3.5 dB").
+  String pluginParamText(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamText(_handle, trackId, slotKind, slotIndex, paramIndex)
+          .toDartString();
+  /// Sets a normalised (0..1) value on the live plug-in. Message thread only.
+  bool setPluginParamValue(int trackId, int slotKind, int slotIndex,
+          int paramIndex, double value) =>
+      _setPluginParamValue(
+          _handle, trackId, slotKind, slotIndex, paramIndex, value) == 0;
 
   /// (time, value) of the automation point at [index] in [lane].
   (double, double) trackLaneAutoAt(int trackId, int lane, int index) {

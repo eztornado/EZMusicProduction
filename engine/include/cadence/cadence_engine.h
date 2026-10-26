@@ -24,7 +24,8 @@ typedef enum CadenceResult {
     kCadenceErrorAudioDevice = 4,
     kCadenceErrorInvalidArgument = 5,
     kCadenceErrorNotFound = 6,
-    kCadenceErrorRenderFailed = 7
+    kCadenceErrorRenderFailed = 7,
+    kCadenceErrorNetwork = 8
 } CadenceResult;
 
 CadenceEngine* cadence_engine_create(void);
@@ -150,6 +151,23 @@ const char* cadence_engine_plugin_param_name(CadenceEngine* engine,
                                              CadenceTrackId track_id,
                                              int slot_kind, int slot_index,
                                              int param_index);
+/* Normalised (0..1) parameter value / human-readable text. Used by the remote
+   control API to adjust effects and instruments. */
+float cadence_engine_plugin_param_value(CadenceEngine* engine,
+                                        CadenceTrackId track_id,
+                                        int slot_kind, int slot_index,
+                                        int param_index);
+const char* cadence_engine_plugin_param_text(CadenceEngine* engine,
+                                             CadenceTrackId track_id,
+                                             int slot_kind, int slot_index,
+                                             int param_index);
+/* Sets a normalised (0..1) value on the live plug-in. Message thread only. */
+CadenceResult cadence_engine_set_plugin_param_value(CadenceEngine* engine,
+                                                    CadenceTrackId track_id,
+                                                    int slot_kind,
+                                                    int slot_index,
+                                                    int param_index,
+                                                    float value);
 /* Write mode (§7.12 v1.5, the W button): inserts or replaces one point at
    the given time. */
 CadenceResult cadence_engine_set_track_volume_auto_point_at(CadenceEngine* engine,
@@ -549,6 +567,27 @@ int cadence_engine_is_previewing(CadenceEngine* engine);
 
 /* Convenience (phase 1 API): a one-track project with the whole file. */
 CadenceResult cadence_engine_load_file(CadenceEngine* engine, const char* utf8_path);
+
+/* ---- remote control (WebSocket + JSON, LAN) ----
+   Starts a control server for the companion remote app. Pass port 0 for an
+   ephemeral port and an empty/NULL token to let the engine generate a 6-digit
+   pairing code. The token and the actual port can be read with the getters.
+   The protocol is documented in docs/design/remote-control.md. */
+CadenceResult cadence_engine_remote_start(CadenceEngine* engine, int port,
+                                          const char* utf8_token);
+void cadence_engine_remote_stop(CadenceEngine* engine);
+int cadence_engine_remote_running(CadenceEngine* engine);
+int cadence_engine_remote_port(CadenceEngine* engine);
+int cadence_engine_remote_client_count(CadenceEngine* engine);
+/* Pairing code (6 digits) shown by the host UI. */
+const char* cadence_engine_remote_token(CadenceEngine* engine);
+const char* cadence_engine_remote_last_error(CadenceEngine* engine);
+/* Drains queued remote commands on the calling thread. The macOS host calls
+   this from its UI frame ticker; headless tests call it while waiting. Must
+   run on the engine's message thread. Returns the number of commands run. */
+int cadence_engine_pump_remote(CadenceEngine* engine);
+/* Monotonic document revision; changes on every edit/undo/load. */
+uint64_t cadence_engine_project_revision(CadenceEngine* engine);
 
 /* ---- transport ---- */
 

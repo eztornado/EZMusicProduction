@@ -187,6 +187,7 @@ build_app.sh     macOSアプリのビルド、パッケージング、署名
 - [`docs/design/ui-design.md`](docs/design/ui-design.md) — UI仕様：情報アーキテクチャ、ビジュアルシステム、ミキサー、ピアノロール、キーマップ、FFI契約、ロードマップ。
 - [`docs/design/cubase-import.md`](docs/design/cubase-import.md) — `.cpr`リーダーの仕組み、対応範囲、制限事項。
 - [`docs/design/i18n.md`](docs/design/i18n.md) — UIの言語とエラー表示。
+- [`docs/design/remote-control.md`](docs/design/remote-control.md) — LANリモートコントロールサーバー：WebSocket + JSONプロトコル、ペアリング、コマンド、イベント。
 
 ## コントリビュート
 

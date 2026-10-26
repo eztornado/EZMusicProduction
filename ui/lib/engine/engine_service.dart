@@ -156,7 +156,8 @@ class EngineService extends ChangeNotifier {
       : this(dylibPath: null, attachHandleAddress: handleAddress);
 
   EngineService({String? dylibPath, int? attachHandleAddress})
-      : _engine = CadenceEngine(
+      : _ownsEngine = attachHandleAddress == null,
+        _engine = CadenceEngine(
             dylibPath: dylibPath, attachHandleAddress: attachHandleAddress);
 
   int get engineHandleAddress => _engine.handleAddress;
@@ -194,7 +195,11 @@ class EngineService extends ChangeNotifier {
   /// Drains ONE deferred plugin-load job. Called from the app's frame
   /// ticker — the engine's JUCE callAsync is not always pumped in this
   /// host, so without this FX chains stay empty after loading a project.
+  ///
+  /// The same ticker drains remote-control commands: the WebSocket server
+  /// queues mutations and they must run on this (the engine message) thread.
   void pumpPluginJobs() {
+    pumpRemoteCommands();
     if (!_engine.hasPendingPluginJobs) return;
     _engine.pumpOnePluginJob();
     if (!_engine.hasPendingPluginJobs) {
@@ -203,7 +208,42 @@ class EngineService extends ChangeNotifier {
     }
   }
 
+  /// Executes queued remote-control commands and refreshes the UI snapshot if
+  /// they changed the document. Only the window that created the engine pumps
+  /// the queue (sub-windows attach to it and must not touch the server state
+  /// from another isolate).
+  void pumpRemoteCommands() {
+    if (!_ownsEngine || !_engine.remoteServerRunning) return;
+    final before = _engine.projectRevision;
+    _engine.pumpRemoteCommands();
+    if (_engine.projectRevision != before) refresh();
+  }
+
+  // ---- remote control (LAN WebSocket server) ----
+
+  bool get remoteServerRunning => _engine.remoteServerRunning;
+  int get remoteServerPort => _engine.remoteServerPort;
+  int get remoteServerClientCount => _engine.remoteServerClientCount;
+  String get remoteServerToken => _engine.remoteServerToken;
+  String get remoteServerLastError => _engine.remoteServerLastError;
+
+  /// Starts (or restarts) the remote server. Returns null on success, or the
+  /// engine error to show in Preferences.
+  String? startRemoteServer({int port = 47823, String token = ''}) {
+    final code = _engine.startRemoteServer(port: port, token: token);
+    notifyListeners();
+    if (code == CadenceResult.ok) return null;
+    final message = remoteServerLastError;
+    return message.isEmpty ? lastError : message;
+  }
+
+  void stopRemoteServer() {
+    _engine.stopRemoteServer();
+    notifyListeners();
+  }
+
   final CadenceEngine _engine;
+  final bool _ownsEngine;
   ProjectSnapshot _snapshot = const ProjectSnapshot.empty();
   String? statusMessage;
   final Map<String, PeakData> _peakCache = {};
