@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -336,10 +337,22 @@ struct RemoteServer::Client : public std::enable_shared_from_this<Client>
                 return false;
             const int written = socket->write(
                 data + offset, (int) std::min<std::size_t>(size - offset,
-                                                          1024 * 1024));
-            if (written <= 0)
+                                                          256 * 1024));
+            if (written > 0)
+            {
+                offset += (std::size_t) written;
+                continue;
+            }
+
+            // Large state messages can fill the socket's send buffer. JUCE's
+            // write() uses a non-blocking send(), so it may return 0/EAGAIN
+            // even when the connection is healthy. Wait for writability and
+            // retry instead of dropping the rest of the frame.
+            if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK
+                && errno != EINTR)
                 return false;
-            offset += (std::size_t) written;
+            if (socket->waitUntilReady(false, 200) < 0)
+                return false;
         }
         return true;
     }
