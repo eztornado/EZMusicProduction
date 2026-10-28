@@ -22,6 +22,7 @@ import 'ui/ai_generation_dialog.dart'
     show defaultAiModeForTrack, showAiGenerationDialog;
 import 'ui/app_alert.dart';
 import 'ui/automation_lane.dart';
+import 'ui/design.dart';
 import 'ui/export_dialog.dart';
 import 'ui/sound_library_dialog.dart';
 import 'ui/mixer_zone.dart';
@@ -41,27 +42,30 @@ Future<void> main(List<String> args) async {
   RemoteSettings.load();
   // Sub-window engines relaunch main with ['multi_window', windowId, json].
   if (args.isNotEmpty && args[0] == 'multi_window') {
-    final conf = args.length > 2 && args[2].isNotEmpty
-        ? (jsonDecode(args[2]) as Map<String, dynamic>)
-        : <String, dynamic>{};
+    final conf =
+        args.length > 2 && args[2].isNotEmpty
+            ? (jsonDecode(args[2]) as Map<String, dynamic>)
+            : <String, dynamic>{};
     final handle = (conf['engine'] as num).toInt();
     final service = EngineService.attachEngine(handle);
     service.refresh();
     // Own frame tick + periodic snapshot refresh (this isolate has no UI
     // ticker tied to the main window).
     final frameTick = ValueNotifier<int>(0);
-    Timer.periodic(const Duration(milliseconds: 33),
-        (_) => frameTick.value++);
+    Timer.periodic(const Duration(milliseconds: 33), (_) => frameTick.value++);
     Timer.periodic(const Duration(milliseconds: 150), (_) {
       service.pumpPluginJobs();
       service.refresh();
     });
     WindowController.fromCurrentEngine(); // binds this engine to its window
-    runApp(SubWindowApp(
+    runApp(
+      SubWindowApp(
         panel: conf['panel'] as String? ?? 'mixer',
         clipId: conf['clipId'] as int? ?? -1,
         service: service,
-        frameTick: frameTick));
+        frameTick: frameTick,
+      ),
+    );
     return;
   }
   runApp(const CadenceApp());
@@ -86,24 +90,25 @@ class SubWindowApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Locale?>(
       valueListenable: appLocale,
-      builder: (context, locale, _) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        locale: locale,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        // `supportedUiLocales` (y no la lista generada, que va en orden
-        // alfabetico) para que el idioma de reserva — sistema en un idioma que
-        // no hablamos — sea el espanol, no el ingles.
-        supportedLocales: supportedUiLocales,
-        onGenerateTitle: (context) => context.l10n.appTitle,
-        builder: (context, child) {
-          L10n.bind(context.l10n);
-          return child ?? const SizedBox.shrink();
-        },
-        theme: cadenceTheme(),
-        // El cuerpo se construye DENTRO del MaterialApp: necesita contexto de
-        // traducciones (y `panel` puede ser 'piano_roll' sin clip).
-        home: Builder(builder: (context) => Scaffold(body: _body(context))),
-      ),
+      builder:
+          (context, locale, _) => MaterialApp(
+            debugShowCheckedModeBanner: false,
+            locale: locale,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            // `supportedUiLocales` (y no la lista generada, que va en orden
+            // alfabetico) para que el idioma de reserva — sistema en un idioma que
+            // no hablamos — sea el espanol, no el ingles.
+            supportedLocales: supportedUiLocales,
+            onGenerateTitle: (context) => context.l10n.appTitle,
+            builder: (context, child) {
+              L10n.bind(context.l10n);
+              return child ?? const SizedBox.shrink();
+            },
+            theme: cadenceTheme(),
+            // El cuerpo se construye DENTRO del MaterialApp: necesita contexto de
+            // traducciones (y `panel` puede ser 'piano_roll' sin clip).
+            home: Builder(builder: (context) => Scaffold(body: _body(context))),
+          ),
     );
   }
 
@@ -111,12 +116,14 @@ class SubWindowApp extends StatelessWidget {
     switch (panel) {
       case 'piano_roll':
         return clipId > 0
-            ? PianoRoll(
-                service: service, clipId: clipId, frameTick: frameTick)
+            ? PianoRoll(service: service, clipId: clipId, frameTick: frameTick)
             : Center(child: Text(context.l10n.appNoClip));
       case 'automation':
         return AutomationLane(
-            service: service, frameTick: frameTick, height: null);
+          service: service,
+          frameTick: frameTick,
+          height: null,
+        );
       default:
         return MixerZone(service: service, frameTick: frameTick, height: null);
     }
@@ -125,58 +132,167 @@ class SubWindowApp extends StatelessWidget {
 
 /// Tema oscuro comun a la ventana principal y a las sub-ventanas.
 ThemeData cadenceTheme() => ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xFF16171B),
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF4D9DF7),
-        brightness: Brightness.dark,
-      ),
-    );
+  brightness: Brightness.dark,
+  useMaterial3: true,
+  scaffoldBackgroundColor: AppColors.bgDeep,
+  canvasColor: AppColors.bgDeep,
+  colorScheme: const ColorScheme.dark(
+    primary: AppColors.accent,
+    onPrimary: AppColors.bgDeep,
+    secondary: AppColors.accent,
+    onSecondary: AppColors.bgDeep,
+    surface: AppColors.surface,
+    onSurface: AppColors.text,
+    error: AppColors.danger,
+    onError: AppColors.text,
+    outline: AppColors.border,
+  ),
+  dividerTheme: const DividerThemeData(
+    color: AppColors.border,
+    thickness: 1,
+    space: 1,
+  ),
+  iconTheme: const IconThemeData(color: AppColors.textDim),
+  textTheme: const TextTheme(
+    bodyLarge: TextStyle(color: AppColors.text, fontSize: 13),
+    bodyMedium: TextStyle(color: AppColors.text, fontSize: 12),
+    bodySmall: TextStyle(color: AppColors.textDim, fontSize: 10.5),
+    labelMedium: TextStyle(color: AppColors.textDim, fontSize: 11),
+  ),
+  tooltipTheme: TooltipThemeData(
+    waitDuration: const Duration(milliseconds: 500),
+    decoration: BoxDecoration(
+      color: AppColors.surfaceHigh,
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: AppColors.borderStrong),
+    ),
+    textStyle: const TextStyle(color: AppColors.text, fontSize: 10.5),
+  ),
+  sliderTheme: SliderThemeData(
+    activeTrackColor: AppColors.accent,
+    inactiveTrackColor: AppColors.border,
+    thumbColor: AppColors.text,
+    overlayColor: AppColors.accent.withValues(alpha: 0.12),
+  ),
+  popupMenuTheme: PopupMenuThemeData(
+    color: AppColors.surfaceHigh,
+    surfaceTintColor: Colors.transparent,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(8),
+      side: const BorderSide(color: AppColors.borderStrong),
+    ),
+    textStyle: const TextStyle(color: AppColors.text, fontSize: 12),
+  ),
+  dialogTheme: DialogThemeData(
+    backgroundColor: AppColors.surface,
+    surfaceTintColor: Colors.transparent,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12),
+      side: const BorderSide(color: AppColors.borderStrong),
+    ),
+  ),
+  scrollbarTheme: ScrollbarThemeData(
+    thumbColor: const WidgetStatePropertyAll(AppColors.borderStrong),
+    trackColor: const WidgetStatePropertyAll(Colors.transparent),
+    radius: const Radius.circular(4),
+  ),
+);
 
-class ToggleButton extends StatelessWidget {
-  const ToggleButton({
-    super.key,
-    required this.active,
-    required this.onTap,
+/// Compact toolbar button shared by the desktop shell. Hover and active states
+/// are painted locally (the toolbar is a plain Container, not a Material card).
+class _ToolbarButton extends StatefulWidget {
+  const _ToolbarButton({
     required this.label,
+    required this.onTap,
     this.icon,
+    this.active = false,
+    this.accent = false,
+    this.tooltip,
   });
 
-  final bool active;
-  final VoidCallback onTap;
   final String label;
+  final VoidCallback onTap;
   final IconData? icon;
+  final bool active;
+  final bool accent;
+  final String? tooltip;
+
+  @override
+  State<_ToolbarButton> createState() => _ToolbarButtonState();
+}
+
+class _ToolbarButtonState extends State<_ToolbarButton> {
+  bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 26,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: active ? const Color(0xFF4D9DF7) : const Color(0xFF2C303A),
-          borderRadius: BorderRadius.circular(5),
-          border: Border.all(color: const Color(0xFF3E4350)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(icon,
-                  size: 13,
-                  color: active ? Colors.black : const Color(0xFFE9EBF0)),
-              const SizedBox(width: 4),
-            ],
-            Text(label,
-                style: TextStyle(
-                    fontSize: 11,
+    final foreground =
+        widget.active || widget.accent
+            ? AppColors.accent
+            : (_hovered ? AppColors.text : AppColors.textDim);
+    final background =
+        widget.active
+            ? AppColors.accentSoft
+            : (_hovered
+                ? AppColors.surfaceAlt
+                : (widget.accent
+                    ? AppColors.accentSoft.withValues(alpha: 0.35)
+                    : Colors.transparent));
+    return Tooltip(
+      message: widget.tooltip ?? widget.label,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color:
+                    widget.active
+                        ? AppColors.accent.withValues(alpha: 0.55)
+                        : Colors.transparent,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.icon != null) ...[
+                  Icon(widget.icon, size: 14, color: foreground),
+                  const SizedBox(width: 5),
+                ],
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    fontSize: 10.5,
                     fontWeight: FontWeight.w600,
-                    color: active ? Colors.black : const Color(0xFFE9EBF0))),
-          ],
+                    color: foreground,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _ToolbarSeparator extends StatelessWidget {
+  const _ToolbarSeparator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 16,
+      margin: const EdgeInsets.symmetric(horizontal: 6),
+      color: AppColors.border,
     );
   }
 }
@@ -188,22 +304,23 @@ class CadenceApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Locale?>(
       valueListenable: appLocale,
-      builder: (context, locale, _) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        locale: locale,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        // `supportedUiLocales` (y no la lista generada, que va en orden
-        // alfabetico) para que el idioma de reserva — sistema en un idioma que
-        // no hablamos — sea el espanol, no el ingles.
-        supportedLocales: supportedUiLocales,
-        onGenerateTitle: (context) => context.l10n.appTitle,
-        builder: (context, child) {
-          L10n.bind(context.l10n);
-          return child ?? const SizedBox.shrink();
-        },
-        theme: cadenceTheme(),
-        home: const HomePage(),
-      ),
+      builder:
+          (context, locale, _) => MaterialApp(
+            debugShowCheckedModeBanner: false,
+            locale: locale,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            // `supportedUiLocales` (y no la lista generada, que va en orden
+            // alfabetico) para que el idioma de reserva — sistema en un idioma que
+            // no hablamos — sea el espanol, no el ingles.
+            supportedLocales: supportedUiLocales,
+            onGenerateTitle: (context) => context.l10n.appTitle,
+            builder: (context, child) {
+              L10n.bind(context.l10n);
+              return child ?? const SizedBox.shrink();
+            },
+            theme: cadenceTheme(),
+            home: const HomePage(),
+          ),
     );
   }
 }
@@ -221,6 +338,7 @@ class _HomePageState extends State<HomePage>
   late final Ticker _ticker;
   late final AppLifecycleListener _lifecycle;
   final ValueNotifier<int> _frameTick = ValueNotifier(0);
+
   /// Fatal: la dylib del motor no se pudo cargar (sin servicio no hay app).
   /// Se guarda el error CRUDO; el texto traducido se compone en build().
   String? _dylibError;
@@ -231,7 +349,7 @@ class _HomePageState extends State<HomePage>
   final Map<String, double> _zoneHeights = {
     'piano_roll': 320,
     'automation': 190,
-    'mixer': 260,
+    'mixer': 320,
   };
   String? _visiblePanel; // which zone is docked right now
 
@@ -289,10 +407,9 @@ class _HomePageState extends State<HomePage>
       'engine': service.engineHandleAddress,
       'title': title,
     });
-    final controller = await WindowController.create(WindowConfiguration(
-      arguments: conf,
-      hiddenAtLaunch: false,
-    ));
+    final controller = await WindowController.create(
+      WindowConfiguration(arguments: conf, hiddenAtLaunch: false),
+    );
     await controller.show();
     setState(() {
       _undocked[panel] = controller.windowId;
@@ -305,10 +422,11 @@ class _HomePageState extends State<HomePage>
     try {
       final all = await WindowController.getAll();
       final alive = all.map((w) => w.windowId).toSet();
-      final closed = _undocked.entries
-          .where((e) => !alive.contains(e.value))
-          .map((e) => e.key)
-          .toList();
+      final closed =
+          _undocked.entries
+              .where((e) => !alive.contains(e.value))
+              .map((e) => e.key)
+              .toList();
       if (closed.isEmpty) return;
       setState(() {
         for (final panel in closed) {
@@ -387,32 +505,34 @@ class _HomePageState extends State<HomePage>
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Text(
-                _dylibError == null
-                    ? context.l10n.appEngineUnavailable
-                    : context.l10n.appDylibError(_dylibError!),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFFE5484D))),
+              _dylibError == null
+                  ? context.l10n.appEngineUnavailable
+                  : context.l10n.appDylibError(_dylibError!),
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFFE5484D)),
+            ),
           ),
         ),
       );
     }
 
     // Which lower zone is docked right now (divider + per-panel heights).
-    _visiblePanel = _editorOpen && service.editorClipId != null
-        ? 'piano_roll'
-        : service.mixerOpen
+    _visiblePanel =
+        _editorOpen && service.editorClipId != null
+            ? 'piano_roll'
+            : service.mixerOpen
             ? 'mixer'
             : service.automationOpen
-                ? 'automation'
-                : null;
+            ? 'automation'
+            : null;
 
     return Scaffold(
       body: CallbackShortcuts(
         bindings: {
-          const SingleActivator(LogicalKeyboardKey.keyS, meta: true): () =>
-              _saveProject(context),
-          const SingleActivator(LogicalKeyboardKey.keyO, meta: true): () =>
-              showOpenDialog(context, service),
+          const SingleActivator(LogicalKeyboardKey.keyS, meta: true):
+              () => _saveProject(context),
+          const SingleActivator(LogicalKeyboardKey.keyO, meta: true):
+              () => showOpenDialog(context, service),
           const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () {
             final error = service.newEmptyProject();
             if (error != null) showAppError(context, error);
@@ -449,229 +569,294 @@ class _HomePageState extends State<HomePage>
         child: Focus(
           autofocus: true,
           child: Column(
-        children: [
-          // Toolbar v0: project actions + views + status. Menú real §5.2.
-          Container(
-            height: 40,
-            color: const Color(0xFF1E2026),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () => showAboutAppDialog(context),
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: Text(context.l10n.projectAppName,
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
-                  ),
+            children: [
+              // Toolbar: proyecto + vistas + estado. La distribución no cambia
+              // (barra superior, timeline, zona inferior, transporte); solo el
+              // lenguaje visual: botones compactos, un único acento y jerarquía.
+              Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: const BoxDecoration(
+                  color: AppColors.bgPanel,
+                  border: Border(bottom: BorderSide(color: AppColors.border)),
                 ),
-                const SizedBox(width: 12),
-                OutlinedButton(
-                  onPressed: () {
-                    final error = service.newEmptyProject();
-                    if (error != null) showAppError(context, error);
-                  },
-                  child: Text(context.l10n.appMenuNew),
-                ),
-                const SizedBox(width: 6),
-                OutlinedButton(
-                  onPressed: () => showOpenDialog(context, service),
-                  child: Text(context.l10n.appMenuOpen),
-                ),
-                const SizedBox(width: 6),
-                OutlinedButton(
-                  onPressed: () => _saveProject(context),
-                  child: Text(context.l10n.appMenuSave),
-                ),
-                OutlinedButton(
-                  onPressed: () => showExportDialog(context, service),
-                  child: Text(context.l10n.appMenuExport),
-                ),
-
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: () => showSoundLibraryDialog(context, service),
-                  icon: const Icon(Icons.library_music, size: 18),
-                  label: Text(context.l10n.appMenuSounds),
-                ),
-
-                const SizedBox(width: 8),
-                Tooltip(
-                  message: context.l10n.aiToolbarTooltip,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _openAiGeneration(),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF7FB7FF),
-                      side: const BorderSide(color: Color(0xFF3A5F8A)),
-                    ),
-                    icon: const Icon(Icons.auto_awesome,
-                        size: 18, color: Color(0xFF7FB7FF)),
-                    label: Text(context.l10n.aiToolbarButton),
-                  ),
-                ),
-
-                const SizedBox(width: 8),
-                ToggleButton(
-                  active: service.snapToGrid,
-                  onTap: () {
-                    service.toggleSnapToGrid();
-                    setState(() {});
-                  },
-                  label: context.l10n.appMenuGrid,
-                  icon: Icons.grid_on,
-                ),
-                const SizedBox(width: 6),
-                ToggleButton(
-                  active: service.mixerOpen,
-                  onTap: () {
-                    service.toggleMixerOpen();
-                    setState(() {});
-                  },
-                  label: context.l10n.appMenuMixer,
-                  icon: Icons.equalizer,
-                ),
-                const SizedBox(width: 6),
-                ToggleButton(
-                  active: _editorOpen,
-                  onTap: () {
-                    final service = _service;
-                    if (service == null) return;
-                    if (_editorOpen) {
-                      service.closeEditor();
-                    } else if (service.selectedClipIsMidi) {
-                      service.openEditor(service.selectedClipId!);
-                    }
-                    setState(() {});
-                  },
-                  label: context.l10n.appMenuPianoRoll,
-                  icon: Icons.piano,
-                ),
-                const SizedBox(width: 6),
-                ToggleButton(
-                  active: service.automationOpen,
-                  onTap: () {
-                    service.toggleAutomationOpen();
-                    setState(() {});
-                  },
-                  label: context.l10n.appMenuAutomation,
-                  icon: Icons.show_chart,
-                ),
-                ListenableBuilder(
-                  listenable: service,
-                  builder: (context, _) {
-                    final running = service.remoteServerRunning;
-                    return IconButton(
-                      tooltip: context.l10n.appMenuRemote,
-                      icon: Icon(
-                        running ? Icons.wifi_tethering : Icons.wifi_tethering_off,
-                        size: 18,
-                        color: running
-                            ? const Color(0xFF3DD68C)
-                            : const Color(0xFFE9EBF0),
+                child: Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => showAboutAppDialog(context),
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 22,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                color: AppColors.accentSoft,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: AppColors.accent.withValues(
+                                    alpha: 0.45,
+                                  ),
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.graphic_eq_rounded,
+                                size: 14,
+                                color: AppColors.accent,
+                              ),
+                            ),
+                            const SizedBox(width: 7),
+                            Text(
+                              context.l10n.projectAppName,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.1,
+                                color: AppColors.text,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      onPressed: () =>
-                          showRemoteControlDialog(context, service),
-                    );
+                    ),
+                    const SizedBox(width: 10),
+                    const _ToolbarSeparator(),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _ToolbarButton(
+                              icon: Icons.note_add_outlined,
+                              label: context.l10n.appMenuNew,
+                              onTap: () {
+                                final error = service.newEmptyProject();
+                                if (error != null) showAppError(context, error);
+                              },
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.folder_open_outlined,
+                              label: context.l10n.appMenuOpen,
+                              onTap: () => showOpenDialog(context, service),
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.save_outlined,
+                              label: context.l10n.appMenuSave,
+                              onTap: () => _saveProject(context),
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.ios_share_rounded,
+                              label: context.l10n.appMenuExport,
+                              onTap: () => showExportDialog(context, service),
+                            ),
+                            const SizedBox(width: 3),
+                            const _ToolbarSeparator(),
+                            const SizedBox(width: 1),
+                            _ToolbarButton(
+                              icon: Icons.library_music_outlined,
+                              label: context.l10n.appMenuSounds,
+                              onTap:
+                                  () =>
+                                      showSoundLibraryDialog(context, service),
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.auto_awesome,
+                              label: context.l10n.aiToolbarButton,
+                              accent: true,
+                              tooltip: context.l10n.aiToolbarTooltip,
+                              onTap: _openAiGeneration,
+                            ),
+                            const SizedBox(width: 3),
+                            const _ToolbarSeparator(),
+                            const SizedBox(width: 1),
+                            _ToolbarButton(
+                              icon: Icons.grid_on_rounded,
+                              label: context.l10n.appMenuGrid,
+                              active: service.snapToGrid,
+                              onTap: () {
+                                service.toggleSnapToGrid();
+                                setState(() {});
+                              },
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.equalizer_rounded,
+                              label: context.l10n.appMenuMixer,
+                              active: service.mixerOpen,
+                              onTap: () {
+                                service.toggleMixerOpen();
+                                setState(() {});
+                              },
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.piano_rounded,
+                              label: context.l10n.appMenuPianoRoll,
+                              active: _editorOpen,
+                              onTap: () {
+                                final service = _service;
+                                if (service == null) return;
+                                if (_editorOpen) {
+                                  service.closeEditor();
+                                } else if (service.selectedClipIsMidi) {
+                                  service.openEditor(service.selectedClipId!);
+                                }
+                                setState(() {});
+                              },
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.show_chart_rounded,
+                              label: context.l10n.appMenuAutomation,
+                              active: service.automationOpen,
+                              onTap: () {
+                                service.toggleAutomationOpen();
+                                setState(() {});
+                              },
+                            ),
+                            const SizedBox(width: 3),
+                            const _ToolbarSeparator(),
+                            const SizedBox(width: 1),
+                            ListenableBuilder(
+                              listenable: service,
+                              builder: (context, _) {
+                                final running = service.remoteServerRunning;
+                                return _ToolbarButton(
+                                  icon:
+                                      running
+                                          ? Icons.wifi_tethering
+                                          : Icons.wifi_tethering_off,
+                                  label: context.l10n.appMenuRemote,
+                                  active: running,
+                                  onTap:
+                                      () => showRemoteControlDialog(
+                                        context,
+                                        service,
+                                      ),
+                                );
+                              },
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.settings_outlined,
+                              label: '',
+                              tooltip: context.l10n.appMenuPreferences,
+                              onTap:
+                                  () => showPreferencesDialog(context, service),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 200,
+                      child: Text(
+                        context.l10n.appStatusLine(
+                          '${service.trackCount}',
+                          service.snapshot.durationSeconds.toStringAsFixed(2),
+                        ),
+                        textAlign: TextAlign.right,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textFaint,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: AppColors.border),
+              Expanded(
+                child: TimelineView(
+                  service: service,
+                  frameTick: _frameTick,
+                  onOpenMidiEditor: (clipId) {
+                    service.openEditor(clipId);
+                    service.closeMixer();
+                    setState(() {});
                   },
                 ),
-                IconButton(
-                  tooltip: context.l10n.appMenuPreferences,
-                  icon: const Icon(Icons.settings, size: 18,
-                      color: Color(0xFFE9EBF0)),
-                  onPressed: () =>
-                      showPreferencesDialog(context, service),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    context.l10n.appStatusLine(
-                        '${service.trackCount}',
-                        service.snapshot.durationSeconds.toStringAsFixed(2)),
-                    style: const TextStyle(
-                        fontSize: 11, color: Color(0xFF9BA1AE)),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: Color(0xFF32363F)),
-          Expanded(
-            child: TimelineView(
-              service: service,
-              frameTick: _frameTick,
-              onOpenMidiEditor: (clipId) {
-                service.openEditor(clipId);
-                service.closeMixer();
-                setState(() {});
-              },
-            ),
-          ),
-          // Undocked zones live in their own window; the main window hides
-          // them so the tracks get the space. Closing the sub-window re-docks.
-          if (_visiblePanel != null) ...[
-            // Divider between tracks and the lower zone: DRAG vertically to
-            // give the zone more/less vertical space (Cubase-style).
-            GestureDetector(
-              onVerticalDragUpdate: (d) {
-                final panel = _visiblePanel!;
-                setState(() {
-                  _zoneHeights[panel] =
-                      ((_zoneHeights[panel] ?? 260) - d.delta.dy)
+              ),
+              // Undocked zones live in their own window; the main window hides
+              // them so the tracks get the space. Closing the sub-window re-docks.
+              if (_visiblePanel != null) ...[
+                // Divider between tracks and the lower zone: DRAG vertically to
+                // give the zone more/less vertical space (Cubase-style).
+                GestureDetector(
+                  onVerticalDragUpdate: (d) {
+                    final panel = _visiblePanel!;
+                    setState(() {
+                      _zoneHeights[panel] = ((_zoneHeights[panel] ?? 260) -
+                              d.delta.dy)
                           .clamp(_minZoneHeight, double.infinity);
-                });
-              },
-              child: MouseRegion(
-                cursor: SystemMouseCursors.resizeRow,
-                child: Container(
-                  height: 8,
-                  color: const Color(0xFF32363F),
-                  alignment: Alignment.center,
-                  child: Container(
-                    width: 44,
-                    height: 2,
-                    color: const Color(0xFF5C6270),
+                    });
+                  },
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.resizeRow,
+                    child: Container(
+                      height: 8,
+                      color: AppColors.bgPanel,
+                      alignment: Alignment.center,
+                      child: Container(
+                        width: 44,
+                        height: 2,
+                        color: AppColors.borderStrong,
+                      ),
+                    ),
                   ),
                 ),
+                if (_visiblePanel == 'piano_roll' &&
+                    !_undocked.containsKey('piano_roll'))
+                  SizedBox(
+                    height: _zoneHeight('piano_roll'),
+                    child: PianoRoll(
+                      service: service,
+                      clipId: service.editorClipId!,
+                      frameTick: _frameTick,
+                      onUndock:
+                          () => _undock(
+                            'piano_roll',
+                            context.l10n.appWindowPianoRoll,
+                            clipId: service.editorClipId!,
+                          ),
+                    ),
+                  )
+                else if (_visiblePanel == 'mixer' &&
+                    !_undocked.containsKey('mixer'))
+                  SizedBox(
+                    height: _zoneHeight('mixer'),
+                    child: MixerZone(
+                      service: service,
+                      frameTick: _frameTick,
+                      onUndock:
+                          () => _undock('mixer', context.l10n.appWindowMixer),
+                    ),
+                  )
+                else if (_visiblePanel == 'automation' &&
+                    !_undocked.containsKey('automation'))
+                  SizedBox(
+                    height: _zoneHeight('automation'),
+                    child: AutomationLane(
+                      service: service,
+                      frameTick: _frameTick,
+                      onUndock:
+                          () => _undock(
+                            'automation',
+                            context.l10n.appWindowAutomation,
+                          ),
+                    ),
+                  ),
+                const Divider(height: 1, color: AppColors.border),
+              ],
+              TransportBar(
+                service: service,
+                frameTick: _frameTick,
+                onError: (error) => showAppError(context, error),
               ),
-            ),
-            if (_visiblePanel == 'piano_roll' &&
-                !_undocked.containsKey('piano_roll'))
-              SizedBox(
-                height: _zoneHeight('piano_roll'),
-                child: PianoRoll(
-                    service: service,
-                    clipId: service.editorClipId!,
-                    frameTick: _frameTick,
-                    onUndock: () => _undock(
-                        'piano_roll', context.l10n.appWindowPianoRoll,
-                        clipId: service.editorClipId!)),
-              )
-            else if (_visiblePanel == 'mixer' &&
-                !_undocked.containsKey('mixer'))
-              SizedBox(
-                height: _zoneHeight('mixer'),
-                child: MixerZone(
-                    service: service,
-                    frameTick: _frameTick,
-                    onUndock: () => _undock(
-                        'mixer', context.l10n.appWindowMixer)),
-              )
-            else if (_visiblePanel == 'automation' &&
-                !_undocked.containsKey('automation'))
-              SizedBox(
-                height: _zoneHeight('automation'),
-                child: AutomationLane(
-                    service: service,
-                    frameTick: _frameTick,
-                    onUndock: () => _undock(
-                        'automation', context.l10n.appWindowAutomation)),
-              ),
-            const Divider(height: 1, color: Color(0xFF32363F)),
-          ],
-          TransportBar(service: service, frameTick: _frameTick,
-              onError: (error) => showAppError(context, error)),
-        ],
+            ],
           ),
         ),
       ),

@@ -21,16 +21,32 @@ import 'add_track_dialog.dart' show showAddTrackDialog;
 import 'ai_generation_dialog.dart'
     show defaultAiModeForTrack, showAiGenerationDialog;
 import 'channel_settings_dialog.dart' show showChannelSettingsDialog;
+import 'design.dart';
 import 'plugin_picker_dialog.dart' show showPluginPickerDialog;
 
 const double kPixelsPerSecond = 90;
 const double kTrackRowHeight = 64;
-const double kRulerHeight = 26;
+const double kRulerHeight = 28;
 const double kTimelineWidthSeconds = 60;
 const double kHeaderWidth = 220;
 const double kEdgeHotZonePx = 18; // trim from the clip corners (Mixcraft-style)
 const double kFadeHandleSize = 10;
 const double kMinClipSeconds = 0.05;
+
+// Clips nearly fill their lane (8 px breathing room top/bottom), like the
+// remote app and a real console arrangement. Keep this in one place: hit
+// testing, painting and the rubber band all derive from clipContentRect.
+const double kClipTopInset = 8;
+const double kClipBottomInset = 8;
+
+/// Height of the per-track automation strip (volume lane) shown when the
+/// timeline overlay is enabled. It is an ADDITION under the clip lane, as in
+/// the mobile companion: the arrangement never reflows, it just grows by one
+/// compact strip per track.
+const double kAutomationLaneHeight = 34;
+
+double trackStride({bool automation = false}) =>
+    kTrackRowHeight + (automation ? kAutomationLaneHeight : 0);
 
 const double kSnapBeatSeconds = 0.5; // default; overridden by project tempo
 
@@ -42,25 +58,41 @@ const double kAutoScrollMaxStepPx = 22;
 
 /// Clip rectangle in timeline content coordinates (x = seconds * pps,
 /// y = ruler + track row). Shared by painting, hit-testing and the marquee.
-Rect clipContentRect(ClipInfo clip, int trackIndex,
-    {double pixelsPerSecond = kPixelsPerSecond}) {
+Rect clipContentRect(
+  ClipInfo clip,
+  int trackIndex, {
+  double pixelsPerSecond = kPixelsPerSecond,
+  bool automationOverlay = false,
+}) {
   return Rect.fromLTWH(
     clip.start * pixelsPerSecond,
-    kRulerHeight + trackIndex * kTrackRowHeight + 22,
+    kRulerHeight +
+        trackIndex * trackStride(automation: automationOverlay) +
+        kClipTopInset,
     math.max(4.0, clip.length * pixelsPerSecond),
-    kTrackRowHeight - 32,
+    kTrackRowHeight - kClipTopInset - kClipBottomInset,
   );
 }
 
 /// Ids of every clip whose painted rectangle intersects [rect], in visual
 /// order (track row, then clip-list order). Used by the rubber band.
-Set<int> clipsIntersecting(ProjectSnapshot snapshot, Rect rect,
-    {double pixelsPerSecond = kPixelsPerSecond}) {
+Set<int> clipsIntersecting(
+  ProjectSnapshot snapshot,
+  Rect rect, {
+  double pixelsPerSecond = kPixelsPerSecond,
+  bool automationOverlay = false,
+}) {
   final hits = <int>{};
   for (var row = 0; row < snapshot.tracks.length; row++) {
     for (final clip in snapshot.tracks[row].clips) {
       if (rect.overlaps(
-          clipContentRect(clip, row, pixelsPerSecond: pixelsPerSecond))) {
+        clipContentRect(
+          clip,
+          row,
+          pixelsPerSecond: pixelsPerSecond,
+          automationOverlay: automationOverlay,
+        ),
+      )) {
         hits.add(clip.id);
       }
     }
@@ -129,9 +161,16 @@ class _ClipDraw {
   ProjectSnapshot snapshot,
   Offset local, {
   double pixelsPerSecond = kPixelsPerSecond,
+  bool automationOverlay = false,
 }) {
-  final row = ((local.dy - kRulerHeight) / kTrackRowHeight).floor();
+  final stride = trackStride(automation: automationOverlay);
+  final row = ((local.dy - kRulerHeight) / stride).floor();
   if (row < 0 || row >= snapshot.tracks.length) return null;
+  // The automation strip is not a clip: clicks there belong to the lane.
+  if (automationOverlay &&
+      local.dy - kRulerHeight - row * stride >= kTrackRowHeight) {
+    return null;
+  }
   final seconds = local.dx / pixelsPerSecond;
   // TOPMOST clip wins: clips paint in list order, so the visually-on-top
   // one is the LAST containing the point (overlapping pastes otherwise
@@ -160,13 +199,20 @@ class _ClipDraw {
   int? selectedClipId,
   Offset local, {
   double pixelsPerSecond = kPixelsPerSecond,
+  bool automationOverlay = false,
 }) {
   if (selectedClipId == null) return null;
-  final row = ((local.dy - kRulerHeight) / kTrackRowHeight).floor();
+  final stride = trackStride(automation: automationOverlay);
+  final row = ((local.dy - kRulerHeight) / stride).floor();
   if (row < 0 || row >= snapshot.tracks.length) return null;
+  if (automationOverlay &&
+      local.dy - kRulerHeight - row * stride >= kTrackRowHeight) {
+    return null;
+  }
   for (final clip in snapshot.tracks[row].clips) {
     if (clip.id != selectedClipId) continue;
-    final top = kRulerHeight + row * kTrackRowHeight + 22;
+    final top =
+        kRulerHeight + row * stride + kClipTopInset;
     final leftPx = clip.start * pixelsPerSecond;
     final rightPx = clip.end * pixelsPerSecond;
     final inZone = Rect.fromLTWH(leftPx, top, kFadeHandleSize, kFadeHandleSize);
@@ -187,8 +233,14 @@ int? hitTestClip(
   ProjectSnapshot snapshot,
   Offset local, {
   double pixelsPerSecond = kPixelsPerSecond,
+  bool automationOverlay = false,
 }) =>
-    hitTestClipEdge(snapshot, local, pixelsPerSecond: pixelsPerSecond)?.clip.id;
+    hitTestClipEdge(
+      snapshot,
+      local,
+      pixelsPerSecond: pixelsPerSecond,
+      automationOverlay: automationOverlay,
+    )?.clip.id;
 
 double snapSeconds(
   double raw, {
@@ -224,6 +276,21 @@ class _TimelineViewState extends State<TimelineView> {
   // posiciones múltiples) y con él, el enrutado de la rueda.
   final ScrollController _headerVScroll = ScrollController();
   double _pps = kPixelsPerSecond;
+
+  /// Per-track volume automation strips under the clips, as in the mobile
+  /// companion. Off by default so the arrangement keeps its classic density.
+  bool _automationOverlay = false;
+
+  double get _stride =>
+      trackStride(automation: _automationOverlay);
+
+  void _openAutomationFor(int trackId) {
+    widget.service.selectTrack(trackId);
+    if (!widget.service.automationOpen) {
+      widget.service.toggleAutomationOpen();
+    }
+    setState(() {});
+  }
 
   @override
   void initState() {
@@ -296,6 +363,7 @@ class _TimelineViewState extends State<TimelineView> {
       widget.service.snapshot,
       Offset(_contentDx(viewportLocal.dx), _contentDy(viewportLocal.dy)),
       pixelsPerSecond: _pps,
+      automationOverlay: _automationOverlay,
     );
     final int? newId;
     final ClipEdge? newEdge;
@@ -315,7 +383,7 @@ class _TimelineViewState extends State<TimelineView> {
   }
 
   int _rowAtContent(double contentDy) =>
-      ((contentDy - kRulerHeight) / kTrackRowHeight).floor();
+      ((contentDy - kRulerHeight) / _stride).floor();
 
   bool get _snapBypassed =>
       HardwareKeyboard.instance.isLogicalKeyPressed(
@@ -511,6 +579,7 @@ class _TimelineViewState extends State<TimelineView> {
       widget.service.snapshot,
       rect,
       pixelsPerSecond: _pps,
+      automationOverlay: _automationOverlay,
     );
     final next = <int>{..._marqueeBase, ...hits};
     widget.service.selectClips(
@@ -526,9 +595,10 @@ class _TimelineViewState extends State<TimelineView> {
     const minLen = kMinClipSeconds;
 
     if (_previewFade >= 0) {
-      _previewFade = (_origFade + (_pointerContentX - _panStartContentX) / _pps)
-          .clamp(0.0, _origLength)
-          .toDouble();
+      _previewFade =
+          (_origFade + (_pointerContentX - _panStartContentX) / _pps)
+              .clamp(0.0, _origLength)
+              .toDouble();
       _didMove = _previewFade != _origFade;
       setState(() {});
       return;
@@ -543,9 +613,10 @@ class _TimelineViewState extends State<TimelineView> {
           beatSeconds: snapshot.beatSeconds,
         );
         var delta = snapped - _origStart;
-        final minStart = _dragGroup.isEmpty
-            ? _origStart
-            : _dragGroup.map((g) => g.start).reduce(math.min);
+        final minStart =
+            _dragGroup.isEmpty
+                ? _origStart
+                : _dragGroup.map((g) => g.start).reduce(math.min);
         if (delta < -minStart) delta = -minStart;
 
         final starts = <int, double>{
@@ -568,9 +639,12 @@ class _TimelineViewState extends State<TimelineView> {
         // Left-extension limit: AUDIO clips stop where their source starts
         // (offset); MIDI clips are free to 0. Values stay ABSOLUTE from the
         // gesture start, so no gesture-slop pixel is lost.
-        final minStart = _dragSourceType == 1
-            ? 0.0
-            : (_origStart - _origOffset > 0 ? _origStart - _origOffset : 0.0);
+        final minStart =
+            _dragSourceType == 1
+                ? 0.0
+                : (_origStart - _origOffset > 0
+                    ? _origStart - _origOffset
+                    : 0.0);
         final maxStart = _origStart + _origLength - minLen;
         var raw = _origStart + (_pointerContentX - _panStartContentX) / _pps;
         if (widget.service.snapToGrid && !_snapBypassed) {
@@ -585,9 +659,10 @@ class _TimelineViewState extends State<TimelineView> {
         _previewStarts = {_dragClipId!: previewStart};
         _previewLengths = {_dragClipId!: previewLength};
         _previewRows = {
-          _dragClipId!: _dragGroup.isEmpty
-              ? _rowAtContent(_panStartContentY)
-              : _dragGroup.single.row,
+          _dragClipId!:
+              _dragGroup.isEmpty
+                  ? _rowAtContent(_panStartContentY)
+                  : _dragGroup.single.row,
         };
         _didMove = previewStart != _origStart || previewLength != _origLength;
       case ClipEdge.right:
@@ -603,16 +678,16 @@ class _TimelineViewState extends State<TimelineView> {
             beatSeconds: snapshot.beatSeconds,
           );
         }
-        final end = raw
-            .clamp(minEnd, _maxEnd > minEnd ? _maxEnd : minEnd)
-            .toDouble();
+        final end =
+            raw.clamp(minEnd, _maxEnd > minEnd ? _maxEnd : minEnd).toDouble();
         final previewLength = end - _origStart;
         _previewStarts = {_dragClipId!: _origStart};
         _previewLengths = {_dragClipId!: previewLength};
         _previewRows = {
-          _dragClipId!: _dragGroup.isEmpty
-              ? _rowAtContent(_panStartContentY)
-              : _dragGroup.single.row,
+          _dragClipId!:
+              _dragGroup.isEmpty
+                  ? _rowAtContent(_panStartContentY)
+                  : _dragGroup.single.row,
         };
         _didMove = previewLength != _origLength;
     }
@@ -661,9 +736,10 @@ class _TimelineViewState extends State<TimelineView> {
   }
 
   double _contentSeconds(ProjectSnapshot snapshot) {
-    var seconds = snapshot.durationSeconds < kTimelineWidthSeconds
-        ? kTimelineWidthSeconds
-        : snapshot.durationSeconds + 4;
+    var seconds =
+        snapshot.durationSeconds < kTimelineWidthSeconds
+            ? kTimelineWidthSeconds
+            : snapshot.durationSeconds + 4;
     for (final entry in _previewStarts.entries) {
       final length =
           _previewLengths[entry.key] ?? _findClip(entry.key)?.length ?? 0;
@@ -683,6 +759,7 @@ class _TimelineViewState extends State<TimelineView> {
       widget.service.snapshot,
       local,
       pixelsPerSecond: _pps,
+      automationOverlay: _automationOverlay,
     );
     if (clipId == null) return;
     // Right-clicking a clip that is already part of a group keeps the group
@@ -715,14 +792,8 @@ class _TimelineViewState extends State<TimelineView> {
         PopupMenuItem(value: 2, child: Text(context.l10n.timelineDeleteClip)),
         if (midi) ...[
           const PopupMenuDivider(),
-          PopupMenuItem(
-            value: 3,
-            child: Text(context.l10n.aiGenerateClip),
-          ),
-          PopupMenuItem(
-            value: 4,
-            child: Text(context.l10n.aiRegenerateClip),
-          ),
+          PopupMenuItem(value: 3, child: Text(context.l10n.aiGenerateClip)),
+          PopupMenuItem(value: 4, child: Text(context.l10n.aiRegenerateClip)),
         ],
       ],
     ).then((value) async {
@@ -803,14 +874,16 @@ class _TimelineViewState extends State<TimelineView> {
     // Fade drags live on the corners ONLY with Alt held — the corners are
     // the trim handle (Mixcraft-style); a plain corner grab must trim, not
     // silently become an invisible fade drag.
-    final fadeHit = _altHeld
-        ? hitTestFadeHandle(
-            snapshot,
-            widget.service.selectedClipId,
-            contentPoint,
-            pixelsPerSecond: _pps,
-          )
-        : null;
+    final fadeHit =
+        _altHeld
+            ? hitTestFadeHandle(
+              snapshot,
+              widget.service.selectedClipId,
+              contentPoint,
+              pixelsPerSecond: _pps,
+              automationOverlay: _automationOverlay,
+            )
+            : null;
     if (fadeHit != null) {
       final clip = _findClip(fadeHit.$1);
       if (clip != null) {
@@ -896,9 +969,10 @@ class _TimelineViewState extends State<TimelineView> {
     _didMove = false;
 
     // Body drags move the whole selection; edges/fades always edit one clip.
-    final ids = hit.edge == ClipEdge.move
-        ? widget.service.selectedClipIds
-        : <int>{hit.clip.id};
+    final ids =
+        hit.edge == ClipEdge.move
+            ? widget.service.selectedClipIds
+            : <int>{hit.clip.id};
     _dragGroup = _buildDragGroup(ids);
     _previewStarts = {for (final g in _dragGroup) g.clipId: g.start};
     _previewLengths = const {};
@@ -1073,7 +1147,7 @@ class _TimelineViewState extends State<TimelineView> {
         // Include the live preview so a group dragged past the current
         // project end can keep scrolling instead of hitting the old edge.
         final width = _contentSeconds(snapshot) * _pps;
-        final rowsHeight = snapshot.tracks.length * kTrackRowHeight;
+        final rowsHeight = snapshot.tracks.length * _stride;
 
         return KeyboardListener(
           focusNode: _focusNode,
@@ -1088,15 +1162,94 @@ class _TimelineViewState extends State<TimelineView> {
                   children: [
                     Container(
                       height: kRulerHeight,
-                      color: const Color(0xFF1E2026),
-                      alignment: Alignment.centerLeft,
-                      padding: const EdgeInsets.only(left: 12),
-                      child: Text(
-                        context.l10n.timelineTracks,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Color(0xFF9BA1AE),
+                      decoration: const BoxDecoration(
+                        color: AppColors.bgPanel,
+                        border: Border(
+                          bottom: BorderSide(color: AppColors.border),
+                          right: BorderSide(color: AppColors.border),
                         ),
+                      ),
+                      padding: const EdgeInsets.only(left: 10, right: 8),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.straighten_rounded,
+                            size: 11,
+                            color: AppColors.textFaint,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            context.l10n.timelineTracks.toUpperCase(),
+                            style: const TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.9,
+                              color: AppColors.textDim,
+                            ),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceAlt,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: Text(
+                              '${snapshot.tracks.length}',
+                              style: const TextStyle(
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textFaint,
+                                fontFeatures: [FontFeature.tabularFigures()],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Tooltip(
+                            message: context.l10n.appWindowAutomation,
+                            child: MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: GestureDetector(
+                                onTap: () => setState(() {
+                                  _automationOverlay = !_automationOverlay;
+                                  _hoverClipId = null;
+                                  _hoverEdge = null;
+                                }),
+                                child: Container(
+                                  width: 20,
+                                  height: 16,
+                                  decoration: BoxDecoration(
+                                    color:
+                                        _automationOverlay
+                                            ? AppColors.accentSoft
+                                            : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(3),
+                                    border: Border.all(
+                                      color:
+                                          _automationOverlay
+                                              ? AppColors.accent.withValues(
+                                                alpha: 0.65,
+                                              )
+                                              : AppColors.border,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    Icons.multiline_chart_rounded,
+                                    size: 11,
+                                    color:
+                                        _automationOverlay
+                                            ? AppColors.accent
+                                            : AppColors.textFaint,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     Expanded(
@@ -1109,12 +1262,16 @@ class _TimelineViewState extends State<TimelineView> {
                           children: [
                             for (var i = 0; i < snapshot.tracks.length; i++)
                               _TrackHeader(
+                                index: i,
                                 track: snapshot.tracks[i],
                                 service: widget.service,
                                 isEvenRow: i.isEven,
                                 selected:
                                     widget.service.selectedTrackId ==
                                     snapshot.tracks[i].id,
+                                automationOverlay: _automationOverlay,
+                                onAutomation: () => _openAutomationFor(
+                                    snapshot.tracks[i].id),
                               ),
                           ],
                         ),
@@ -1137,27 +1294,30 @@ class _TimelineViewState extends State<TimelineView> {
                           }
                         },
                         child: Container(
-                          margin: const EdgeInsets.all(6),
+                          margin: const EdgeInsets.fromLTRB(7, 5, 7, 0),
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF2C303A),
-                            borderRadius: BorderRadius.circular(5),
-                            border: Border.all(color: const Color(0xFF3E4350)),
+                            color: AppColors.accentSoft.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: AppColors.accent.withValues(alpha: 0.4),
+                            ),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               const Icon(
-                                Icons.add,
+                                Icons.add_rounded,
                                 size: 14,
-                                color: Color(0xFFE9EBF0),
+                                color: AppColors.accent,
                               ),
                               const SizedBox(width: 4),
                               Text(
                                 context.l10n.timelineAddTrack,
                                 style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFFE9EBF0),
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.accent,
                                 ),
                               ),
                             ],
@@ -1170,27 +1330,28 @@ class _TimelineViewState extends State<TimelineView> {
                       child: GestureDetector(
                         onTap: () => _importAudioFile(context),
                         child: Container(
-                          margin: const EdgeInsets.all(6),
+                          margin: const EdgeInsets.fromLTRB(7, 5, 7, 6),
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF2C303A),
-                            borderRadius: BorderRadius.circular(5),
-                            border: Border.all(color: const Color(0xFF3E4350)),
+                            color: AppColors.surfaceAlt,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: AppColors.border),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               const Icon(
-                                Icons.audio_file,
+                                Icons.audio_file_rounded,
                                 size: 14,
-                                color: Color(0xFF3DD68C),
+                                color: AppColors.success,
                               ),
                               const SizedBox(width: 4),
                               Text(
                                 context.l10n.timelineImport,
                                 style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF3DD68C),
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textDim,
                                 ),
                               ),
                             ],
@@ -1201,7 +1362,7 @@ class _TimelineViewState extends State<TimelineView> {
                   ],
                 ),
               ),
-              const VerticalDivider(width: 1, color: Color(0xFF32363F)),
+              const VerticalDivider(width: 1, color: AppColors.border),
               Expanded(
                 child: Column(
                   children: [
@@ -1218,11 +1379,12 @@ class _TimelineViewState extends State<TimelineView> {
                             });
                           }
                         },
-                        cursor: _hoverEdge == null
-                            ? MouseCursor.defer
-                            : (_hoverEdge == ClipEdge.left
-                                  ? SystemMouseCursors.resizeLeft
-                                  : SystemMouseCursors.resizeRight),
+                        cursor:
+                            _hoverEdge == null
+                                ? MouseCursor.defer
+                                : (_hoverEdge == ClipEdge.left
+                                    ? SystemMouseCursors.resizeLeft
+                                    : SystemMouseCursors.resizeRight),
                         child: Listener(
                           onPointerSignal: _onPointerSignal,
                           // Raw down (pre-arena): the edge hit test MUST use
@@ -1237,6 +1399,7 @@ class _TimelineViewState extends State<TimelineView> {
                                 _contentDy(d.localPosition.dy),
                               ),
                               pixelsPerSecond: _pps,
+                              automationOverlay: _automationOverlay,
                             );
                             _onPointerDown(d);
                           },
@@ -1246,7 +1409,7 @@ class _TimelineViewState extends State<TimelineView> {
                           child: GestureDetector(
                             onSecondaryTapUp: _onSecondaryTapUp,
                             child: Container(
-                              color: const Color(0xFF16171B),
+                              color: AppColors.bgDeep,
                               child: NotificationListener<ScrollNotification>(
                                 onNotification: (n) {
                                   // Las cabeceras siguen el scroll de las
@@ -1295,12 +1458,14 @@ class _TimelineViewState extends State<TimelineView> {
                                                 ),
                                                 painter: _TimelinePainter(
                                                   snapshot: snapshot,
-                                                  selectedClipIds: widget
-                                                      .service
-                                                      .selectedClipIds,
-                                                  primaryClipId: widget
-                                                      .service
-                                                      .selectedClipId,
+                                                  selectedClipIds:
+                                                      widget
+                                                          .service
+                                                          .selectedClipIds,
+                                                  primaryClipId:
+                                                      widget
+                                                          .service
+                                                          .selectedClipId,
                                                   dragClipId: _dragClipId,
                                                   hoverClipId: _hoverClipId,
                                                   hoverIsLeft:
@@ -1314,27 +1479,34 @@ class _TimelineViewState extends State<TimelineView> {
                                                   previewFadeIsIn: _dragFadeIn,
                                                   marqueeRect:
                                                       _marqueeMoved &&
-                                                          _marqueeStartContent !=
-                                                              null &&
-                                                          _marqueeCurrentContent !=
-                                                              null
-                                                      ? Rect.fromPoints(
-                                                          _marqueeStartContent!,
-                                                          _marqueeCurrentContent!,
-                                                        )
-                                                      : null,
+                                                              _marqueeStartContent !=
+                                                                  null &&
+                                                              _marqueeCurrentContent !=
+                                                                  null
+                                                          ? Rect.fromPoints(
+                                                            _marqueeStartContent!,
+                                                            _marqueeCurrentContent!,
+                                                          )
+                                                          : null,
                                                   pixelsPerSecond: _pps,
                                                   barSeconds:
                                                       snapshot.barSeconds,
-                                                  vOffset: (_vScroll.hasClients
-                                                      ? _vScroll.offset
-                                                      : 0.0),
-                                                  peaksFor: (clip) => widget
-                                                      .service
-                                                      .getClipPeaks(
-                                                        clip,
-                                                        pixelsPerSecond: _pps,
-                                                      ),
+                                                  beatSeconds:
+                                                      snapshot.beatSeconds,
+                                                  automationOverlay:
+                                                      _automationOverlay,
+                                                  selectedTrackId:
+                                                      widget
+                                                          .service
+                                                          .selectedTrackId,
+                                                  vScroll: _vScroll,
+                                                  peaksFor:
+                                                      (clip) => widget.service
+                                                          .getClipPeaks(
+                                                            clip,
+                                                            pixelsPerSecond:
+                                                                _pps,
+                                                          ),
                                                   repaint: Listenable.merge([
                                                     widget.frameTick,
                                                     _vScroll,
@@ -1352,7 +1524,13 @@ class _TimelineViewState extends State<TimelineView> {
                                                   painter: _PlayheadPainter(
                                                     service: widget.service,
                                                     pixelsPerSecond: _pps,
-                                                    repaint: widget.frameTick,
+                                                    automationOverlay:
+                                                        _automationOverlay,
+                                                    vScroll: _vScroll,
+                                                    repaint: Listenable.merge([
+                                                      widget.frameTick,
+                                                      _vScroll,
+                                                    ]),
                                                   ),
                                                 ),
                                               ),
@@ -1375,6 +1553,7 @@ class _TimelineViewState extends State<TimelineView> {
                         controller: _hScroll,
                         snapshot: snapshot,
                         contentWidth: width,
+                        pixelsPerSecond: _pps,
                       ),
                     ),
                   ],
@@ -1392,16 +1571,22 @@ class _TimelineViewState extends State<TimelineView> {
 
 class _TrackHeader extends StatelessWidget {
   const _TrackHeader({
+    required this.index,
     required this.track,
     required this.service,
     required this.isEvenRow,
     required this.selected,
+    required this.automationOverlay,
+    required this.onAutomation,
   });
 
+  final int index;
   final TrackInfo track;
   final EngineService service;
   final bool isEvenRow;
   final bool selected;
+  final bool automationOverlay;
+  final VoidCallback onAutomation;
 
   Future<void> _showMenu(BuildContext context, Offset position) async {
     final overlay =
@@ -1420,7 +1605,10 @@ class _TrackHeader extends StatelessWidget {
           child: Text(context.l10n.timelineRename),
         ),
         PopupMenuItem(value: 'color', child: Text(context.l10n.timelineColor)),
-        PopupMenuItem(value: 'canal', child: Text(context.l10n.timelineChannel)),
+        PopupMenuItem(
+          value: 'canal',
+          child: Text(context.l10n.timelineChannel),
+        ),
         PopupMenuItem(
           value: 'input',
           child: Text(
@@ -1474,20 +1662,21 @@ class _TrackHeader extends StatelessWidget {
     final controller = TextEditingController(text: track.name);
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.l10n.timelineRenameTrack),
-        content: TextField(controller: controller, autofocus: true),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(context.l10n.timelineCancel),
+      builder:
+          (context) => AlertDialog(
+            title: Text(context.l10n.timelineRenameTrack),
+            content: TextField(controller: controller, autofocus: true),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(context.l10n.timelineCancel),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, controller.text),
+                child: Text(context.l10n.timelineOk),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: Text(context.l10n.timelineOk),
-          ),
-        ],
-      ),
     );
     if (name != null && name.isNotEmpty) service.setTrackName(track.id, name);
   }
@@ -1495,35 +1684,119 @@ class _TrackHeader extends StatelessWidget {
   Future<void> _colorDialog(BuildContext context) async {
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.l10n.timelineTrackColor),
-        content: SizedBox(
-          width: 260,
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (var i = 0; i < kTrackPalette.length; i++)
-                GestureDetector(
-                  onTap: () {
-                    service.setTrackColor(track.id, i);
-                    Navigator.pop(context);
-                  },
-                  child: Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      color: kTrackPalette[i],
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: i == track.colorIndex
-                            ? Colors.white
-                            : Colors.transparent,
-                        width: 2,
+      builder:
+          (context) => AlertDialog(
+            title: Text(context.l10n.timelineTrackColor),
+            content: SizedBox(
+              width: 260,
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (var i = 0; i < kTrackPalette.length; i++)
+                    GestureDetector(
+                      onTap: () {
+                        service.setTrackColor(track.id, i);
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          color: kTrackPalette[i],
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color:
+                                i == track.colorIndex
+                                    ? Colors.white
+                                    : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
                       ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+    );
+  }
+
+  /// Compact strip under the header showing the volume curve lane. Tapping
+  /// it selects the track and opens the full automation editor below.
+  Widget _automationStrip(BuildContext context, Color color) {
+    final hasAuto = track.volumeAuto.isNotEmpty;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onAutomation,
+        child: Container(
+          height: kAutomationLaneHeight,
+          padding: const EdgeInsets.symmetric(horizontal: 7),
+          decoration: BoxDecoration(
+            color:
+                selected
+                    ? blend(
+                      const Color(0xFF111318),
+                      AppColors.accent,
+                      0.07,
+                    )
+                    : const Color(0xFF111318),
+            border: Border(
+              top: BorderSide(
+                color: AppColors.border.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.multiline_chart_rounded,
+                size: 11,
+                color: hasAuto ? color : AppColors.textFaint,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                context.l10n.automationVolume.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 7.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.7,
+                  color: hasAuto ? AppColors.textDim : AppColors.textFaint,
+                ),
+              ),
+              if (hasAuto) ...[
+                const SizedBox(width: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 3,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(
+                    'AUTO',
+                    style: TextStyle(
+                      fontSize: 6.5,
+                      fontWeight: FontWeight.w800,
+                      color: color,
                     ),
                   ),
                 ),
+              ],
+              const Spacer(),
+              Text(
+                formatDb(track.volume),
+                style: const TextStyle(
+                  fontSize: 7.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textFaint,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
             ],
           ),
         ),
@@ -1534,150 +1807,298 @@ class _TrackHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = trackColor(track.colorIndex);
+    final fxCount = track.fxNames.length;
     return GestureDetector(
       onTap: () => service.selectTrack(track.id),
       onSecondaryTapUp: (details) => _showMenu(context, details.globalPosition),
-      child: Container(
-        height: kTrackRowHeight,
-        decoration: BoxDecoration(
-          color: isEvenRow ? const Color(0xFF1B1D22) : const Color(0xFF1E2026),
-          border: track.armed
-              ? Border.all(color: const Color(0xFFE5484D), width: 1)
-              : selected
-              ? Border.all(color: const Color(0xFF4D9DF7), width: 1)
-              : null,
-        ),
-        child: Row(
-          children: [
-            Container(width: 4, color: color),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          height: trackStride(automation: automationOverlay),
+          decoration: BoxDecoration(
+            color:
+                selected
+                    ? blend(AppColors.bgPanel, AppColors.accent, 0.075)
+                    : (isEvenRow ? AppColors.bgPanel : const Color(0xFF171A20)),
+          ),
+          // Painted over the child: a border in `decoration` would deflate
+          // the 64 px content box by 1 px and shift every row.
+          foregroundDecoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: AppColors.border.withValues(alpha: 0.75),
+              ),
+              left: BorderSide(
+                color: selected ? AppColors.accent : Colors.transparent,
+                width: 2,
+              ),
+            ),
+          ),
+          child: Column(
+            children: [
+              SizedBox(
+                height: kTrackRowHeight,
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        Icon(
-                          track.type == 1 ? Icons.piano : Icons.mic,
-                          size: 12,
-                          color: const Color(0xFF9BA1AE),
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            track.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFE9EBF0),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                        // Instrument slot (instrument tracks): tap picks a
-                        // VST3/AU instrument, long-press returns to the
-                        // internal synth.
-                        if (track.type == 1) ...[
-                          Tooltip(
-                            message: context.l10n.aiGenerateAtPlayhead,
-                            child: InkWell(
-                              onTap: () => showAiGenerationDialog(
-                                context,
-                                service,
-                                trackId: track.id,
-                                startSeconds: service.positionSeconds,
-                                initialMode: defaultAiModeForTrack(track),
-                              ),
-                              borderRadius: BorderRadius.circular(4),
-                              child: const Padding(
-                                padding: EdgeInsets.all(3),
-                                child: Icon(Icons.auto_awesome,
-                                    size: 13, color: Color(0xFF4D9DF7)),
+                    Container(
+                      width: 3,
+                      color: color.withValues(alpha: selected ? 1 : 0.85),
+                    ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(7, 2, 6, 2),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: 16,
+                        child: Row(
+                          children: [
+                            Text(
+                              (index + 1).toString().padLeft(2, '0'),
+                              style: const TextStyle(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textFaint,
+                                fontFeatures: [FontFeature.tabularFigures()],
                               ),
                             ),
-                          ),
-                          _InstrumentChip(track: track, service: service),
-                        ],
-                      ],
-                    ),
-                    SizedBox(
-                      height: 24,
-                      child: Row(
-                        children: [
-                          _MSButton(
-                            label: 'M',
-                            activeColor: const Color(0xFFF5A524),
-                            active: track.mute,
-                            onTap: () =>
-                                service.setTrackMute(track.id, !track.mute),
-                          ),
-                          const SizedBox(width: 4),
-                          _MSButton(
-                            label: 'S',
-                            activeColor: const Color(0xFF4D9DF7),
-                            active: track.solo,
-                            onTap: () =>
-                                service.setTrackSolo(track.id, !track.solo),
-                          ),
-                          const SizedBox(width: 4),
-                          _MSButton(
-                            label: 'R',
-                            activeColor: const Color(0xFFE5484D),
-                            active: track.armed,
-                            onTap: () =>
-                                service.setTrackArmed(track.id, !track.armed),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: _CompactSlider(
-                              value: track.volume.clamp(0.0, 2.0).toDouble(),
-                              min: 0,
-                              max: 2,
-                              onChangeEnd: (v) =>
-                                  service.setTrackVolume(track.id, v),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                track.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppColors.text,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                            if (track.type == 1)
+                              Tooltip(
+                                message: context.l10n.aiGenerateAtPlayhead,
+                                child: InkWell(
+                                  onTap:
+                                      () => showAiGenerationDialog(
+                                        context,
+                                        service,
+                                        trackId: track.id,
+                                        startSeconds: service.positionSeconds,
+                                        initialMode: defaultAiModeForTrack(
+                                          track,
+                                        ),
+                                      ),
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(2),
+                                    child: Icon(
+                                      Icons.auto_awesome,
+                                      size: 11,
+                                      color: AppColors.accent,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            Builder(
+                              builder:
+                                  (buttonContext) => InkWell(
+                                    onTap: () {
+                                      final box =
+                                          buttonContext.findRenderObject()
+                                              as RenderBox?;
+                                      final origin =
+                                          box == null
+                                              ? Offset.zero
+                                              : box.localToGlobal(Offset.zero);
+                                      _showMenu(
+                                        buttonContext,
+                                        origin +
+                                            Offset(box?.size.width ?? 0, 18),
+                                      );
+                                    },
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(2),
+                                      child: Icon(
+                                        Icons.more_horiz_rounded,
+                                        size: 12,
+                                        color: AppColors.textFaint,
+                                      ),
+                                    ),
+                                  ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    SizedBox(
-                      height: 18,
-                      child: Row(
-                        children: [
-                          const Text(
-                            'L',
-                            style: TextStyle(
-                              fontSize: 8,
-                              color: Color(0xFF5C6270),
+                      SizedBox(
+                        height: 13,
+                        child: Row(
+                          children: [
+                            Icon(
+                              track.type == 1
+                                  ? Icons.piano_rounded
+                                  : Icons.mic_none_rounded,
+                              size: 9,
+                              color: AppColors.textFaint,
                             ),
-                          ),
-                          Expanded(
-                            child: _CompactSlider(
-                              value: track.pan.clamp(-1.0, 1.0).toDouble(),
-                              min: -1,
-                              max: 1,
-                              onChangeEnd: (v) =>
-                                  service.setTrackPan(track.id, v),
-                            ),
-                          ),
-                          const Text(
-                            'R',
-                            style: TextStyle(
-                              fontSize: 8,
-                              color: Color(0xFF5C6270),
-                            ),
-                          ),
-                        ],
+                            const SizedBox(width: 3),
+                            if (track.type == 1)
+                              Flexible(
+                                child: _InstrumentChip(
+                                  track: track,
+                                  service: service,
+                                ),
+                              )
+                            else
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceAlt,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: AppColors.border),
+                                ),
+                                child: Text(
+                                  'IN ${track.inputChannel == 0 ? 'L' : 'R'}',
+                                  style: const TextStyle(
+                                    fontSize: 7.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textDim,
+                                  ),
+                                ),
+                              ),
+                            const Spacer(),
+                            if (fxCount > 0)
+                              GestureDetector(
+                                onTap:
+                                    () => showChannelSettingsDialog(
+                                      context,
+                                      service,
+                                      track.id,
+                                    ),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 3,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.accentSoft.withValues(
+                                      alpha: 0.65,
+                                    ),
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                  child: Text(
+                                    '$fxCount FX',
+                                    style: const TextStyle(
+                                      fontSize: 7,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.accent,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
+                      SizedBox(
+                        height: 18,
+                        child: Row(
+                          children: [
+                            _MSButton(
+                              label: 'M',
+                              activeColor: AppColors.warning,
+                              active: track.mute,
+                              onTap:
+                                  () => service.setTrackMute(
+                                    track.id,
+                                    !track.mute,
+                                  ),
+                            ),
+                            const SizedBox(width: 3),
+                            _MSButton(
+                              label: 'S',
+                              activeColor: AppColors.accent,
+                              active: track.solo,
+                              onTap:
+                                  () => service.setTrackSolo(
+                                    track.id,
+                                    !track.solo,
+                                  ),
+                            ),
+                            const SizedBox(width: 3),
+                            _MSButton(
+                              label: 'R',
+                              activeColor: AppColors.record,
+                              active: track.armed,
+                              onTap:
+                                  () => service.setTrackArmed(
+                                    track.id,
+                                    !track.armed,
+                                  ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: _CompactSlider(
+                                value: track.volume.clamp(0.0, 2.0).toDouble(),
+                                min: 0,
+                                max: 2,
+                                color: color,
+                                onChangeEnd:
+                                    (v) => service.setTrackVolume(track.id, v),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        height: 12,
+                        child: Row(
+                          children: [
+                            const Text(
+                              'L',
+                              style: TextStyle(
+                                fontSize: 7.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textFaint,
+                              ),
+                            ),
+                            Expanded(
+                              child: _CompactSlider(
+                                value: track.pan.clamp(-1.0, 1.0).toDouble(),
+                                min: -1,
+                                max: 1,
+                                color: AppColors.textDim,
+                                centerDetent: true,
+                                onChangeEnd:
+                                    (v) => service.setTrackPan(track.id, v),
+                              ),
+                            ),
+                            const Text(
+                              'R',
+                              style: TextStyle(
+                                fontSize: 7.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textFaint,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
                   ],
                 ),
               ),
-            ),
-          ],
+              if (automationOverlay) _automationStrip(context, color),
+            ],
+          ),
         ),
       ),
     );
@@ -1696,11 +2117,12 @@ class _InstrumentChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasPlugin = track.instrumentName.isNotEmpty;
-    final label = hasPlugin && track.instrumentName.length > 10
-        ? track.instrumentName.substring(0, 10)
-        : hasPlugin
-        ? track.instrumentName
-        : context.l10n.timelineInternalSynth;
+    final label =
+        hasPlugin && track.instrumentName.length > 10
+            ? track.instrumentName.substring(0, 10)
+            : hasPlugin
+            ? track.instrumentName
+            : context.l10n.timelineInternalSynth;
     return GestureDetector(
       onTap: () async {
         final picked = await showPluginPickerDialog(
@@ -1713,33 +2135,34 @@ class _InstrumentChip extends StatelessWidget {
           service.setTrackInstrumentPlugin(track.id, picked.index);
         }
       },
-      onDoubleTap: hasPlugin
-          ? () => service.openTrackInstrumentEditor(track.id)
-          : null,
-      onLongPress: hasPlugin
-          ? () => service.clearTrackInstrument(track.id)
-          : null,
+      onDoubleTap:
+          hasPlugin ? () => service.openTrackInstrumentEditor(track.id) : null,
+      onLongPress:
+          hasPlugin ? () => service.clearTrackInstrument(track.id) : null,
       child: Container(
-        margin: const EdgeInsets.only(left: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
         decoration: BoxDecoration(
-          color: hasPlugin
-              ? const Color(0xFF6E56CF).withValues(alpha: 0.25)
-              : const Color(0xFF2C303A),
+          color:
+              hasPlugin
+                  ? AppColors.accentSoft.withValues(alpha: 0.7)
+                  : AppColors.surfaceAlt,
           borderRadius: BorderRadius.circular(3),
           border: Border.all(
-            color: hasPlugin ? const Color(0xFF6E56CF) : Colors.transparent,
+            color:
+                hasPlugin
+                    ? AppColors.accent.withValues(alpha: 0.45)
+                    : AppColors.border,
             width: 1,
           ),
         ),
         child: Text(
           label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            fontSize: 8,
+            fontSize: 7.5,
             fontWeight: FontWeight.w600,
-            color: hasPlugin
-                ? const Color(0xFFC9BFFF)
-                : const Color(0xFF9BA1AE),
+            color: hasPlugin ? AppColors.accent : AppColors.textDim,
           ),
         ),
       ),
@@ -1754,12 +2177,16 @@ class _CompactSlider extends StatefulWidget {
     required this.min,
     required this.max,
     required this.onChangeEnd,
+    this.color = AppColors.accent,
+    this.centerDetent = false,
   });
 
   final double value;
   final double min;
   final double max;
   final void Function(double) onChangeEnd;
+  final Color color;
+  final bool centerDetent;
 
   @override
   State<_CompactSlider> createState() => _CompactSliderState();
@@ -1770,11 +2197,15 @@ class _CompactSliderState extends State<_CompactSlider> {
 
   @override
   Widget build(BuildContext context) {
-    return SliderTheme(
+    final slider = SliderTheme(
       data: SliderTheme.of(context).copyWith(
         trackHeight: 2,
-        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-        overlayShape: const RoundSliderOverlayShape(overlayRadius: 8),
+        activeTrackColor: widget.color.withValues(alpha: 0.85),
+        inactiveTrackColor: AppColors.border,
+        thumbColor: AppColors.text,
+        overlayColor: widget.color.withValues(alpha: 0.12),
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
+        overlayShape: const RoundSliderOverlayShape(overlayRadius: 7),
         padding: EdgeInsets.zero,
       ),
       child: Slider(
@@ -1787,6 +2218,20 @@ class _CompactSliderState extends State<_CompactSlider> {
           setState(() => _dragValue = null);
         },
       ),
+    );
+    if (!widget.centerDetent) return slider;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        slider,
+        IgnorePointer(
+          child: Container(
+            width: 1,
+            height: 6,
+            color: AppColors.textFaint.withValues(alpha: 0.7),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1806,23 +2251,42 @@ class _MSButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 22,
-        height: 20,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: active ? activeColor : const Color(0xFF2C303A),
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(color: const Color(0xFF3E4350)),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: active ? Colors.black : const Color(0xFF9BA1AE),
+    return Tooltip(
+      message: switch (label) {
+        'M' => context.l10n.timelineMute,
+        'S' => context.l10n.timelineSolo,
+        _ => context.l10n.transportRecord,
+      },
+      waitDuration: const Duration(milliseconds: 600),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 21,
+            height: 17,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color:
+                  active
+                      ? activeColor.withValues(alpha: 0.18)
+                      : AppColors.surfaceAlt,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color:
+                    active
+                        ? activeColor.withValues(alpha: 0.7)
+                        : AppColors.border,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                color: active ? activeColor : AppColors.textFaint,
+              ),
+            ),
           ),
         ),
       ),
@@ -1848,12 +2312,15 @@ class _TimelinePainter extends CustomPainter {
     this.marqueeRect,
     required this.pixelsPerSecond,
     required this.barSeconds,
+    required this.beatSeconds,
+    required this.automationOverlay,
+    required this.selectedTrackId,
     required this.peaksFor,
-    this.vOffset = 0.0,
+    this.vScroll,
     this.repaint,
   });
 
-  final double vOffset; // vertical scroll of the track rows
+  final ScrollController? vScroll; // live vertical offset for the sticky ruler
   final Listenable? repaint;
 
   final ProjectSnapshot snapshot;
@@ -1870,75 +2337,34 @@ class _TimelinePainter extends CustomPainter {
   final Rect? marqueeRect;
   final double pixelsPerSecond;
   final double barSeconds;
+  final double beatSeconds;
+  final bool automationOverlay;
+  final int? selectedTrackId;
   final PeakData? Function(ClipInfo clip) peaksFor;
 
-  static const _accent = Color(0xFF4D9DF7);
+  static const _accent = AppColors.accent;
+
+  double get _stride => trackStride(automation: automationOverlay);
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & Size(size.width, kRulerHeight),
-      Paint()..color = const Color(0xFF1E2026),
-    );
+    final barPx = barSeconds * pixelsPerSecond;
+    final beatPx = beatSeconds * pixelsPerSecond;
+    final vOffset = (vScroll?.hasClients ?? false) ? vScroll!.offset : 0.0;
 
-    final tickPaint = Paint()
-      ..color = const Color(0xFF3E4350)
-      ..strokeWidth = 1;
-    const textStyle = TextStyle(
-      color: Color(0xFF9BA1AE),
-      fontSize: 10,
-      fontFamily: 'monospace',
-    );
-    final bars = (size.width / (barSeconds * pixelsPerSecond)).ceil();
-    for (var bar = 0; bar <= bars; bar++) {
-      final x = bar * barSeconds * pixelsPerSecond + 0.5;
-      canvas.drawLine(
-        Offset(x, kRulerHeight - 12),
-        Offset(x, kRulerHeight),
-        tickPaint,
-      );
-      TextPainter(
-          text: TextSpan(text: '${bar + 1}', style: textStyle),
-          textDirection: TextDirection.ltr,
-        )
-        ..layout()
-        ..paint(canvas, Offset(x + 4, 4));
-      for (var beat = 1; beat < 4; beat++) {
-        final bx = x + beat * kSnapBeatSeconds * pixelsPerSecond;
-        if (bx < size.width) {
-          canvas.drawLine(
-            Offset(bx, kRulerHeight - 6),
-            Offset(bx, kRulerHeight),
-            tickPaint,
-          );
-        }
-      }
-    }
+    // The ruler is sticky: the outer vertical scroll already moves the
+    // content, so painting it at the current scroll offset keeps bar numbers
+    // and the playhead cap pinned while the lanes slide underneath.
+    _paintRuler(canvas, size, barPx, beatPx, vOffset);
 
-    // Track rows scroll vertically UNDER the pinned ruler: clip to the
-    // lane area and translate by the scroll offset.
+    // Track rows scroll vertically UNDER the pinned ruler: clip to the lane
+    // area below it; the scrollable itself applies the vertical offset.
     canvas.save();
     canvas.clipRect(
-      Offset(0, kRulerHeight) & Size(size.width, size.height - kRulerHeight),
+      Rect.fromLTRB(0, vOffset + kRulerHeight, size.width, size.height),
     );
-    canvas.translate(0, -vOffset);
-    // Row backgrounds first; clips are then drawn by TARGET row so a
-    // cross-track drag previews in its destination lane.
-    for (var i = 0; i < snapshot.tracks.length; i++) {
-      final top = kRulerHeight + i * kTrackRowHeight;
-      final rowColor = i.isEven
-          ? const Color(0xFF1B1D22)
-          : const Color(0xFF1E2026);
-      canvas.drawRect(
-        Offset(0, top) & Size(size.width, kTrackRowHeight),
-        Paint()..color = rowColor,
-      );
-      canvas.drawLine(
-        Offset(0, top + kTrackRowHeight),
-        Offset(size.width, top + kTrackRowHeight),
-        Paint()..color = const Color(0xFF23262E),
-      );
-    }
+
+    _paintLanes(canvas, size, beatPx, barPx, snapshot.timeSigNumerator);
 
     final items = <_ClipDraw>[];
     var order = 0;
@@ -1958,133 +2384,7 @@ class _TimelinePainter extends CustomPainter {
     });
 
     for (final item in items) {
-      final clip = item.clip;
-      final start = previewStarts[clip.id] ?? clip.start;
-      final length = previewLengths[clip.id] ?? clip.length;
-      final top = kRulerHeight + item.row * kTrackRowHeight;
-      final color = trackColor(item.track.colorIndex);
-      final dragging =
-          previewStarts.containsKey(clip.id) ||
-          (clip.id == dragClipId && previewFade >= 0);
-      final left = start * pixelsPerSecond;
-      final clipWidth = (length * pixelsPerSecond)
-          .clamp(4.0, size.width)
-          .toDouble();
-      final rect = Rect.fromLTWH(
-        left,
-        top + 22,
-        clipWidth,
-        kTrackRowHeight - 32,
-      );
-      final rounded = RRect.fromRectAndRadius(rect, const Radius.circular(4));
-      canvas.drawRRect(rounded, Paint()..color = color.withValues(alpha: 0.82));
-
-      // Content: waveform for audio clips, mini piano-roll for MIDI.
-      // Clipped to the clip rect: a TRIMMED clip must not paint its notes
-      // beyond the (shortened) end — that read as "the trim did nothing,
-      // the midi is still there".
-      canvas.save();
-      canvas.clipRect(rounded.outerRect);
-      if (clip.isMidi) {
-        var minP = 127;
-        var maxP = 0;
-        for (final note in clip.notes) {
-          minP = math.min(minP, note.pitch);
-          maxP = math.max(maxP, note.pitch);
-        }
-        if (minP > maxP) {
-          minP = 48;
-          maxP = 84;
-        }
-        final range = math.max(1, maxP - minP + 1);
-        final slot = rect.height / range;
-        final notePaint = Paint()..color = Colors.white.withValues(alpha: 0.8);
-        for (final note in clip.notes) {
-          final nx = left + note.start * pixelsPerSecond;
-          final nw = (note.length * pixelsPerSecond).clamp(2.0, clipWidth);
-          final ny = rect.bottom - (note.pitch - minP + 1) * slot;
-          canvas.drawRect(
-            Rect.fromLTWH(nx, ny, nw, math.max(2.0, slot)),
-            notePaint,
-          );
-        }
-      } else {
-        final peaks = peaksFor(clip);
-        if (peaks != null) {
-          final wavePaint = Paint()
-            ..color = Colors.white.withValues(alpha: 0.55)
-            ..strokeWidth = 1;
-          final center = rect.center.dy;
-          final half = rect.height / 2 - 1;
-          final n = peaks.mins.length;
-          for (var px = 0; px < n; px++) {
-            final x = left + px + 0.5;
-            if (x > left + clipWidth) break;
-            final y1 = center - (peaks.maxs[px] * half).clamp(-half, half);
-            final y2 = center - (peaks.mins[px] * half).clamp(-half, half);
-            canvas.drawLine(Offset(x, y1), Offset(x, y2), wavePaint);
-          }
-        }
-      }
-      canvas.restore();
-
-      // Fade wedges (dark overlay triangle from full height to zero).
-      final fadeIn = dragging && previewFade >= 0 && previewFadeIsIn
-          ? previewFade
-          : clip.fadeIn;
-      final fadeOut = dragging && previewFade >= 0 && !previewFadeIsIn
-          ? previewFade
-          : clip.fadeOut;
-      final fadePaint = Paint()..color = const Color(0xE616171B);
-      if (fadeIn > 0) {
-        final fx = (fadeIn * pixelsPerSecond).clamp(0.0, clipWidth);
-        canvas.drawPath(
-          Path()
-            ..moveTo(left, rect.bottom)
-            ..lineTo(left, rect.top)
-            ..lineTo(left + fx, rect.top)
-            ..close(),
-          fadePaint,
-        );
-      }
-      if (fadeOut > 0) {
-        final fx = (fadeOut * pixelsPerSecond).clamp(0.0, clipWidth);
-        canvas.drawPath(
-          Path()
-            ..moveTo(left + clipWidth, rect.bottom)
-            ..lineTo(left + clipWidth, rect.top)
-            ..lineTo(left + clipWidth - fx, rect.top)
-            ..close(),
-          fadePaint,
-        );
-      }
-
-      final isSelected = selectedClipIds.contains(clip.id) || dragging;
-      canvas.drawRRect(
-        rounded,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = isSelected ? 2 : 1
-          ..color = isSelected ? _accent : color,
-      );
-
-      if (clip.id == primaryClipId) {
-        // Trim grips on the primary clip only: with a group selected the
-        // accent border marks the rest without cluttering every clip.
-        final grip = Paint()
-          ..color = _accent.withValues(alpha: 0.9)
-          ..strokeWidth = 2;
-        canvas.drawLine(
-          Offset(left + 3, top + 26),
-          Offset(left + 3, top + kTrackRowHeight - 10),
-          grip,
-        );
-        canvas.drawLine(
-          Offset(left + clipWidth - 3, top + 26),
-          Offset(left + clipWidth - 3, top + kTrackRowHeight - 10),
-          grip,
-        );
-      }
+      _paintClip(canvas, item, size);
     }
 
     // Trim affordance: bright accent on the hovered clip edge.
@@ -2092,11 +2392,19 @@ class _TimelinePainter extends CustomPainter {
       for (var i = 0; i < snapshot.tracks.length; i++) {
         for (final clip in snapshot.tracks[i].clips) {
           if (clip.id != hoverClipId) continue;
-          final top = kRulerHeight + i * kTrackRowHeight + 22;
+          final top = kRulerHeight + i * _stride + kClipTopInset;
+          final height = kTrackRowHeight - kClipTopInset - kClipBottomInset;
           final x = (hoverIsLeft ? clip.start : clip.end) * pixelsPerSecond;
           canvas.drawLine(
             Offset(x, top),
-            Offset(x, top + kTrackRowHeight - 32),
+            Offset(x, top + height),
+            Paint()
+              ..color = _accent.withValues(alpha: 0.22)
+              ..strokeWidth = 5,
+          );
+          canvas.drawLine(
+            Offset(x, top),
+            Offset(x, top + height),
             Paint()
               ..color = _accent
               ..strokeWidth = 2,
@@ -2109,10 +2417,7 @@ class _TimelinePainter extends CustomPainter {
     // translated by the vertical scroll and clipped to the lane area).
     final marquee = marqueeRect;
     if (marquee != null && marquee.width > 0 && marquee.height > 0) {
-      canvas.drawRect(
-        marquee,
-        Paint()..color = _accent.withValues(alpha: 0.12),
-      );
+      canvas.drawRect(marquee, Paint()..color = _accent.withValues(alpha: 0.1));
       canvas.drawRect(
         marquee,
         Paint()
@@ -2123,6 +2428,506 @@ class _TimelinePainter extends CustomPainter {
     }
 
     canvas.restore(); // end of the translated (scrolling) lane area
+  }
+
+  void _paintRuler(
+    Canvas canvas,
+    Size size,
+    double barPx,
+    double beatPx,
+    double vOffset,
+  ) {
+    canvas.save();
+    canvas.translate(0, vOffset);
+    final ruler = Rect.fromLTWH(0, 0, size.width, kRulerHeight);
+    canvas.drawRect(ruler, Paint()..color = AppColors.bgPanel);
+    canvas.drawLine(
+      const Offset(0, kRulerHeight - 0.5),
+      Offset(size.width, kRulerHeight - 0.5),
+      Paint()..color = AppColors.border,
+    );
+
+    var labelStep = 1;
+    while (barPx * labelStep < 54) {
+      labelStep *= 2;
+    }
+
+    final barTick =
+        Paint()
+          ..color = AppColors.borderStrong
+          ..strokeWidth = 1;
+    final beatTick =
+        Paint()
+          ..color = AppColors.textFaint.withValues(alpha: 0.5)
+          ..strokeWidth = 1;
+    final bars = (size.width / barPx).ceil();
+    for (var bar = 0; bar <= bars; bar++) {
+      final x = bar * barPx + 0.5;
+      if (x > size.width + 2) continue;
+      canvas.drawLine(
+        Offset(x, kRulerHeight - 10),
+        Offset(x, kRulerHeight),
+        barTick,
+      );
+      if (bar % labelStep == 0) {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: '${bar + 1}',
+            style: const TextStyle(
+              color: AppColors.textDim,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        painter.paint(canvas, Offset(x + 5, 5));
+      }
+      if (beatPx >= 9) {
+        for (var beat = 1; beat < snapshot.timeSigNumerator; beat++) {
+          final bx = x + beat * beatPx;
+          if (bx > size.width) break;
+          canvas.drawLine(
+            Offset(bx, kRulerHeight - 5),
+            Offset(bx, kRulerHeight),
+            beatTick,
+          );
+        }
+      }
+    }
+    canvas.restore();
+  }
+
+  void _paintLanes(
+    Canvas canvas,
+    Size size,
+    double beatPx,
+    double barPx,
+    int beatsPerBar,
+  ) {
+    final stride = _stride;
+    for (var i = 0; i < snapshot.tracks.length; i++) {
+      final top = kRulerHeight + i * stride;
+      final track = snapshot.tracks[i];
+      final selected = track.id == selectedTrackId;
+      final base = i.isEven ? AppColors.bgDeep : const Color(0xFF111318);
+      canvas.drawRect(
+        Rect.fromLTWH(0, top, size.width, kTrackRowHeight),
+        Paint()..color = selected ? blend(base, AppColors.accent, 0.055) : base,
+      );
+      // A slim colour cue at the far left keeps tracks identifiable while
+      // the arrangement is scrolled (the header shows the full bar).
+      canvas.drawRect(
+        Rect.fromLTWH(0, top + 6, 2, kTrackRowHeight - 12),
+        Paint()
+          ..color = trackColor(
+            track.colorIndex,
+          ).withValues(alpha: selected ? 0.95 : 0.4),
+      );
+      if (automationOverlay) {
+        _paintAutomationLane(canvas, size, track, top, selected);
+      } else {
+        canvas.drawLine(
+          Offset(0, top + kTrackRowHeight - 0.5),
+          Offset(size.width, top + kTrackRowHeight - 0.5),
+          Paint()..color = AppColors.border.withValues(alpha: 0.7),
+        );
+      }
+    }
+
+    // Grid: faint beats, slightly stronger bars, both behind the clips.
+    if (beatPx >= 7) {
+      final beatPaint =
+          Paint()
+            ..color = Colors.white.withValues(alpha: 0.028)
+            ..strokeWidth = 1;
+      final beats = (size.width / beatPx).ceil();
+      for (var i = 0; i < beats; i++) {
+        if (beatsPerBar > 0 && i % beatsPerBar == 0) continue;
+        final x = i * beatPx;
+        canvas.drawLine(Offset(x, 0), Offset(x, size.height), beatPaint);
+      }
+    }
+    final barPaint =
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.07)
+          ..strokeWidth = 1;
+    final bars = (size.width / barPx).ceil();
+    for (var i = 0; i <= bars; i++) {
+      final x = i * barPx;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), barPaint);
+    }
+  }
+
+  /// Volume automation strip attached under the clip lane. Mirrors the
+  /// companion app: a tinted fill, the curve and its breakpoints, with the
+  /// manual level as a faint baseline when the lane is empty.
+  void _paintAutomationLane(
+    Canvas canvas,
+    Size size,
+    TrackInfo track,
+    double top,
+    bool selected,
+  ) {
+    final laneTop = top + kTrackRowHeight;
+    final laneRect = Rect.fromLTWH(
+      0,
+      laneTop,
+      size.width,
+      kAutomationLaneHeight,
+    );
+    final base = const Color(0xFF111318);
+    canvas.drawRect(
+      laneRect,
+      Paint()
+        ..color =
+            selected ? blend(base, AppColors.accent, 0.07) : base,
+    );
+    canvas.drawLine(
+      Offset(0, laneTop + 0.5),
+      Offset(size.width, laneTop + 0.5),
+      Paint()..color = AppColors.border.withValues(alpha: 0.8),
+    );
+    canvas.drawLine(
+      Offset(0, laneTop + kAutomationLaneHeight - 0.5),
+      Offset(size.width, laneTop + kAutomationLaneHeight - 0.5),
+      Paint()..color = AppColors.border.withValues(alpha: 0.7),
+    );
+
+    final color = trackColor(track.colorIndex);
+    double yFor(double value) =>
+        laneTop +
+        kAutomationLaneHeight -
+        5 -
+        value.clamp(0.0, 1.0) * (kAutomationLaneHeight - 10);
+
+    final points = [...track.volumeAuto]
+      ..sort((a, b) => a.time.compareTo(b.time));
+    if (points.isEmpty) {
+      final y = yFor(track.volume);
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(size.width, y),
+        Paint()
+          ..color = color.withValues(alpha: selected ? 0.4 : 0.28)
+          ..strokeWidth = 1,
+      );
+      return;
+    }
+
+    final firstX = points.first.time * pixelsPerSecond;
+    final path = Path()
+      ..moveTo(0, yFor(points.first.value))
+      ..lineTo(firstX, yFor(points.first.value));
+    for (final point in points.skip(1)) {
+      path.lineTo(
+        point.time * pixelsPerSecond,
+        yFor(point.value),
+      );
+    }
+    final lastX = points.last.time * pixelsPerSecond;
+    final fill =
+        Path.from(path)
+          ..lineTo(lastX, laneTop + kAutomationLaneHeight)
+          ..lineTo(0, laneTop + kAutomationLaneHeight)
+          ..close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            color.withValues(alpha: selected ? 0.18 : 0.13),
+            color.withValues(alpha: 0.02),
+          ],
+        ).createShader(laneRect),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.round
+        ..color = color.withValues(alpha: selected ? 0.95 : 0.7),
+    );
+    for (final point in points) {
+      final center = Offset(
+        point.time * pixelsPerSecond,
+        yFor(point.value),
+      );
+      if (center.dx < -4 || center.dx > size.width + 4) continue;
+      canvas.drawCircle(center, 2.2, Paint()..color = color);
+    }
+  }
+
+  void _paintClip(Canvas canvas, _ClipDraw item, Size size) {
+    final clip = item.clip;
+    final start = previewStarts[clip.id] ?? clip.start;
+    final length = previewLengths[clip.id] ?? clip.length;
+    final top = kRulerHeight + item.row * _stride;
+    final color = trackColor(item.track.colorIndex);
+    final dragging =
+        previewStarts.containsKey(clip.id) ||
+        (clip.id == dragClipId && previewFade >= 0);
+    final left = start * pixelsPerSecond;
+    final clipWidth =
+        (length * pixelsPerSecond).clamp(4.0, size.width).toDouble();
+    final rect = Rect.fromLTWH(
+      left,
+      top + kClipTopInset,
+      clipWidth,
+      kTrackRowHeight - kClipTopInset - kClipBottomInset,
+    );
+    final rounded = RRect.fromRectAndRadius(rect, const Radius.circular(6));
+    final isPrimary = clip.id == primaryClipId;
+    final isSelected = selectedClipIds.contains(clip.id) || dragging;
+
+    // Soft console shadow behind the primary tile only: selecting a clip is
+    // information, not decoration — the rest of the group just gets a
+    // brighter border.
+    if (isPrimary) {
+      canvas.drawShadow(Path()..addRRect(rounded), Colors.black, 6, false);
+    }
+
+    canvas.drawRRect(
+      rounded,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            blend(AppColors.surface, color, isSelected ? 0.30 : 0.22),
+            blend(AppColors.bgDeep, color, isSelected ? 0.16 : 0.11),
+          ],
+        ).createShader(rect),
+    );
+
+    canvas.save();
+    canvas.clipRRect(rounded);
+    // Colour bar along the top edge: the strongest read of the track colour.
+    canvas.drawRect(
+      Rect.fromLTWH(rect.left, rect.top, rect.width, 3),
+      Paint()..color = color.withValues(alpha: isSelected ? 1 : 0.82),
+    );
+    _paintClipLabel(canvas, clip, rect, isSelected);
+    if (clip.isMidi) {
+      _paintMidiNotes(canvas, clip, rect, color, isSelected);
+    } else {
+      _paintWaveform(canvas, clip, rect, color, isSelected);
+    }
+    _paintFades(canvas, clip, rect, dragging);
+    canvas.restore();
+
+    final borderColor =
+        isPrimary
+            ? AppColors.text
+            : isSelected
+            ? _accent
+            : color.withValues(alpha: 0.55);
+    canvas.drawRRect(
+      rounded,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = isPrimary ? 1.4 : (isSelected ? 1.2 : 1)
+        ..color = borderColor,
+    );
+
+    if (isPrimary && clipWidth > 32) {
+      _paintTrimHandles(canvas, rect);
+    }
+  }
+
+  void _paintClipLabel(
+    Canvas canvas,
+    ClipInfo clip,
+    Rect rect,
+    bool isSelected,
+  ) {
+    if (rect.width < 44) return;
+    final kind = clip.isMidi ? 'MIDI' : 'AUDIO';
+    final detail =
+        clip.isMidi
+            ? '${clip.notes.length}'
+            : '${clip.length.toStringAsFixed(clip.length < 10 ? 2 : 1)}s';
+    final painter = TextPainter(
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: kind,
+            style: TextStyle(
+              fontSize: 8.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+              color: AppColors.text.withValues(alpha: isSelected ? 0.95 : 0.86),
+            ),
+          ),
+          if (rect.width > 116)
+            TextSpan(
+              text: '  $detail',
+              style: TextStyle(
+                fontSize: 8,
+                fontWeight: FontWeight.w500,
+                color: AppColors.text.withValues(alpha: 0.55),
+              ),
+            ),
+        ],
+      ),
+      maxLines: 1,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: math.max(1, rect.width - 12));
+    painter.paint(canvas, Offset(rect.left + 6, rect.top + 5));
+  }
+
+  void _paintMidiNotes(
+    Canvas canvas,
+    ClipInfo clip,
+    Rect rect,
+    Color color,
+    bool isSelected,
+  ) {
+    if (clip.notes.isEmpty) return;
+    var minP = 127;
+    var maxP = 0;
+    for (final note in clip.notes) {
+      minP = math.min(minP, note.pitch);
+      maxP = math.max(maxP, note.pitch);
+    }
+    final range = math.max(1, maxP - minP + 1);
+    final contentTop = rect.top + 16;
+    final contentBottom = rect.bottom - 4;
+    final slot = (contentBottom - contentTop) / range;
+    final noteColor = Color.lerp(color, Colors.white, 0.68)!;
+    for (final note in clip.notes) {
+      final x = rect.left + note.start * pixelsPerSecond;
+      final w = (note.length * pixelsPerSecond).clamp(2.0, rect.width);
+      if (x > rect.right || x + w < rect.left) continue;
+      final y = contentBottom - (note.pitch - minP + 1) * slot;
+      final alpha =
+          (0.42 + note.velocity.clamp(0.0, 1.0) * 0.5) *
+          (isSelected ? 1.0 : 0.88);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            x.clamp(rect.left, rect.right),
+            y,
+            w,
+            math.max(2.2, slot * 0.78),
+          ),
+          const Radius.circular(1),
+        ),
+        Paint()..color = noteColor.withValues(alpha: alpha),
+      );
+    }
+  }
+
+  void _paintWaveform(
+    Canvas canvas,
+    ClipInfo clip,
+    Rect rect,
+    Color color,
+    bool isSelected,
+  ) {
+    final peaks = peaksFor(clip);
+    final contentTop = rect.top + 16;
+    final contentBottom = rect.bottom - 4;
+    final center = (contentTop + contentBottom) / 2;
+    final half = (contentBottom - contentTop) / 2;
+    if (peaks == null) {
+      canvas.drawLine(
+        Offset(rect.left + 4, center),
+        Offset(rect.right - 4, center),
+        Paint()
+          ..color = color.withValues(alpha: 0.35)
+          ..strokeWidth = 1,
+      );
+      return;
+    }
+    final wavePaint =
+        Paint()
+          ..color = Color.lerp(
+            color,
+            Colors.white,
+            0.58,
+          )!.withValues(alpha: isSelected ? 0.62 : 0.48)
+          ..strokeWidth = 1;
+    final n = peaks.mins.length;
+    for (var px = 0; px < n; px++) {
+      final x = rect.left + px + 0.5;
+      if (x > rect.right) break;
+      final y1 = center - (peaks.maxs[px] * half).clamp(-half, half);
+      final y2 = center - (peaks.mins[px] * half).clamp(-half, half);
+      canvas.drawLine(Offset(x, y1), Offset(x, y2), wavePaint);
+    }
+  }
+
+  void _paintFades(Canvas canvas, ClipInfo clip, Rect rect, bool dragging) {
+    final fadeIn =
+        dragging && previewFade >= 0 && previewFadeIsIn
+            ? previewFade
+            : clip.fadeIn;
+    final fadeOut =
+        dragging && previewFade >= 0 && !previewFadeIsIn
+            ? previewFade
+            : clip.fadeOut;
+    final shade = Paint()..color = Colors.black.withValues(alpha: 0.26);
+
+    if (fadeIn > 0) {
+      final fx = (fadeIn * pixelsPerSecond).clamp(0.0, rect.width);
+      canvas.drawPath(
+        Path()
+          ..moveTo(rect.left, rect.bottom)
+          ..lineTo(rect.left, rect.top)
+          ..lineTo(rect.left + fx, rect.top)
+          ..close(),
+        shade,
+      );
+      canvas.drawLine(
+        Offset(rect.left, rect.bottom),
+        Offset(rect.left + fx, rect.top),
+        Paint()
+          ..color = Colors.white.withValues(
+            alpha: dragging && previewFadeIsIn ? 0.55 : 0.28,
+          )
+          ..strokeWidth = 1,
+      );
+    }
+    if (fadeOut > 0) {
+      final fx = (fadeOut * pixelsPerSecond).clamp(0.0, rect.width);
+      canvas.drawPath(
+        Path()
+          ..moveTo(rect.right, rect.bottom)
+          ..lineTo(rect.right, rect.top)
+          ..lineTo(rect.right - fx, rect.top)
+          ..close(),
+        shade,
+      );
+      canvas.drawLine(
+        Offset(rect.right, rect.bottom),
+        Offset(rect.right - fx, rect.top),
+        Paint()
+          ..color = Colors.white.withValues(
+            alpha: dragging && !previewFadeIsIn ? 0.55 : 0.28,
+          )
+          ..strokeWidth = 1,
+      );
+    }
+  }
+
+  void _paintTrimHandles(Canvas canvas, Rect rect) {
+    final paint = Paint()..color = AppColors.text.withValues(alpha: 0.78);
+    final y = rect.center.dy - 8;
+    for (final x in [rect.left + 3.5, rect.right - 3.5]) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x - 1.5, y, 3, 16),
+          const Radius.circular(2),
+        ),
+        paint,
+      );
+    }
   }
 
   @override
@@ -2139,7 +2944,8 @@ class _TimelinePainter extends CustomPainter {
       oldDelegate.previewFade != previewFade ||
       oldDelegate.previewFadeIsIn != previewFadeIsIn ||
       oldDelegate.marqueeRect != marqueeRect ||
-      oldDelegate.vOffset != vOffset ||
+      oldDelegate.beatSeconds != beatSeconds ||
+      oldDelegate.selectedTrackId != selectedTrackId ||
       oldDelegate.pixelsPerSecond != pixelsPerSecond;
 }
 
@@ -2147,15 +2953,27 @@ class _PlayheadPainter extends CustomPainter {
   _PlayheadPainter({
     required this.service,
     required this.pixelsPerSecond,
-    required ValueListenable<int> repaint,
+    required this.automationOverlay,
+    required this.vScroll,
+    required Listenable repaint,
   }) : super(repaint: repaint);
 
   final EngineService service;
   final double pixelsPerSecond;
+  final bool automationOverlay;
+  final ScrollController vScroll;
 
   @override
   void paint(Canvas canvas, Size size) {
     final x = service.positionSeconds * pixelsPerSecond;
+    final color = service.isRecording ? AppColors.record : AppColors.accent;
+    final vOffset = (vScroll.hasClients ? vScroll.offset : 0.0).toDouble();
+
+    // Everything but the ruler cap lives under the sticky ruler.
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTRB(0, vOffset + kRulerHeight, size.width, size.height),
+    );
 
     // Recording ghost clips on armed tracks (§7.11: live draw). Instrument
     // tracks also show the take's notes as they arrive: waiting for the
@@ -2163,31 +2981,69 @@ class _PlayheadPainter extends CustomPainter {
     if (service.isRecording) {
       final x1 = service.recordStartSeconds * pixelsPerSecond;
       final x2 = service.positionSeconds * pixelsPerSecond;
-      final recPaint = Paint()..color = const Color(0x59E5484D);
       final tracks = service.snapshot.tracks;
       for (var i = 0; i < tracks.length; i++) {
         if (!tracks[i].armed) continue;
-        final top = kRulerHeight + i * kTrackRowHeight + 22;
+        final top =
+            kRulerHeight +
+            i * trackStride(automation: automationOverlay) +
+            kClipTopInset;
         final rect = Rect.fromLTWH(
           x1,
           top,
           (x2 - x1).clamp(2.0, size.width),
-          kTrackRowHeight - 32,
+          kTrackRowHeight - kClipTopInset - kClipBottomInset,
         );
-        canvas.drawRect(rect, recPaint);
+        final rounded = RRect.fromRectAndRadius(rect, const Radius.circular(6));
+        canvas.drawRRect(
+          rounded,
+          Paint()..color = AppColors.record.withValues(alpha: 0.18),
+        );
+        canvas.drawRRect(
+          rounded,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1
+            ..color = AppColors.record.withValues(alpha: 0.75),
+        );
         if (tracks[i].type != 1) continue; // audio take: no notes to draw
         _paintLiveNotes(canvas, rect, tracks[i].id, x1);
       }
     }
 
-    final paint = Paint()
-      ..color = const Color(0xFF4D9DF7)
-      ..strokeWidth = 2;
-    canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    canvas.drawCircle(
-      Offset(x, 5),
-      4,
-      Paint()..color = const Color(0xFF4D9DF7),
+    // Glow + hairline: visible over both dark lanes and clips.
+    canvas.drawLine(
+      Offset(x, kRulerHeight),
+      Offset(x, size.height),
+      Paint()
+        ..color = color.withValues(alpha: 0.14)
+        ..strokeWidth = 7,
+    );
+    canvas.drawLine(
+      Offset(x, kRulerHeight),
+      Offset(x, size.height),
+      Paint()
+        ..color = color
+        ..strokeWidth = 1.5,
+    );
+    canvas.restore();
+
+    // Ruler cap lives ON the sticky ruler, so it is drawn after the lane
+    // clip and pinned to the live scroll offset.
+    final rulerBottom = vOffset + kRulerHeight;
+    final cap =
+        Path()
+          ..moveTo(x - 5, rulerBottom - 10)
+          ..lineTo(x + 5, rulerBottom - 10)
+          ..lineTo(x, rulerBottom - 1)
+          ..close();
+    canvas.drawPath(cap, Paint()..color = color);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(x - 2, rulerBottom - 12, 4, 5),
+        const Radius.circular(1.5),
+      ),
+      Paint()..color = color,
     );
   }
 
@@ -2206,14 +3062,25 @@ class _PlayheadPainter extends CustomPainter {
       maxP = math.max(maxP, pitch);
     }
     final range = math.max(1, maxP - minP + 1);
-    final slot = rect.height / range;
-    final notePaint = Paint()..color = Colors.white.withValues(alpha: 0.9);
+    final contentTop = rect.top + 14;
+    final contentBottom = rect.bottom - 4;
+    final slot = (contentBottom - contentTop) / range;
+    final notePaint =
+        Paint()
+          ..color = Color.lerp(
+            AppColors.record,
+            Colors.white,
+            0.5,
+          )!.withValues(alpha: 0.92);
     for (final (pitch, start, length) in notes) {
       final nx = x1 + start * pixelsPerSecond;
       final nw = (length * pixelsPerSecond).clamp(2.0, rect.width);
-      final ny = rect.bottom - (pitch - minP + 1) * slot;
-      canvas.drawRect(
-        Rect.fromLTWH(nx, ny, nw, math.max(2.0, slot)),
+      final ny = contentBottom - (pitch - minP + 1) * slot;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(nx, ny, nw, math.max(2.0, slot * 0.8)),
+          const Radius.circular(1),
+        ),
         notePaint,
       );
     }
@@ -2231,17 +3098,15 @@ class _TimelineNavStrip extends StatelessWidget {
     required this.controller,
     required this.snapshot,
     required this.contentWidth,
+    required this.pixelsPerSecond,
   });
 
   final ScrollController controller;
   final ProjectSnapshot snapshot;
   final double contentWidth;
+  final double pixelsPerSecond;
 
   void _jumpToCenter(double stripX, double stripWidth) {
-    // ignore: avoid_print
-    print(
-      'DBG jump stripX=$stripX stripW=$stripWidth clients=${controller.hasClients} contentW=$contentWidth',
-    );
     if (!controller.hasClients || contentWidth <= 0) return;
     final viewport = controller.position.viewportDimension;
     final target = (stripX / stripWidth) * contentWidth - viewport / 2;
@@ -2254,43 +3119,51 @@ class _TimelineNavStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: controller,
-      builder: (context, _) => LayoutBuilder(
-        builder: (context, constraints) {
-          final stripWidth = constraints.maxWidth;
-          final stripHeight = constraints.maxHeight;
-          final viewport =
-              (controller.hasClients &&
-                  controller.position.hasViewportDimension)
-              ? controller.position.viewportDimension
-              : stripWidth;
-          final maxOffset = (contentWidth - viewport).clamp(
-            0.0,
-            double.infinity,
-          );
-          final offset = controller.hasClients
-              ? controller.offset.clamp(0.0, maxOffset)
-              : 0.0;
-          final scale = contentWidth > 0 ? stripWidth / contentWidth : 1.0;
-          final winX = offset * scale;
-          final winW = (viewport * scale).clamp(8.0, stripWidth);
+      builder:
+          (context, _) => LayoutBuilder(
+            builder: (context, constraints) {
+              final stripWidth = constraints.maxWidth;
+              final stripHeight = constraints.maxHeight;
+              final viewport =
+                  (controller.hasClients &&
+                          controller.position.hasViewportDimension)
+                      ? controller.position.viewportDimension
+                      : stripWidth;
+              final maxOffset = (contentWidth - viewport).clamp(
+                0.0,
+                double.infinity,
+              );
+              final offset =
+                  controller.hasClients
+                      ? controller.offset.clamp(0.0, maxOffset)
+                      : 0.0;
+              final scale = contentWidth > 0 ? stripWidth / contentWidth : 1.0;
+              final winX = offset * scale;
+              final winW = (viewport * scale).clamp(8.0, stripWidth);
 
-          return GestureDetector(
-            onTapUp: (d) => _jumpToCenter(d.localPosition.dx, stripWidth),
-            onPanStart: (d) => _jumpToCenter(d.localPosition.dx, stripWidth),
-            onPanUpdate: (d) => _jumpToCenter(d.localPosition.dx, stripWidth),
-            child: CustomPaint(
-              size: Size(stripWidth, stripHeight),
-              painter: _NavStripPainter(
-                snapshot: snapshot,
-                colorFor: trackColor,
-                scale: scale,
-                winX: winX,
-                winW: winW,
-              ),
-            ),
-          );
-        },
-      ),
+              return GestureDetector(
+                onTapUp: (d) => _jumpToCenter(d.localPosition.dx, stripWidth),
+                onPanStart:
+                    (d) => _jumpToCenter(d.localPosition.dx, stripWidth),
+                onPanUpdate:
+                    (d) => _jumpToCenter(d.localPosition.dx, stripWidth),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.resizeLeftRight,
+                  child: CustomPaint(
+                    size: Size(stripWidth, stripHeight),
+                    painter: _NavStripPainter(
+                      snapshot: snapshot,
+                      colorFor: trackColor,
+                      scale: scale,
+                      pixelsPerSecond: pixelsPerSecond,
+                      winX: winX,
+                      winW: winW,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
     );
   }
 }
@@ -2300,6 +3173,7 @@ class _NavStripPainter extends CustomPainter {
     required this.snapshot,
     required this.colorFor,
     required this.scale,
+    required this.pixelsPerSecond,
     required this.winX,
     required this.winW,
   });
@@ -2307,14 +3181,17 @@ class _NavStripPainter extends CustomPainter {
   final ProjectSnapshot snapshot;
   final Color Function(int) colorFor;
   final double scale;
+  final double pixelsPerSecond;
   final double winX;
   final double winW;
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = const Color(0xFF1B1D22),
+    canvas.drawRect(Offset.zero & size, Paint()..color = AppColors.bgPanel);
+    canvas.drawLine(
+      Offset.zero,
+      Offset(size.width, 0),
+      Paint()..color = AppColors.border,
     );
 
     // Clip minimap marks (track color, one thin block per clip).
@@ -2323,29 +3200,33 @@ class _NavStripPainter extends CustomPainter {
     for (var t = 0; t < snapshot.tracks.length; t++) {
       final track = snapshot.tracks[t];
       for (final clip in track.clips) {
-        final x = clip.start * kPixelsPerSecond * scale;
-        final w = (clip.length * kPixelsPerSecond * scale).clamp(
+        final x = clip.start * pixelsPerSecond * scale;
+        final w = (clip.length * pixelsPerSecond * scale).clamp(
           2.0,
           size.width,
         );
-        canvas.drawRect(
-          Rect.fromLTWH(x, 2 + t * rowH, w, math.max(2.0, rowH - 1)),
-          Paint()..color = colorFor(track.colorIndex).withValues(alpha: 0.8),
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(x, 2 + t * rowH, w, math.max(2.0, rowH - 1)),
+            const Radius.circular(1),
+          ),
+          Paint()..color = colorFor(track.colorIndex).withValues(alpha: 0.7),
         );
       }
     }
 
     // Viewport window.
+    final window = Rect.fromLTWH(winX, 1, winW, size.height - 2);
     canvas.drawRect(
-      Rect.fromLTWH(winX, 1, winW, size.height - 2),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = const Color(0xFF4D9DF7),
+      window,
+      Paint()..color = AppColors.accent.withValues(alpha: 0.08),
     );
     canvas.drawRect(
-      Rect.fromLTWH(winX, 1, winW, size.height - 2),
-      Paint()..color = const Color(0xFF4D9DF7).withValues(alpha: 0.08),
+      window,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = AppColors.accent.withValues(alpha: 0.85),
     );
   }
 
@@ -2353,5 +3234,6 @@ class _NavStripPainter extends CustomPainter {
   bool shouldRepaint(_NavStripPainter oldDelegate) =>
       oldDelegate.winX != winX ||
       oldDelegate.winW != winW ||
-      oldDelegate.snapshot != snapshot;
+      oldDelegate.snapshot != snapshot ||
+      oldDelegate.pixelsPerSecond != pixelsPerSecond;
 }

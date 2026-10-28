@@ -744,4 +744,30 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('automation overlay adds a lane per track and keeps clip hits aligned',
+      (tester) async {
+    final service = EngineService();
+    addTearDown(service.dispose);
+    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    expect(error, isNull, reason: error ?? '');
+
+    await _pumpTimeline(tester, service, height: 500);
+
+    // The chart toggle in the TRACKS header switches the overlay on.
+    await tester.tap(find.byIcon(Icons.multiline_chart_rounded));
+    await tester.pump();
+
+    // One compact volume strip per track, attached under its header.
+    expect(find.text('VOLUMEN'), findsNWidgets(3));
+
+    // Row 1 now starts below row 0's 34 px automation strip: clip hits must
+    // follow the same stride the painter uses.
+    await tester.tapAt(Offset(
+      kHeaderWidth + 270,
+      kRulerHeight + kTrackRowHeight + kAutomationLaneHeight + 30,
+    ));
+    await tester.pump();
+    expect(service.selectedClipId, 2);
+    expect(tester.takeException(), isNull);
+  });
 }

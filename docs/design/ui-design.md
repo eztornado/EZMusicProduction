@@ -190,21 +190,25 @@ Superficies oscuras neutras y planas; **el color vive en el contenido** (clips, 
 
 | Token | Valor | Uso |
 |---|---|---|
-| `bg.deep` | `#16171B` | Fondo de la ventana, huecos del timeline |
-| `bg.panel` | `#1E2026` | Track list, Library, toolbar, lower zone |
-| `bg.surface` | `#252830` | Cards, strips del mixer, cabeceras de sección |
-| `bg.elevated` | `#2C303A` | Popovers, menús, ventanas flotantes |
-| `border.subtle` | `#32363F` | Separadores de 1 px |
-| `border.strong` | `#3E4350` | Bordes de control activable |
-| `text.primary` | `#E9EBF0` | Texto principal |
-| `text.secondary` | `#9BA1AE` | Labels, unidades |
-| `text.disabled` | `#5C6270` | Deshabilitado |
+| `bg.deep` | `#0F1115` | Fondo de la ventana, huecos del timeline, LCD de transporte |
+| `bg.panel` | `#14161B` | Track list, Library, toolbar, lower zone |
+| `bg.surface` | `#1A1D24` | Cards, strips del mixer, cabeceras de sección |
+| `bg.surface.alt` | `#20242C` | Chips, controles hundidos, inserts |
+| `bg.elevated` | `#262B34` | Popovers, menús, hover de controles, ventanas flotantes |
+| `border.subtle` | `#2A2F38` | Separadores de 1 px |
+| `border.strong` | `#3A404C` | Bordes de control activable |
+| `text.primary` | `#F0F2F6` | Texto principal |
+| `text.secondary` | `#A1A8B5` | Labels, unidades |
+| `text.disabled` | `#6B7382` | Deshabilitado |
 | `accent` | `#4D9DF7` | Selección, foco, botones primarios, playhead |
-| `accent.record` | `#E5484D` | Record, arm, clip en grabación |
+| `accent.soft` | `#1E3655` | Fondo de selección y de acciones primarias suaves |
+| `accent.record` | `#FF453A` | Record, arm, clip en grabación |
 | `accent.play` | `#3DD68C` | Play, medidor "sano" |
-| `accent.warn` | `#F5A524` | Medidor medio, avisos |
+| `accent.warn` | `#F5A524` | Medidor medio, avisos, master |
 | `accent.clip` | `#E5484D` | Saturación de medidor, clímax |
-| `selection.overlay` | `accent @ 20 %` | Selección por rectángulo |
+| `selection.overlay` | `accent @ 10 %` | Selección por rectángulo |
+
+Superficies planas con contraste por profundidad, sin sombras decorativas; el color de pista vive en el contenido (barra superior del clip, dot y strip). Los clips y strips usan radio 6–10 px, borde de 1 px y una barra de color de 3 px; los controles (fader, pan, medidores) se dibujan a medida para mantener la lectura en decibelios.
 
 Tema claro (v1.5): mismos tokens con inversión de superficies (`bg.deep → #F2F3F5`, etc.) y *el mismo* rol semántico. La paleta de pista no cambia entre temas.
 
@@ -532,9 +536,10 @@ Grid filas=pistas, columnas=escenas; celdas acogen clips/loops (audio o MIDI) qu
 ### 7.12 Automatización
 
 - Cada pista puede mostrar **automation lanes** (toggle en header `A` o menú de pista): primera lane = volume por defecto; añadir lanes para pan, sends, y cualquier parámetro de plugin marcado como automatizable (popup con árbol plugin→parámetro).
+- **Overlay en el arrangement (como la app remota):** un toggle de gráfico en la cabecera `TRACKS` añade una tira de 34 px bajo la fila de clips de cada pista, sin reflow del resto del timeline. La cabecera de pista replica la tira con icono, etiqueta `VOLUMEN`, badge `AUTO` y el valor en dB; al pulsarla se selecciona la pista y se abre el editor de automatización inferior. La curva se pinta con relleno degradado, línea y puntos en el color de pista; si la lane está vacía se muestra el nivel manual como línea tenue.
 - Edición v1: puntos + segmentos lineales; herramientas: dibujar (lápiz libre que colapsa a puntos con tolerancia), seleccionar/mover, borrar; `⌘+click` añade punto; valores con curva Bezier en v1.5.
 - Modos v1: **Read** siempre activo (lo dibujado se aplica); *Touch/Latch/Write* con faders en v1.5.
-- La lane se superpone al clip en tinte del color de pista; la línea de volumen/pan de la pista puede mostrarse "inline" sobre los clips (toggle).
+- La lane del overlay se anexa bajo los clips (no los tapa) y comparte el mismo color de pista que el clip y el strip del mixer.
 - Undo por gesto; snap de puntos al grid; `⌥+click` sobre punto borra.
 
 ### 7.13 Export / Render
