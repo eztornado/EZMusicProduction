@@ -21,6 +21,8 @@
 
 namespace cadence {
 
+namespace mixai { class AnalysisSink; struct Report; }
+
 struct TrackCapture;
 using CaptureList = std::vector<std::shared_ptr<TrackCapture>>;
 
@@ -216,6 +218,13 @@ public:
     // plugins get a silent panic block and the internal synths are silenced.
     void flushAllNotes();
     void setPluginHost(PluginHost* host) { pluginHost_ = host; }
+    // Offline mix analysis: when set, the render path streams every track's
+    // post-fader signal and the final master into the sink. Analysis renders
+    // are private sources, so this is never installed on the live device.
+    void setAnalysisSink(mixai::AnalysisSink* sink)
+    {
+        analysisSink_.store(sink, std::memory_order_release);
+    }
 
     void play();
     void pause();
@@ -318,6 +327,7 @@ private:
     std::atomic<std::uint32_t> trackPeaks_[kMeterTracks] {};
     std::atomic<std::uint32_t> remoteMasterPeaks_[2] {{0}, {0}};
     std::atomic<std::uint32_t> remoteTrackPeaks_[kMeterTracks] {};
+    std::atomic<mixai::AnalysisSink*> analysisSink_ { nullptr };
 
     // Live MIDI monitoring (external input → armed instrument tracks).
     std::mutex externalMutex_;
@@ -440,6 +450,7 @@ struct TrackMixUpdate {
 // single-file "tape" playback survives as a convenience (loadFile builds a
 // one-track project).
 namespace ai { class Service; }
+namespace mixai { class AnalysisSink; struct Report; }
 class RemoteServer;
 
 class Engine {
@@ -787,6 +798,32 @@ public:
     // Strings of the current result, valid until the next call on this engine.
     const char* aiResultString(int field) const; // 0 error 1 provider 2 key 3 chords 4 prompt
 
+    // ---- AI mix analysis (offline render -> report -> moves) ----
+    enum MixState { kMixIdle = 0, kMixRunning = 1, kMixReady = 2, kMixFailed = 3 };
+    struct MixAnalysisRequest {
+        juce::String prompt;
+        float targetLufs = -14.0f;
+        float truePeakDb = -1.0f;
+        int profile = -1; // -1 = infer from the prompt
+        bool masterOnly = false;
+        int maxIssues = 12;
+    };
+
+    // Analyses an offline render on a worker thread. Poll mixAnalysisState()
+    // and read the JSON report with mixAnalysisJson() when it is ready.
+    bool startMixAnalysis(const MixAnalysisRequest& request);
+    int mixAnalysisState() const { return mixState_.load(std::memory_order_acquire); }
+    bool mixAnalysisRunning() const { return mixAnalysisState() == kMixRunning; }
+    const char* mixAnalysisJson() const;
+    void clearMixAnalysis();
+    void cancelMixAnalysis();
+    // Applies all fixes of the current report, or one issue's fixes, as ONE
+    // undo entry. Returns a JSON summary of the applied moves.
+    juce::Result applyMixPlan();
+    juce::Result applyMixIssue(const juce::String& issueId);
+    juce::Result applyMixMovesJson(const juce::String& movesJson);
+    const char* mixApplyResultJson() const;
+
     // ---- quantize (§7.5.2, non-destructive) ----
     // Moves note starts toward the nearest grid position. Non-cumulative:
     // re-quantizing always works from each note's original position unless
@@ -1055,6 +1092,24 @@ private:
     mutable std::string aiStringOut_;
     void runAiGeneration(std::shared_ptr<const Project> project,
                          AiGenerationRequest request);
+
+    // Mix analysis worker (one job at a time). The report JSON is cached for
+    // the FFI; applyMixMoves() is the single entry point for all fixes.
+    std::thread mixThread_;
+    mutable std::mutex mixMutex_;
+    std::atomic<int> mixState_ {kMixIdle};
+    std::atomic<bool> mixCancel_ {false};
+    std::unique_ptr<mixai::Report> mixReport_;
+    mutable std::string mixJsonOut_;
+    std::string mixApplyJson_;
+    void runMixAnalysis(std::shared_ptr<const Project> project,
+                        MixAnalysisRequest request,
+                        std::vector<float> highPassHz,
+                        bool limiterPresent,
+                        float limiterInputGainDb,
+                        float limiterCeilingDb,
+                        ProjectAudioSource* source);
+    juce::Result applyMixMovesVar(const juce::var& moves);
 
     std::unique_ptr<OutputCallback> outputCallback_;
     std::unique_ptr<MidiInCallback> midiInCallback_;

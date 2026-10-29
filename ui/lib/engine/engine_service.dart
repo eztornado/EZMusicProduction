@@ -146,6 +146,103 @@ class AiGenerationSnapshot {
       );
 }
 
+/// One issue from a mix analysis report, with its ready-to-apply moves.
+class MixIssue {
+  const MixIssue({
+    required this.id,
+    required this.severity,
+    required this.kind,
+    required this.trackId,
+    required this.message,
+    required this.moves,
+  });
+
+  final String id;
+  final String severity;
+  final String kind;
+  final int trackId;
+  final String message;
+  final List<Map<String, dynamic>> moves;
+
+  bool get canApply => moves.isNotEmpty;
+}
+
+/// Engine-owned mix analysis state plus the parsed JSON report.
+///
+/// [state]: 0 idle, 1 running, 2 ready, 3 failed. Nothing changes the project
+/// until an apply method runs; every apply is one undo entry.
+class MixAnalysisSnapshot {
+  const MixAnalysisSnapshot({
+    this.state = 0,
+    this.ok = false,
+    this.error = '',
+    this.promptNote = '',
+    this.report = const {},
+  });
+
+  static const idle = MixAnalysisSnapshot();
+
+  final int state;
+  final bool ok;
+  final String error;
+  final String promptNote;
+  final Map<String, dynamic> report;
+
+  bool get isRunning => state == 1;
+  bool get isReady => state == 2 && ok;
+  bool get isFailed => state == 3 || (state == 2 && !ok);
+
+  Map<String, dynamic> get targets =>
+      (report['targets'] as Map<String, dynamic>?) ?? const {};
+
+  Map<String, dynamic> get masterStats {
+    final master = report['master'];
+    if (master is Map<String, dynamic>) {
+      final stats = master['stats'];
+      if (stats is Map<String, dynamic>) return stats;
+    }
+    return const {};
+  }
+
+  List<Map<String, dynamic>> get channels =>
+      (report['channels'] as List<dynamic>?)
+          ?.whereType<Map<String, dynamic>>()
+          .toList() ??
+      const [];
+
+  List<Map<String, dynamic>> get plan =>
+      (report['plan'] as List<dynamic>?)
+          ?.whereType<Map<String, dynamic>>()
+          .toList() ??
+      const [];
+
+  List<MixIssue> get issues {
+    final list = report['issues'];
+    if (list is! List) return const [];
+    return list.whereType<Map<String, dynamic>>().map((issue) {
+      return MixIssue(
+        id: '${issue['id'] ?? ''}',
+        severity: '${issue['severity'] ?? ''}',
+        kind: '${issue['kind'] ?? ''}',
+        trackId: (issue['track_id'] as num?)?.toInt() ?? -1,
+        message: '${issue['message'] ?? ''}',
+        moves: (issue['moves'] as List<dynamic>?)
+                ?.whereType<Map<String, dynamic>>()
+                .toList() ??
+            const [],
+      );
+    }).toList();
+  }
+
+  MixAnalysisSnapshot copyWith({int? state}) => MixAnalysisSnapshot(
+        state: state ?? this.state,
+        ok: ok,
+        error: error,
+        promptNote: promptNote,
+        report: report,
+      );
+}
+
 const String kDefaultProjectsDir =
     '/Users/ivan/Music/EZMusicProduction/Projects';
 
@@ -978,6 +1075,155 @@ class EngineService extends ChangeNotifier {
     _engine.clearAiGeneration();
     _aiGeneration = AiGenerationSnapshot.idle;
     _aiStateSeen = 0;
+    notifyListeners();
+  }
+
+  // ---- AI mix analysis / mastering ----
+
+  MixAnalysisSnapshot _mixAnalysis = MixAnalysisSnapshot.idle;
+  int _mixStateSeen = 0;
+  final Set<String> _appliedMixIssues = {};
+
+  /// Latest offline mix report. Nothing changes the project until an apply
+  /// method runs.
+  MixAnalysisSnapshot get mixAnalysis => _mixAnalysis;
+
+  /// Issue ids already applied in the current report. The report stays open so
+  /// the next issue can be fixed, but nothing is applied twice.
+  Set<String> get appliedMixIssues => Set.unmodifiable(_appliedMixIssues);
+
+  /// Starts the offline analysis worker. Returns false when a job is already
+  /// running or the project is empty.
+  bool startMixAnalysis({
+    required String prompt,
+    double targetLufs = -14.0,
+    double truePeakDb = -1.0,
+    int profile = -1,
+    bool masterOnly = false,
+    int maxIssues = 12,
+  }) {
+    if (_engine.mixAnalysisState == 1) {
+      statusMessage = L10n.current.mixBusy;
+      notifyListeners();
+      return false;
+    }
+    final started = _engine.startMixAnalysis(
+      prompt: prompt,
+      targetLufs: targetLufs,
+      truePeakDb: truePeakDb,
+      profile: profile,
+      masterOnly: masterOnly,
+      maxIssues: maxIssues,
+    );
+    if (!started) {
+      statusMessage = _engine.lastError;
+      notifyListeners();
+      return false;
+    }
+    _mixAnalysis = const MixAnalysisSnapshot(state: 1);
+    _mixStateSeen = 1;
+    _appliedMixIssues.clear();
+    notifyListeners();
+    return true;
+  }
+
+  /// Cheap state poll; safe to call from a dialog timer.
+  void pollMixAnalysis() {
+    final state = _engine.mixAnalysisState;
+    if (state == _mixStateSeen) return;
+    _mixStateSeen = state;
+    if (state == 0) {
+      _mixAnalysis = MixAnalysisSnapshot.idle;
+    } else if (state == 1) {
+      _mixAnalysis = _mixAnalysis.copyWith(state: 1);
+    } else {
+      _mixAnalysis = _readMixReport(state);
+    }
+    notifyListeners();
+  }
+
+  MixAnalysisSnapshot _readMixReport(int state) {
+    final raw = _engine.mixAnalysisJson;
+    Map<String, dynamic> report = const {};
+    String error = '';
+    bool ok = false;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        report = decoded;
+        ok = decoded['ok'] == true;
+        error = '${decoded['error'] ?? ''}';
+      }
+    } catch (_) {
+      error = raw.isEmpty ? 'empty report' : 'invalid report';
+    }
+    return MixAnalysisSnapshot(
+      state: state,
+      ok: ok,
+      error: error,
+      promptNote: '${report['prompt_note'] ?? ''}',
+      report: report,
+    );
+  }
+
+  /// Applies every proposed fix as one undo entry and clears the report.
+  bool applyMixPlan() {
+    if (!_mixAnalysis.isReady) return false;
+    if (!_engine.applyMixPlan()) {
+      statusMessage = _engine.lastError;
+      notifyListeners();
+      return false;
+    }
+    statusMessage = L10n.current.mixApplied;
+    _engine.clearMixAnalysis();
+    _mixAnalysis = MixAnalysisSnapshot.idle;
+    _mixStateSeen = 0;
+    _appliedMixIssues.clear();
+    refresh();
+    return true;
+  }
+
+  /// Applies one issue's fixes as one undo entry. The report stays open so the
+  /// user can fix the next issue.
+  bool applyMixIssue(String issueId) {
+    if (!_mixAnalysis.isReady) return false;
+    if (!_engine.applyMixIssue(issueId)) {
+      statusMessage = _engine.lastError;
+      notifyListeners();
+      return false;
+    }
+    statusMessage = L10n.current.mixApplied;
+    _appliedMixIssues.add(issueId);
+    refresh();
+    return true;
+  }
+
+  /// Applies an explicit JSON move list (used by the UI's custom actions).
+  bool applyMixMoves(String movesJson) {
+    if (!_engine.applyMixMoves(movesJson)) {
+      statusMessage = _engine.lastError;
+      notifyListeners();
+      return false;
+    }
+    statusMessage = L10n.current.mixApplied;
+    refresh();
+    return true;
+  }
+
+  void cancelMixAnalysis() {
+    _engine.cancelMixAnalysis();
+    _engine.clearMixAnalysis();
+    _mixAnalysis = MixAnalysisSnapshot.idle;
+    _mixStateSeen = 0;
+    _appliedMixIssues.clear();
+    notifyListeners();
+  }
+
+  void clearMixAnalysis() {
+    _engine.clearMixAnalysis();
+    _mixAnalysis = MixAnalysisSnapshot.idle;
+    _mixStateSeen = 0;
+    _appliedMixIssues.clear();
     notifyListeners();
   }
 

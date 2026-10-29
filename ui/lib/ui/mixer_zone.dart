@@ -17,6 +17,7 @@ import '../engine/project_snapshot.dart';
 import '../l10n/l10n.dart';
 import 'channel_settings_dialog.dart' show showChannelSettingsDialog;
 import 'design.dart';
+import 'mix_assistant_dialog.dart' show showMixAssistantDialog;
 import 'plugin_picker_dialog.dart' show showPluginPickerDialog;
 
 class MixerZone extends StatefulWidget {
@@ -90,6 +91,7 @@ class _MixerZoneState extends State<MixerZone> {
             children: [
               _MixerHeader(
                 channelCount: tracks.length,
+                onMixAssistant: () => showMixAssistantDialog(context, service),
                 onUndock: widget.onUndock,
               ),
               Expanded(
@@ -289,9 +291,14 @@ class _MixerZoneState extends State<MixerZone> {
 }
 
 class _MixerHeader extends StatelessWidget {
-  const _MixerHeader({required this.channelCount, this.onUndock});
+  const _MixerHeader({
+    required this.channelCount,
+    this.onMixAssistant,
+    this.onUndock,
+  });
 
   final int channelCount;
+  final VoidCallback? onMixAssistant;
   final VoidCallback? onUndock;
 
   @override
@@ -339,6 +346,18 @@ class _MixerHeader extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          IconButton(
+            tooltip: context.l10n.mixToolbarTooltip,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 24, height: 22),
+            icon: const Icon(
+              Icons.auto_awesome,
+              size: 13,
+              color: AppColors.accent,
+            ),
+            onPressed: onMixAssistant,
+          ),
           IconButton(
             tooltip: context.l10n.mixerUndock,
             visualDensity: VisualDensity.compact,

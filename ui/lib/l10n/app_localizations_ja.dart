@@ -793,6 +793,90 @@ class AppLocalizationsJa extends AppLocalizations {
   String get aiApplied => '生成したクリップを適用しました';
 
   @override
+  String get mixToolbarButton => 'ミックスアシスタント';
+
+  @override
+  String get mixToolbarTooltip => 'ミックスを分析・修正';
+
+  @override
+  String get mixDialogTitle => 'ミックスアシスタント';
+
+  @override
+  String get mixPromptLabel => 'ミックスの目標は？';
+
+  @override
+  String get mixPromptHint => '例: -14 LUFS、-1 dBTP、ポップ、控えめ、マスターのみ';
+
+  @override
+  String get mixMasterOnly => 'マスターバスのみ';
+
+  @override
+  String get mixAnalyze => 'ミックスを分析';
+
+  @override
+  String get mixAnalyzing => 'ミックスを分析中…';
+
+  @override
+  String get mixApplyAll => 'すべての修正を適用';
+
+  @override
+  String get mixApplyIssue => '適用';
+
+  @override
+  String get mixNoIssues => '問題は見つかりませんでした';
+
+  @override
+  String get mixIssues => '問題';
+
+  @override
+  String get mixPlan => '修正プラン';
+
+  @override
+  String get mixTargets => '目標';
+
+  @override
+  String get mixMaster => 'マスター';
+
+  @override
+  String get mixApplied => 'ミックスの修正を適用しました';
+
+  @override
+  String get mixBusy => 'ミックス分析がすでに実行中です';
+
+  @override
+  String get mixFailed => 'ミックス分析に失敗しました';
+
+  @override
+  String get mixClose => '閉じる';
+
+  @override
+  String get mixRetry => '再分析';
+
+  @override
+  String get mixProjectEmpty => 'ミックスを分析する前にトラックを追加してください';
+
+  @override
+  String get mixLoudness => 'ラウドネス';
+
+  @override
+  String get mixTruePeak => 'トゥルーピーク';
+
+  @override
+  String get mixProfile => 'バランス';
+
+  @override
+  String get mixSeverityHigh => '高';
+
+  @override
+  String get mixSeverityMedium => '中';
+
+  @override
+  String get mixSeverityLow => '低';
+
+  @override
+  String get mixNoMoves => '自動修正なし';
+
+  @override
   String get aiGenerateClip => 'AI で生成…';
 
   @override

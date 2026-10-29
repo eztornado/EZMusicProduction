@@ -1,6 +1,9 @@
 #include "cadence/engine.hpp"
 #include "ai_generation.h"
+#include "mix_ai.h"
 #include "ezq4.h"
+#include "ezcomp.h"
+#include "ezlim.h"
 #include "ezinst.h"
 #include "ezsynth.h"
 #include "ezorq.h"
@@ -206,6 +209,34 @@ void PluginHost::setup()
     d.isInstrument = false;
     d.category = "Effect";
     builtins_.push_back(d);
+
+    // Built-in dynamics: the mix assistant inserts these by name; they are
+    // also available to the user anywhere an insert is.
+    juce::PluginDescription dc;
+    dc.pluginFormatName = "Internal";
+    dc.name = "EZ Compressor";
+    dc.descriptiveName = "EZ Compressor";
+    dc.manufacturerName = "EZMusicProduction";
+    dc.uniqueId = (int) (juce::String("ezcomp").hashCode());
+    dc.fileOrIdentifier = "internal:ezcomp";
+    dc.numInputChannels = 2;
+    dc.numOutputChannels = 2;
+    dc.isInstrument = false;
+    dc.category = "Effect";
+    builtins_.push_back(dc);
+
+    juce::PluginDescription dl;
+    dl.pluginFormatName = "Internal";
+    dl.name = "EZ Limiter";
+    dl.descriptiveName = "EZ Limiter";
+    dl.manufacturerName = "EZMusicProduction";
+    dl.uniqueId = (int) (juce::String("ezlim").hashCode());
+    dl.fileOrIdentifier = "internal:ezlim";
+    dl.numInputChannels = 2;
+    dl.numOutputChannels = 2;
+    dl.isInstrument = false;
+    dl.category = "Effect";
+    builtins_.push_back(dl);
 
     // Built-in instrument (EZInstruments): the FluidSynth-backed GM catalog.
     juce::PluginDescription di;
@@ -489,6 +520,12 @@ std::unique_ptr<juce::AudioProcessor> PluginHost::create(
                 if (b.fileOrIdentifier == "internal:ezarp")
                     return std::unique_ptr<juce::AudioProcessor>(
                         ezarp::create());
+                if (b.fileOrIdentifier == "internal:ezcomp")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezcomp::create());
+                if (b.fileOrIdentifier == "internal:ezlim")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezlim::create());
                 return std::unique_ptr<juce::AudioProcessor>(ezq4::create());
             }
     }
@@ -1840,6 +1877,11 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
             processFxChain(*masterFx, masterBuffer_, pluginRate, numSamples);
         masterBuffer_.applyGain(project->masterGain);
 
+        if (auto* sink = analysisSink_.load(std::memory_order_acquire))
+            sink->pushMaster(masterBuffer_.getReadPointer(0),
+                             masterBuffer_.getReadPointer(1), numSamples,
+                             project->sampleRate);
+
         const int numOut = std::min(2, info.buffer->getNumChannels());
         for (int ch = 0; ch < numOut; ++ch)
         {
@@ -1916,9 +1958,17 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     int trackIndex = 0;
     for (const auto& track : project->tracks)
     {
+        const int analysisIndex = trackIndex;
         const int meterSlot = trackIndex++ & (kMeterTracks - 1);
         if (track.mute || (anySolo && ! track.solo))
         {
+            if (auto* sink = analysisSink_.load(std::memory_order_acquire))
+            {
+                trackScratch_.clear();
+                sink->pushTrack(analysisIndex, trackScratch_.getReadPointer(0),
+                                trackScratch_.getReadPointer(1), numSamples,
+                                project->sampleRate);
+            }
             trackPeaks_[meterSlot].store(0, std::memory_order_relaxed);
             remoteTrackPeaks_[meterSlot].store(0, std::memory_order_relaxed);
             continue;
@@ -2219,6 +2269,11 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
                 trackPeak = std::max(trackPeak,
                     absMax(trackScratch_.getReadPointer(ch, 0), numSamples));
 
+            if (auto* sink = analysisSink_.load(std::memory_order_acquire))
+                sink->pushTrack(analysisIndex, trackScratch_.getReadPointer(0),
+                                trackScratch_.getReadPointer(1), numSamples,
+                                project->sampleRate);
+
             masterBuffer_.addFrom(0, 0, trackScratch_, 0, 0, numSamples, 1.0f);
             masterBuffer_.addFrom(1, 0, trackScratch_, 1, 0, numSamples, 1.0f);
 
@@ -2331,6 +2386,11 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         for (int ch = 0; ch < 2; ++ch)
             trackPeak = std::max(trackPeak,
                 absMax(trackScratch_.getReadPointer(ch, 0), numSamples));
+
+        if (auto* sink = analysisSink_.load(std::memory_order_acquire))
+            sink->pushTrack(analysisIndex, trackScratch_.getReadPointer(0),
+                            trackScratch_.getReadPointer(1), numSamples,
+                            project->sampleRate);
 
         masterBuffer_.addFrom(0, 0, trackScratch_, 0, 0, numSamples, 1.0f);
         masterBuffer_.addFrom(1, 0, trackScratch_, 1, 0, numSamples, 1.0f);
@@ -2771,6 +2831,9 @@ Engine::~Engine()
     aiCancel_.store(true, std::memory_order_release);
     if (aiThread_.joinable())
         aiThread_.join();
+    mixCancel_.store(true, std::memory_order_release);
+    if (mixThread_.joinable())
+        mixThread_.join();
     if (initCancel_ != nullptr)
         initCancel_->store(true, std::memory_order_release);
 
@@ -4753,6 +4816,755 @@ juce::Result Engine::applyAiGeneration(ClipId* outClipId)
     const std::scoped_lock lock(aiMutex_);
     aiResult_ = {};
     aiState_.store(kAiIdle, std::memory_order_release);
+    return juce::Result::ok();
+}
+
+namespace {
+
+juce::String builtinIdentifier(const char* displayName, const char* token);
+
+const char* displayNameForToken(const juce::String& token)
+{
+    if (token == "ezq4")
+        return "EZ EQ Pro";
+    if (token == "ezcomp")
+        return "EZ Compressor";
+    if (token == "ezlim")
+        return "EZ Limiter";
+    return nullptr;
+}
+
+bool slotMatches(const FxSlot& slot, const juce::String& token)
+{
+    if (slot.pluginUid.containsIgnoreCase(token))
+        return true;
+    const auto* display = displayNameForToken(token);
+    return display != nullptr
+        && slot.pluginUid == builtinIdentifier(display, token.toRawUTF8());
+}
+
+juce::String builtinIdentifier(const char* displayName, const char* token)
+{
+    const auto uid = (int) juce::String(token).hashCode();
+    const auto fileHash = (int) (juce::String("internal:") + token).hashCode();
+    return juce::String("Internal-") + displayName + "-"
+         + juce::String::toHexString(fileHash) + "-"
+         + juce::String::toHexString(uid);
+}
+
+juce::AudioProcessorParameter* parameterById(juce::AudioProcessor* proc,
+                                             const juce::String& id)
+{
+    if (proc == nullptr)
+        return nullptr;
+    for (auto* p : proc->getParameters())
+        if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*>(p))
+            if (withId->paramID == id)
+                return p;
+    return nullptr;
+}
+
+float parameterActual(juce::AudioProcessor* proc, const juce::String& id,
+                      float fallback)
+{
+    if (auto* p = parameterById(proc, id))
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(p))
+            return ranged->getNormalisableRange().convertFrom0to1(p->getValue());
+    return fallback;
+}
+
+void setParameterActual(juce::AudioProcessor* proc, const juce::String& id,
+                        float value)
+{
+    if (auto* p = parameterById(proc, id))
+    {
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(p))
+            p->setValueNotifyingHost(
+                ranged->getNormalisableRange().convertTo0to1(value));
+        else
+            p->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, value));
+    }
+}
+
+int slotIndexFor(const std::vector<FxSlot>& chain, const juce::String& token)
+{
+    for (int i = 0; i < (int) chain.size(); ++i)
+        if (slotMatches(chain[(size_t) i], token))
+            return i;
+    return -1;
+}
+
+void ensureDevice(std::vector<FxSlot>& chain, const juce::String& token,
+                  const juce::String& name, bool front)
+{
+    if (slotIndexFor(chain, token) >= 0)
+        return;
+    FxSlot slot;
+    slot.pluginUid = builtinIdentifier(name.toRawUTF8(), token.toRawUTF8());
+    slot.name = name;
+    if (front)
+        chain.insert(chain.begin(), std::move(slot));
+    else
+        chain.push_back(std::move(slot));
+}
+
+const std::vector<FxSlot>* chainFor(const Project& project, TrackId trackId)
+{
+    if (trackId < 0)
+        return &project.masterFx;
+    if (const auto* track = project.findTrack(trackId))
+        return &track->fx;
+    return nullptr;
+}
+
+std::vector<FxSlot>* chainFor(Project& project, TrackId trackId)
+{
+    if (trackId < 0)
+        return &project.masterFx;
+    if (auto* track = project.findTrack(trackId))
+        return &track->fx;
+    return nullptr;
+}
+
+struct PendingParameter
+{
+    bool master = false;
+    TrackId trackId = -1;
+    juce::String token;
+    juce::String parameter;
+    float value = 0.0f;
+};
+
+struct PendingEq
+{
+    bool master = false;
+    TrackId trackId = -1;
+    mixai::EqKind kind = mixai::EqKind::Bell;
+    float freqHz = 1000.0f;
+    float gainDb = 0.0f;
+    float q = 1.0f;
+};
+
+} // namespace
+
+bool Engine::startMixAnalysis(const MixAnalysisRequest& request)
+{
+    auto project = std::atomic_load(&project_);
+    if (project == nullptr || project->tracks.empty())
+        return false;
+
+    {
+        const std::scoped_lock lock(mixMutex_);
+        if (mixState_.load(std::memory_order_acquire) == kMixRunning)
+            return false;
+    }
+    if (mixThread_.joinable())
+        mixThread_.join();
+
+    // Read live plugin settings that the project document does not store:
+    // active high-passes and the master limiter.
+    std::vector<float> highPassHz(project->tracks.size(), 0.0f);
+    bool limiterPresent = false;
+    float limiterInput = 0.0f;
+    float limiterCeiling = -1.0f;
+    runOnMessageThread([&] {
+        for (int i = 0; i < (int) project->tracks.size(); ++i)
+        {
+            const auto& track = project->tracks[(size_t) i];
+            for (int slot = 0; slot < (int) track.fx.size(); ++slot)
+            {
+                if (! slotMatches(track.fx[(size_t) slot], "ezq4"))
+                    continue;
+                if (auto proc = transport_->fxProcessorFor(track.id, slot))
+                {
+                    float lowest = 0.0f;
+                    for (int b = 0; b < 8; ++b)
+                    {
+                        const auto prefix = "b" + juce::String(b);
+                        if (parameterActual(proc.get(), prefix + "en", 0.0f) < 0.5f)
+                            continue;
+                        const int type = (int) std::lround(
+                            parameterActual(proc.get(), prefix + "ty", 0.0f));
+                        if (type != 1) // low cut
+                            continue;
+                        const float f = parameterActual(proc.get(), prefix + "f",
+                                                        100.0f);
+                        if (lowest <= 0.0f || f < lowest)
+                            lowest = f;
+                    }
+                    highPassHz[(size_t) i] = lowest;
+                }
+            }
+        }
+        for (int slot = 0; slot < (int) project->masterFx.size(); ++slot)
+        {
+            if (! slotMatches(project->masterFx[(size_t) slot], "ezlim"))
+                continue;
+            if (auto proc = transport_->masterFxProcessorFor(slot))
+            {
+                limiterPresent = true;
+                limiterInput = parameterActual(proc.get(), "in", 0.0f);
+                limiterCeiling = parameterActual(proc.get(), "cei", -1.0f);
+            }
+        }
+    });
+
+    {
+        const std::scoped_lock lock(mixMutex_);
+        mixReport_.reset();
+        mixJsonOut_.clear();
+        mixApplyJson_.clear();
+        mixCancel_.store(false, std::memory_order_release);
+        mixState_.store(kMixRunning, std::memory_order_release);
+    }
+
+    ProjectAudioSource* source = nullptr;
+    runOnMessageThread([&] {
+        auto created = std::make_unique<ProjectAudioSource>();
+        created->setProject(project);
+        created->setPluginHost(&pluginHost_);
+        created->prepareToPlay(512, project->sampleRate);
+        created->reconcileNodes(*project, pluginHost_, 512, false);
+        source = created.get();
+        offlineRenderSources_.push_back(std::move(created));
+    });
+
+    mixThread_ = std::thread([this, project, request, highPassHz, limiterPresent,
+                              limiterInput, limiterCeiling, source] {
+        runMixAnalysis(project, request, highPassHz, limiterPresent,
+                       limiterInput, limiterCeiling, source);
+    });
+    return true;
+}
+
+void Engine::runMixAnalysis(std::shared_ptr<const Project> project,
+                            MixAnalysisRequest request,
+                            std::vector<float> highPassHz,
+                            bool limiterPresent,
+                            float limiterInputGainDb,
+                            float limiterCeilingDb,
+                            ProjectAudioSource* source)
+{
+    struct Sink final : mixai::AnalysisSink
+    {
+        explicit Sink(std::size_t tracks, double rate)
+            : master(rate)
+        {
+            details.reserve(tracks);
+            for (std::size_t i = 0; i < tracks; ++i)
+                details.push_back(std::make_unique<mixai::DetailAnalyzer>(rate));
+        }
+
+        void pushTrack(int trackIndex, const float* left, const float* right,
+                       int numSamples, double) override
+        {
+            if (trackIndex >= 0 && trackIndex < (int) details.size())
+                details[(size_t) trackIndex]->push(left, right, numSamples);
+        }
+
+        void pushMaster(const float* left, const float* right, int numSamples,
+                        double) override
+        {
+            master.push(left, right, numSamples);
+        }
+
+        std::vector<std::unique_ptr<mixai::DetailAnalyzer>> details;
+        mixai::DetailAnalyzer master;
+    };
+
+    auto report = std::make_unique<mixai::Report>();
+    try
+    {
+        Sink sink(project->tracks.size(), project->sampleRate);
+        if (source == nullptr)
+        {
+            report->error = "analysis render source unavailable";
+        }
+        else
+        {
+            source->setAnalysisSink(&sink);
+            source->setMetronome(false);
+            source->setOfflineRender(true);
+            source->seek(0.0);
+            source->play();
+
+            const int blockSize = 512;
+            const int totalSamples = (int) std::ceil(
+                project->durationSeconds() * project->sampleRate);
+            juce::AudioBuffer<float> block(2, blockSize);
+            for (int pos = 0; pos < totalSamples; pos += blockSize)
+            {
+                if (mixCancel_.load(std::memory_order_acquire))
+                    break;
+                block.clear();
+                const int n = juce::jmin(blockSize, totalSamples - pos);
+                const juce::AudioSourceChannelInfo info { &block, 0, n };
+                source->getNextAudioBlock(info);
+            }
+            source->setAnalysisSink(nullptr);
+            source->stop();
+            source->setOfflineRender(false);
+        }
+
+        if (! mixCancel_.load(std::memory_order_acquire) && report->error.isEmpty())
+        {
+            mixai::MixTargets targets;
+            targets.lufs = juce::jlimit(-40.0f, 0.0f, request.targetLufs);
+            targets.truePeakDb = juce::jlimit(-12.0f, 0.0f, request.truePeakDb);
+            targets.profile = request.profile >= 0
+                                  ? static_cast<mixai::ToneProfile>(
+                                        juce::jlimit(0, 5, request.profile))
+                                  : mixai::profileFromGenre(request.prompt);
+            targets.masterOnly = request.masterOnly;
+            juce::String note;
+            targets = mixai::interpretRequest(request.prompt, targets, note);
+
+            report->ok = true;
+            report->durationSeconds = project->durationSeconds();
+            report->targets = targets;
+            report->promptNote = note;
+            report->master = sink.master.finish();
+            report->channels.reserve(project->tracks.size());
+
+            for (int i = 0; i < (int) project->tracks.size(); ++i)
+            {
+                const auto& track = project->tracks[(size_t) i];
+                mixai::ChannelReport channel;
+                channel.trackId = track.id;
+                channel.name = track.name;
+                channel.role = mixai::inferRole(track.name, track.instrument.name);
+                channel.faderDb = juce::Decibels::gainToDecibels(
+                    track.volume, mixai::kFloorDb);
+                channel.pan = track.pan;
+                channel.highPassActive = highPassHz[(size_t) i] > 0.0f;
+                channel.detail = sink.details[(size_t) i]->finish();
+                report->channels.push_back(std::move(channel));
+            }
+
+            std::vector<mixai::TrackInput> inputs;
+            inputs.reserve(report->channels.size());
+            for (int i = 0; i < (int) report->channels.size(); ++i)
+            {
+                const auto& channel = report->channels[(size_t) i];
+                inputs.push_back({ channel.trackId, channel.name, channel.role,
+                                   &channel.detail, channel.pan,
+                                   highPassHz[(size_t) i], false });
+            }
+
+            report->masking = mixai::findMasking(inputs);
+            mixai::MasterInput masterInput;
+            masterInput.detail = &report->master;
+            masterInput.limiter.present = limiterPresent;
+            masterInput.limiter.inputGainDb = limiterInputGainDb;
+            masterInput.limiter.ceilingDb = limiterCeilingDb;
+            report->issues = mixai::findIssues(masterInput, inputs, targets,
+                                               report->masking);
+            if (request.maxIssues > 0
+                && (int) report->issues.size() > request.maxIssues)
+                report->issues.resize((size_t) request.maxIssues);
+            report->plan = mixai::buildPlan(report->issues);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        report->ok = false;
+        report->error = juce::String("mix analysis failed: ") + e.what();
+    }
+    catch (...)
+    {
+        report->ok = false;
+        report->error = "mix analysis failed";
+    }
+
+    if (mixCancel_.load(std::memory_order_acquire))
+        report->ok = false;
+
+    const auto json = juce::JSON::toString(mixai::reportToVar(*report), false)
+                          .toStdString();
+    const std::scoped_lock lock(mixMutex_);
+    if (mixCancel_.load(std::memory_order_acquire))
+    {
+        mixReport_.reset();
+        mixJsonOut_.clear();
+        mixState_.store(kMixIdle, std::memory_order_release);
+        return;
+    }
+    mixJsonOut_ = json;
+    mixState_.store(report->ok ? kMixReady : kMixFailed,
+                    std::memory_order_release);
+    mixReport_ = std::move(report);
+}
+
+const char* Engine::mixAnalysisJson() const
+{
+    const std::scoped_lock lock(mixMutex_);
+    return mixJsonOut_.c_str();
+}
+
+void Engine::clearMixAnalysis()
+{
+    const std::scoped_lock lock(mixMutex_);
+    if (mixState_.load(std::memory_order_acquire) == kMixRunning)
+        return;
+    mixReport_.reset();
+    mixJsonOut_.clear();
+    mixApplyJson_.clear();
+    mixState_.store(kMixIdle, std::memory_order_release);
+}
+
+void Engine::cancelMixAnalysis()
+{
+    mixCancel_.store(true, std::memory_order_release);
+}
+
+juce::Result Engine::applyMixPlan()
+{
+    std::vector<mixai::Move> moves;
+    {
+        const std::scoped_lock lock(mixMutex_);
+        if (mixReport_ == nullptr)
+            return fail("no mix analysis to apply");
+        for (const auto& stage : mixReport_->plan)
+            moves.insert(moves.end(), stage.moves.begin(), stage.moves.end());
+    }
+    if (moves.empty())
+        return fail("the analysis proposed no moves");
+
+    juce::Array<juce::var> array;
+    for (const auto& move : moves)
+        array.add(mixai::moveToVar(move));
+    return applyMixMovesVar(array);
+}
+
+juce::Result Engine::applyMixIssue(const juce::String& issueId)
+{
+    std::vector<mixai::Move> moves;
+    {
+        const std::scoped_lock lock(mixMutex_);
+        if (mixReport_ == nullptr)
+            return fail("no mix analysis to apply");
+        for (const auto& issue : mixReport_->issues)
+            if (issue.id == issueId)
+            {
+                moves = issue.moves;
+                break;
+            }
+    }
+    if (moves.empty())
+        return fail("issue has no fixes");
+
+    juce::Array<juce::var> array;
+    for (const auto& move : moves)
+        array.add(mixai::moveToVar(move));
+    return applyMixMovesVar(array);
+}
+
+juce::Result Engine::applyMixMovesJson(const juce::String& movesJson)
+{
+    const auto value = juce::JSON::parse(movesJson);
+    if (value.isVoid())
+        return fail("invalid moves JSON");
+    return applyMixMovesVar(value);
+}
+
+const char* Engine::mixApplyResultJson() const
+{
+    const std::scoped_lock lock(mixMutex_);
+    return mixApplyJson_.c_str();
+}
+
+juce::Result Engine::applyMixMovesVar(const juce::var& movesVar)
+{
+    std::vector<mixai::Move> moves;
+    juce::String error;
+    if (! mixai::movesFromVar(movesVar, moves, error))
+        return fail(error);
+    if (moves.empty())
+        return fail("no moves to apply");
+
+    std::map<std::pair<bool, TrackId>, int> devices;
+    std::vector<PendingParameter> parameters;
+    std::vector<PendingEq> eqs;
+
+    const auto edit = editProject([&] (Project& project) {
+        // 1. Insert the built-in devices the moves need.
+        for (const auto& move : moves)
+        {
+            const bool isEq = move.kind == mixai::Move::Kind::Eq;
+            const bool isDynamics = move.kind == mixai::Move::Kind::Compressor
+                                 || move.kind == mixai::Move::Kind::Limiter;
+            if (! isEq && ! isDynamics)
+                continue;
+            if (move.kind == mixai::Move::Kind::Compressor
+                && ! (move.hasThreshold || move.hasRatio || move.hasAttack
+                      || move.hasRelease || move.hasMakeup || move.hasKnee))
+                continue;
+            if (move.kind == mixai::Move::Kind::Limiter
+                && ! (move.hasCeiling || move.hasInputGain))
+                continue;
+
+            auto* chain = chainFor(project, move.trackId);
+            if (chain == nullptr)
+            {
+                fail("track not found: " + juce::String((int) move.trackId));
+                return false;
+            }
+            const auto key = std::make_pair(move.trackId < 0, move.trackId);
+            devices[key] = 1;
+            if (isEq)
+                ensureDevice(*chain, "ezq4", "EZ EQ Pro", true);
+            else if (move.kind == mixai::Move::Kind::Compressor)
+                ensureDevice(*chain, "ezcomp", "EZ Compressor", false);
+            else
+                ensureDevice(*chain, "ezlim", "EZ Limiter", false);
+        }
+
+        // 2. Faders and pans travel with the insert-chain undo entry.
+        for (const auto& move : moves)
+        {
+            if (move.kind == mixai::Move::Kind::Gain)
+            {
+                const Track* track = project.findTrack(move.trackId);
+                const float current = move.trackId < 0
+                                          ? project.masterGain
+                                          : (track != nullptr ? track->volume : 1.0f);
+                const float target = move.hasDb
+                                         ? juce::Decibels::decibelsToGain(move.db)
+                                         : current * juce::Decibels::decibelsToGain(move.deltaDb);
+                if (move.trackId < 0)
+                    project.masterGain = juce::jlimit(0.0f, 4.0f, target);
+                else if (auto* editable = project.findTrack(move.trackId))
+                    editable->volume = juce::jlimit(0.0f, 2.0f, target);
+                else
+                {
+                    fail("track not found");
+                    return false;
+                }
+            }
+            else if (move.kind == mixai::Move::Kind::Pan)
+            {
+                auto* track = project.findTrack(move.trackId);
+                if (track == nullptr)
+                {
+                    fail("pan needs a track");
+                    return false;
+                }
+                track->pan = juce::jlimit(-1.0f, 1.0f, move.pan);
+            }
+        }
+
+        // 3. Queue parameter edits for the devices just ensured.
+        for (const auto& move : moves)
+        {
+            if (move.kind == mixai::Move::Kind::Eq)
+            {
+                eqs.push_back({ move.trackId < 0, move.trackId, move.eqKind,
+                                move.freqHz, move.gainDb, move.q });
+            }
+            else if (move.kind == mixai::Move::Kind::Compressor)
+            {
+                const auto add = [&](const char* id, bool has, float value)
+                {
+                    if (has)
+                        parameters.push_back({ move.trackId < 0, move.trackId,
+                                               "ezcomp", id, value });
+                };
+                add("thr", move.hasThreshold, move.thresholdDb);
+                add("rat", move.hasRatio, move.ratio);
+                add("att", move.hasAttack, move.attackMs);
+                add("rel", move.hasRelease, move.releaseMs);
+                add("mak", move.hasMakeup, move.makeupDb);
+                add("kne", move.hasKnee, move.kneeDb);
+            }
+            else if (move.kind == mixai::Move::Kind::Limiter)
+            {
+                const auto add = [&](const char* id, bool has, float value)
+                {
+                    if (has)
+                        parameters.push_back({ move.trackId < 0, move.trackId,
+                                               "ezlim", id, value });
+                };
+                add("cei", move.hasCeiling, move.ceilingDb);
+                add("in", move.hasInputGain, move.inputGainDb);
+            }
+        }
+        return true;
+    });
+
+    if (edit.failed())
+        return edit;
+
+    const auto project = std::atomic_load(&project_);
+    if (project == nullptr)
+        return fail("no project");
+
+    const auto processorFor = [&] (bool master, TrackId trackId,
+                                   const juce::String& token) {
+        const auto* chain = chainFor(*project, master ? -1 : trackId);
+        if (chain == nullptr)
+            return std::shared_ptr<juce::AudioProcessor>();
+        const int slot = slotIndexFor(*chain, token);
+        if (slot < 0)
+            return std::shared_ptr<juce::AudioProcessor>();
+        return master ? transport_->masterFxProcessorFor(slot)
+                      : transport_->fxProcessorFor(trackId, slot);
+    };
+
+    runOnMessageThread([&] {
+        for (const auto& editParameter : parameters)
+            if (auto proc = processorFor(editParameter.master,
+                                         editParameter.trackId,
+                                         editParameter.token))
+                setParameterActual(proc.get(), editParameter.parameter,
+                                   editParameter.value);
+
+        for (const auto& editEq : eqs)
+        {
+            auto proc = processorFor(editEq.master, editEq.trackId, "ezq4");
+            if (proc == nullptr)
+                continue;
+
+            struct Band
+            {
+                int index = -1;
+                bool enabled = false;
+                int type = 0;
+                float gain = 0.0f;
+            };
+            std::array<Band, 8> bands;
+            for (int b = 0; b < 8; ++b)
+            {
+                const auto prefix = "b" + juce::String(b);
+                auto& band = bands[(size_t) b];
+                band.index = b;
+                band.enabled = parameterActual(proc.get(), prefix + "en", 0.0f) >= 0.5f;
+                band.type = (int) std::lround(
+                    parameterActual(proc.get(), prefix + "ty", 0.0f));
+                band.gain = parameterActual(proc.get(), prefix + "g", 0.0f);
+            }
+
+            const int wantedType = editEq.kind == mixai::EqKind::Bell ? 0
+                                  : editEq.kind == mixai::EqKind::HighPass ? 1
+                                  : editEq.kind == mixai::EqKind::LowShelf ? 2
+                                  : editEq.kind == mixai::EqKind::HighShelf ? 3
+                                                                            : 4;
+            int chosen = -1;
+            for (const auto& band : bands)
+                if (band.enabled && band.type == wantedType)
+                {
+                    chosen = band.index;
+                    break;
+                }
+            if (chosen < 0)
+                for (const auto& band : bands)
+                    if (! band.enabled)
+                    {
+                        chosen = band.index;
+                        break;
+                    }
+            if (chosen < 0)
+            {
+                chosen = 0;
+                for (const auto& band : bands)
+                    if (std::abs(band.gain) < std::abs(bands[(size_t) chosen].gain))
+                        chosen = band.index;
+            }
+
+            const auto prefix = "b" + juce::String(chosen);
+            setParameterActual(proc.get(), prefix + "en", 1.0f);
+            setParameterActual(proc.get(), prefix + "ty", (float) wantedType);
+            setParameterActual(proc.get(), prefix + "f", editEq.freqHz);
+            setParameterActual(proc.get(), prefix + "g",
+                               wantedType == 1 || wantedType == 4
+                                   ? 0.0f : editEq.gainDb);
+            if (wantedType == 0)
+                setParameterActual(proc.get(), prefix + "q",
+                                   juce::jmax(0.1f, editEq.q));
+        }
+    });
+
+    // Capture the new device states into the project snapshot so saving the
+    // song later restores exactly what the assistant did.
+    struct StateUpdate
+    {
+        bool master = false;
+        TrackId trackId = -1;
+        int slot = -1;
+        juce::String state;
+    };
+    std::vector<StateUpdate> states;
+    runOnMessageThread([&] {
+        const auto current = std::atomic_load(&project_);
+        if (current == nullptr)
+            return;
+        const auto capture = [&](bool master, TrackId trackId,
+                                 const juce::String& token)
+        {
+            const auto* chain = chainFor(*current, master ? -1 : trackId);
+            if (chain == nullptr)
+                return;
+            const int slot = slotIndexFor(*chain, token);
+            if (slot < 0)
+                return;
+            auto proc = master ? transport_->masterFxProcessorFor(slot)
+                               : transport_->fxProcessorFor(trackId, slot);
+            if (proc == nullptr)
+                return;
+            juce::MemoryBlock mb;
+            proc->getStateInformation(mb);
+            if (mb.getSize() > 0)
+                states.push_back({ master, trackId, slot, mb.toBase64Encoding() });
+        };
+        for (const auto& device : devices)
+        {
+            const bool master = device.first.first;
+            const TrackId trackId = device.first.second;
+            capture(master, trackId, "ezq4");
+            capture(master, trackId, "ezcomp");
+            capture(master, trackId, "ezlim");
+        }
+    });
+
+    if (! states.empty())
+    {
+        const auto stateEdit = editProject([&] (Project& project) {
+            for (const auto& update : states)
+            {
+                auto* chain = chainFor(project, update.master ? -1 : update.trackId);
+                if (chain == nullptr || update.slot < 0
+                    || update.slot >= (int) chain->size())
+                    continue;
+                (*chain)[(size_t) update.slot].state = update.state;
+            }
+            return true;
+        }, false);
+        if (stateEdit.failed())
+            return stateEdit;
+    }
+
+    juce::Array<juce::var> applied;
+    juce::Array<juce::var> labels;
+    for (const auto& move : moves)
+    {
+        applied.add(mixai::moveToVar(move));
+        labels.add(move.describe([this] (int trackId) {
+            if (trackId < 0)
+                return juce::String("Master");
+            if (auto project = std::atomic_load(&project_))
+                if (const auto* track = project->findTrack(trackId))
+                    return track->name;
+            return juce::String("Track ") + juce::String(trackId);
+        }));
+    }
+
+    {
+        const std::scoped_lock lock(mixMutex_);
+        auto* root = new juce::DynamicObject();
+        root->setProperty("ok", true);
+        root->setProperty("moves", applied);
+        root->setProperty("labels", labels);
+        mixApplyJson_ = juce::JSON::toString(juce::var(root), false).toStdString();
+    }
     return juce::Result::ok();
 }
 

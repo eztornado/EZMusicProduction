@@ -597,6 +597,35 @@ final class CadenceEngine {
         int Function(Pointer<Void>, Pointer<Int64>)>(
         'cadence_engine_apply_ai_generation');
 
+    // ---- AI mix analysis / mastering ----
+    _startMixAnalysis = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Utf8>, Double, Double, Int32,
+            Int32, Int32),
+        int Function(Pointer<Void>, Pointer<Utf8>, double, double, int, int,
+            int)>('cadence_engine_start_mix_analysis');
+    _mixAnalysisState = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_mix_analysis_state');
+    _cancelMixAnalysis = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_cancel_mix_analysis');
+    _clearMixAnalysis = _lib.lookupFunction<Void Function(Pointer<Void>),
+        void Function(Pointer<Void>)>('cadence_engine_clear_mix_analysis');
+    _mixAnalysisJson = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
+        Pointer<Utf8> Function(Pointer<Void>)>(
+        'cadence_engine_mix_analysis_json');
+    _applyMixPlan = _lib.lookupFunction<Int32 Function(Pointer<Void>),
+        int Function(Pointer<Void>)>('cadence_engine_apply_mix_plan');
+    _applyMixIssue = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Utf8>),
+        int Function(Pointer<Void>, Pointer<Utf8>)>(
+        'cadence_engine_apply_mix_issue');
+    _applyMixMoves = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Utf8>),
+        int Function(Pointer<Void>, Pointer<Utf8>)>(
+        'cadence_engine_apply_mix_moves');
+    _mixApplyJson = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>),
+        Pointer<Utf8> Function(Pointer<Void>)>(
+        'cadence_engine_mix_apply_json');
+
     _handle = attachHandleAddress != null
         ? Pointer<Void>.fromAddress(attachHandleAddress)
         : _create();
@@ -850,6 +879,17 @@ final class CadenceEngine {
   late final void Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Float>,
       Pointer<Double>, Pointer<Double>) _aiResultNoteAt;
   late final int Function(Pointer<Void>, Pointer<Int64>) _applyAiGeneration;
+
+  late final int Function(Pointer<Void>, Pointer<Utf8>, double, double, int,
+      int, int) _startMixAnalysis;
+  late final int Function(Pointer<Void>) _mixAnalysisState;
+  late final void Function(Pointer<Void>) _cancelMixAnalysis;
+  late final void Function(Pointer<Void>) _clearMixAnalysis;
+  late final Pointer<Utf8> Function(Pointer<Void>) _mixAnalysisJson;
+  late final int Function(Pointer<Void>) _applyMixPlan;
+  late final int Function(Pointer<Void>, Pointer<Utf8>) _applyMixIssue;
+  late final int Function(Pointer<Void>, Pointer<Utf8>) _applyMixMoves;
+  late final Pointer<Utf8> Function(Pointer<Void>) _mixApplyJson;
 
   String get lastError => _lastError(_handle).toDartString();
 
@@ -1266,6 +1306,41 @@ final class CadenceEngine {
       calloc.free(out);
     }
   }
+
+  /// Starts the offline mix analysis worker. [profile] -1 infers it from the
+  /// prompt; otherwise 0 pop, 1 electronic, 2 hiphop, 3 rock, 4 acoustic,
+  /// 5 orchestral. Returns false when a job is already running.
+  bool startMixAnalysis({
+    required String prompt,
+    double targetLufs = -14.0,
+    double truePeakDb = -1.0,
+    int profile = -1,
+    bool masterOnly = false,
+    int maxIssues = 12,
+  }) =>
+      _withUtf8(
+          prompt,
+          (p) => _startMixAnalysis(_handle, p, targetLufs, truePeakDb, profile,
+                  masterOnly ? 1 : 0, maxIssues) !=
+              0);
+
+  /// 0 idle, 1 running, 2 ready, 3 failed.
+  int get mixAnalysisState => _mixAnalysisState(_handle);
+  void cancelMixAnalysis() => _cancelMixAnalysis(_handle);
+  void clearMixAnalysis() => _clearMixAnalysis(_handle);
+  String get mixAnalysisJson => _mixAnalysisJson(_handle).toDartString();
+  String get mixApplyResultJson => _mixApplyJson(_handle).toDartString();
+
+  /// Applies every fix of the current report as one undo entry.
+  bool applyMixPlan() => _applyMixPlan(_handle) == 0;
+
+  /// Applies one issue's fixes (issue id such as "i3").
+  bool applyMixIssue(String issueId) =>
+      _withUtf8(issueId, (p) => _applyMixIssue(_handle, p) == 0);
+
+  /// Applies an explicit JSON array of moves (same schema as the report).
+  bool applyMixMoves(String movesJson) =>
+      _withUtf8(movesJson, (p) => _applyMixMoves(_handle, p) == 0);
 
   // ---- tempo / time signature ----
   double get tempoBpm => _tempoBpm(_handle);

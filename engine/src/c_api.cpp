@@ -1158,6 +1158,81 @@ CadenceResult cadence_engine_apply_ai_generation(CadenceEngine* engine,
     return kCadenceOk;
 }
 
+int cadence_engine_start_mix_analysis(CadenceEngine* engine,
+                                      const char* utf8_prompt,
+                                      double target_lufs, double true_peak_db,
+                                      int profile, int master_only,
+                                      int max_issues)
+{
+    if (engine == nullptr)
+        return 0;
+    cadence::Engine::MixAnalysisRequest request;
+    if (utf8_prompt != nullptr)
+        request.prompt = juce::String::fromUTF8(utf8_prompt);
+    request.targetLufs = juce::jlimit(-40.0f, 0.0f, (float) target_lufs);
+    request.truePeakDb = juce::jlimit(-12.0f, 0.0f, (float) true_peak_db);
+    request.profile = profile < -1 || profile > 5 ? -1 : profile;
+    request.masterOnly = master_only != 0;
+    request.maxIssues = juce::jlimit(0, 100, max_issues);
+    return asEngine(engine)->startMixAnalysis(request) ? 1 : 0;
+}
+
+int cadence_engine_mix_analysis_state(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->mixAnalysisState() : 0;
+}
+
+void cadence_engine_cancel_mix_analysis(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->cancelMixAnalysis();
+}
+
+void cadence_engine_clear_mix_analysis(CadenceEngine* engine)
+{
+    if (engine != nullptr)
+        asEngine(engine)->clearMixAnalysis();
+}
+
+const char* cadence_engine_mix_analysis_json(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->mixAnalysisJson() : "";
+}
+
+CadenceResult cadence_engine_apply_mix_plan(CadenceEngine* engine)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->applyMixPlan().failed() ? kCadenceErrorInvalidArgument
+                                                     : kCadenceOk;
+}
+
+CadenceResult cadence_engine_apply_mix_issue(CadenceEngine* engine,
+                                             const char* utf8_issue_id)
+{
+    if (engine == nullptr || utf8_issue_id == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->applyMixIssue(juce::String::fromUTF8(utf8_issue_id)).failed()
+               ? kCadenceErrorInvalidArgument
+               : kCadenceOk;
+}
+
+CadenceResult cadence_engine_apply_mix_moves(CadenceEngine* engine,
+                                             const char* utf8_moves_json)
+{
+    if (engine == nullptr || utf8_moves_json == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->applyMixMovesJson(
+               juce::String::fromUTF8(utf8_moves_json)).failed()
+               ? kCadenceErrorInvalidArgument
+               : kCadenceOk;
+}
+
+const char* cadence_engine_mix_apply_json(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->mixApplyResultJson() : "";
+}
+
 int cadence_engine_clip_is_midi(CadenceEngine* engine, CadenceClipId clip_id)
 {
     return (engine != nullptr && asEngine(engine)->clipIsMidi(clip_id)) ? 1 : 0;

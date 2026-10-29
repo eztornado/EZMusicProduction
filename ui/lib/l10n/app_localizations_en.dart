@@ -800,6 +800,90 @@ class AppLocalizationsEn extends AppLocalizations {
   String get aiApplied => 'Generated clip applied';
 
   @override
+  String get mixToolbarButton => 'Mix assistant';
+
+  @override
+  String get mixToolbarTooltip => 'Analyze and fix the mix';
+
+  @override
+  String get mixDialogTitle => 'Mix assistant';
+
+  @override
+  String get mixPromptLabel => 'What should the mix sound like?';
+
+  @override
+  String get mixPromptHint => 'e.g. -14 LUFS, -1 dBTP, pop, gentle, master only';
+
+  @override
+  String get mixMasterOnly => 'Master bus only';
+
+  @override
+  String get mixAnalyze => 'Analyze mix';
+
+  @override
+  String get mixAnalyzing => 'Analyzing the mix…';
+
+  @override
+  String get mixApplyAll => 'Apply all fixes';
+
+  @override
+  String get mixApplyIssue => 'Apply fix';
+
+  @override
+  String get mixNoIssues => 'No issues found';
+
+  @override
+  String get mixIssues => 'Issues';
+
+  @override
+  String get mixPlan => 'Fix plan';
+
+  @override
+  String get mixTargets => 'Targets';
+
+  @override
+  String get mixMaster => 'Master';
+
+  @override
+  String get mixApplied => 'Mix fixes applied';
+
+  @override
+  String get mixBusy => 'A mix analysis is already running';
+
+  @override
+  String get mixFailed => 'Mix analysis failed';
+
+  @override
+  String get mixClose => 'Close';
+
+  @override
+  String get mixRetry => 'Analyze again';
+
+  @override
+  String get mixProjectEmpty => 'Add some tracks before analyzing the mix';
+
+  @override
+  String get mixLoudness => 'Loudness';
+
+  @override
+  String get mixTruePeak => 'True peak';
+
+  @override
+  String get mixProfile => 'Balance';
+
+  @override
+  String get mixSeverityHigh => 'High';
+
+  @override
+  String get mixSeverityMedium => 'Medium';
+
+  @override
+  String get mixSeverityLow => 'Low';
+
+  @override
+  String get mixNoMoves => 'No automatic fix';
+
+  @override
   String get aiGenerateClip => 'Generate with AI…';
 
   @override

@@ -20,6 +20,7 @@ import 'l10n/locale_store.dart';
 import 'remote/remote_settings.dart';
 import 'ui/ai_generation_dialog.dart'
     show defaultAiModeForTrack, showAiGenerationDialog;
+import 'ui/mix_assistant_dialog.dart' show showMixAssistantDialog;
 import 'ui/app_alert.dart';
 import 'ui/automation_lane.dart';
 import 'ui/design.dart';
@@ -660,6 +661,15 @@ class _HomePageState extends State<HomePage>
                               accent: true,
                               tooltip: context.l10n.aiToolbarTooltip,
                               onTap: _openAiGeneration,
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.tune_rounded,
+                              label: context.l10n.mixToolbarButton,
+                              tooltip: context.l10n.mixToolbarTooltip,
+                              onTap: () => showMixAssistantDialog(
+                                context,
+                                service,
+                              ),
                             ),
                             const SizedBox(width: 3),
                             const _ToolbarSeparator(),

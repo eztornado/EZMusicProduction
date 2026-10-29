@@ -39,7 +39,10 @@ add_library(cadence_engine STATIC
     src/engine.cpp
     src/magenta_vae.cpp
     src/ai_generation.cpp
+    src/mix_ai.cpp
     src/ezq4.cpp
+    src/ezcomp.cpp
+    src/ezlim.cpp
     src/ezinst.cpp
     src/ezsynth.cpp
     src/ezorq.cpp
@@ -85,7 +88,10 @@ add_library(cadence_engine_shared SHARED
     src/engine.cpp
     src/magenta_vae.cpp
     src/ai_generation.cpp
+    src/mix_ai.cpp
     src/ezq4.cpp
+    src/ezcomp.cpp
+    src/ezlim.cpp
     src/ezinst.cpp
     src/ezsynth.cpp
     src/ezorq.cpp

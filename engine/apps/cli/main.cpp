@@ -57,7 +57,9 @@ void printUsage()
         "  cadence-cli vae-test <models-dir>\n"
         "      loads the Magenta MusicVAE checkpoints and runs sample/encode/decode.\n"
         "  cadence-cli ai-test [models-dir]\n"
-        "      end-to-end AI generation test (analysis, model, apply, undo).\n");
+        "      end-to-end AI generation test (analysis, model, apply, undo).\n"
+        "  cadence-cli mix-test\n"
+        "      offline mix analysis, JSON report, one-entry apply and undo.\n");
 }
 
 int cmdDevices()
@@ -3785,6 +3787,119 @@ int cmdAiTest(const juce::File& modelDir)
     return failures == 0 && asyncOk ? 0 : 1;
 }
 
+int cmdMixTest()
+{
+    cadence::Engine engine;
+    engine.newProject(44100);
+
+    struct Fixture { const char* name; double freq; float gain; };
+    const Fixture fixtures[] = {
+        { "Bass", 82.0, 0.9f },
+        { "Keys", 330.0, 0.55f },
+        { "Vocal", 880.0, 0.7f },
+        { "Perc", 2600.0, 0.35f }
+    };
+
+    int failures = 0;
+    auto check = [&failures] (bool ok, const char* what) {
+        if (! ok)
+        {
+            std::fprintf(stderr, "mix-test: FAIL: %s\n", what);
+            ++failures;
+        }
+    };
+
+    std::vector<cadence::TrackId> ids;
+    for (int i = 0; i < 4; ++i)
+    {
+        const auto file = juce::File("/tmp/cadence_mix_")
+                        .getSiblingFile(juce::String("cadence_mix_")
+                                        + juce::String(i) + ".wav");
+        writeToneWav(file, 2.0, fixtures[i].freq);
+        const auto id = engine.addTrack(fixtures[i].name, i);
+        engine.addClip(id, file, 0.0, 1.0);
+        engine.setTrackVolume(id, fixtures[i].gain);
+        ids.push_back(id);
+    }
+    // Deliberately hot master so the report has both a loudness and a
+    // true-peak issue to fix.
+    engine.setMasterGain(3.0f);
+
+    cadence::Engine::MixAnalysisRequest request;
+    request.prompt = "-14 LUFS, -1 dBTP, pop";
+    request.targetLufs = -14.0f;
+    request.truePeakDb = -1.0f;
+    request.maxIssues = 20;
+    check(engine.startMixAnalysis(request), "analysis did not start");
+
+    const auto deadline = std::chrono::steady_clock::now()
+                        + std::chrono::seconds(30);
+    int state = 0;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        state = engine.mixAnalysisState();
+        if (state != 1)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    check(state == 2, "analysis did not finish ready");
+
+    const auto reportText = juce::String::fromUTF8(engine.mixAnalysisJson());
+    const auto report = juce::JSON::parse(reportText);
+    auto* root = report.getDynamicObject();
+    check(root != nullptr, "report is not a JSON object");
+    if (root != nullptr)
+    {
+        check((bool) root->getProperty("ok"), "report ok flag is false");
+        auto* channels = root->getProperty("channels").getArray();
+        check(channels != nullptr && channels->size() == 4,
+              "report does not contain four channels");
+        auto* master = root->getProperty("master").getDynamicObject();
+        check(master != nullptr, "report has no master measurements");
+        auto* targets = root->getProperty("targets").getDynamicObject();
+        check(targets != nullptr
+                  && std::abs((double) targets->getProperty("lufs") + 14.0) < 0.01,
+              "prompt did not set the loudness target");
+        auto* issues = root->getProperty("issues").getArray();
+        check(issues != nullptr && issues->size() > 0,
+              "a hot master produced no issues");
+        auto* plan = root->getProperty("plan").getArray();
+        check(plan != nullptr && plan->size() > 0, "report has no fix plan");
+
+        if (master != nullptr)
+        {
+            auto* stats = master->getProperty("stats").getDynamicObject();
+            if (stats != nullptr)
+                std::printf("mix-test: master %.1f LUFS, %.1f dBTP, %d issues\n",
+                            (double) stats->getProperty("lufs_integrated"),
+                            (double) stats->getProperty("true_peak_db"),
+                            issues != nullptr ? issues->size() : 0);
+        }
+    }
+
+    const int beforeFx = engine.masterFxCount();
+    const auto apply = engine.applyMixPlan();
+    check(apply.wasOk(), "applyMixPlan failed");
+    const auto appliedText = juce::String::fromUTF8(engine.mixApplyResultJson());
+    const auto applied = juce::JSON::parse(appliedText);
+    auto* appliedRoot = applied.getDynamicObject();
+    check(appliedRoot != nullptr
+              && (bool) appliedRoot->getProperty("ok"),
+          "apply produced no JSON summary");
+    std::printf("mix-test: applied %s (master inserts %d -> %d)\n",
+                appliedText.toRawUTF8(), beforeFx, engine.masterFxCount());
+    check(engine.masterFxCount() > beforeFx,
+          "the master chain did not receive the proposed devices");
+
+    check(engine.undo(), "undo failed");
+    check(engine.masterFxCount() == beforeFx,
+          "one undo did not remove the inserted devices");
+
+    std::printf(failures == 0 ? "mix-test: all checks passed\n"
+                              : "mix-test: %d FAILURES\n", failures);
+    return failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
@@ -3832,6 +3947,9 @@ int main(int argc, char** argv)
 
     if (cmd == "mastertest")
         return cmdMasterTest();
+
+    if (cmd == "mix-test")
+        return cmdMixTest();
 
     if (cmd == "devrestart")
         return cmdDeviceRestart();

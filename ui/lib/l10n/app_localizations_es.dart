@@ -801,6 +801,90 @@ class AppLocalizationsEs extends AppLocalizations {
   String get aiApplied => 'Clip generado aplicado';
 
   @override
+  String get mixToolbarButton => 'Asistente de mezcla';
+
+  @override
+  String get mixToolbarTooltip => 'Analiza y corrige la mezcla';
+
+  @override
+  String get mixDialogTitle => 'Asistente de mezcla';
+
+  @override
+  String get mixPromptLabel => '¿Cómo debería sonar la mezcla?';
+
+  @override
+  String get mixPromptHint => 'p. ej. -14 LUFS, -1 dBTP, pop, suave, solo máster';
+
+  @override
+  String get mixMasterOnly => 'Solo bus máster';
+
+  @override
+  String get mixAnalyze => 'Analizar mezcla';
+
+  @override
+  String get mixAnalyzing => 'Analizando la mezcla…';
+
+  @override
+  String get mixApplyAll => 'Aplicar todas las correcciones';
+
+  @override
+  String get mixApplyIssue => 'Aplicar';
+
+  @override
+  String get mixNoIssues => 'No se han encontrado problemas';
+
+  @override
+  String get mixIssues => 'Problemas';
+
+  @override
+  String get mixPlan => 'Plan de correcciones';
+
+  @override
+  String get mixTargets => 'Objetivos';
+
+  @override
+  String get mixMaster => 'Máster';
+
+  @override
+  String get mixApplied => 'Correcciones aplicadas';
+
+  @override
+  String get mixBusy => 'Ya hay un análisis de mezcla en curso';
+
+  @override
+  String get mixFailed => 'Error al analizar la mezcla';
+
+  @override
+  String get mixClose => 'Cerrar';
+
+  @override
+  String get mixRetry => 'Analizar de nuevo';
+
+  @override
+  String get mixProjectEmpty => 'Añade pistas antes de analizar la mezcla';
+
+  @override
+  String get mixLoudness => 'Sonoridad';
+
+  @override
+  String get mixTruePeak => 'Pico real';
+
+  @override
+  String get mixProfile => 'Balance';
+
+  @override
+  String get mixSeverityHigh => 'Alta';
+
+  @override
+  String get mixSeverityMedium => 'Media';
+
+  @override
+  String get mixSeverityLow => 'Baja';
+
+  @override
+  String get mixNoMoves => 'Sin corrección automática';
+
+  @override
   String get aiGenerateClip => 'Generar con IA…';
 
   @override

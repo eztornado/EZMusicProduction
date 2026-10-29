@@ -332,6 +332,40 @@ void cadence_engine_ai_result_note_at(CadenceEngine* engine, int index,
 CadenceResult cadence_engine_apply_ai_generation(CadenceEngine* engine,
                                                  CadenceClipId* out_clip_id);
 
+/* ---- AI mix analysis / mastering ----
+   Renders the project offline and analyses levels, loudness, spectrum, stereo
+   image and cross-track masking. Poll cadence_engine_mix_analysis_state:
+     0 idle, 1 running, 2 ready, 3 failed.
+   The report (valid when the state is 2 or 3) is returned as JSON by
+   cadence_engine_mix_analysis_json. Apply its fixes with
+   cadence_engine_apply_mix_plan (one undo entry), one issue by id, or an
+   explicit JSON array of moves. Applied moves produce a JSON summary through
+   cadence_engine_mix_apply_json.
+
+   prompt: free text in Spanish or English (may be NULL). It can set the
+   loudness target ("-14 LUFS"), true-peak ceiling ("-1 dBTP"), balance
+   profile ("pop", "rock", "hiphop", "electronic", "acoustic", "orchestral"),
+   "master only" and "gentle"/"no EQ"/"no dynamics" constraints.
+   profile: -1 infers it from the prompt, otherwise 0 pop, 1 electronic,
+   2 hiphop, 3 rock, 4 acoustic, 5 orchestral.
+   master_only: limit the fixes to the master bus.
+   max_issues: 0 for no limit, otherwise the report is capped. */
+int cadence_engine_start_mix_analysis(CadenceEngine* engine,
+                                      const char* utf8_prompt,
+                                      double target_lufs, double true_peak_db,
+                                      int profile, int master_only,
+                                      int max_issues);
+int cadence_engine_mix_analysis_state(CadenceEngine* engine);
+void cadence_engine_cancel_mix_analysis(CadenceEngine* engine);
+void cadence_engine_clear_mix_analysis(CadenceEngine* engine);
+const char* cadence_engine_mix_analysis_json(CadenceEngine* engine);
+CadenceResult cadence_engine_apply_mix_plan(CadenceEngine* engine);
+CadenceResult cadence_engine_apply_mix_issue(CadenceEngine* engine,
+                                             const char* utf8_issue_id);
+CadenceResult cadence_engine_apply_mix_moves(CadenceEngine* engine,
+                                             const char* utf8_moves_json);
+const char* cadence_engine_mix_apply_json(CadenceEngine* engine);
+
 CadenceResult cadence_engine_set_track_name(CadenceEngine* engine, CadenceTrackId track_id,
                                             const char* utf8_name);
 CadenceResult cadence_engine_set_track_color(CadenceEngine* engine, CadenceTrackId track_id,

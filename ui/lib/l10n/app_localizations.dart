@@ -1510,6 +1510,174 @@ abstract class AppLocalizations {
   /// **'Clip generado aplicado'**
   String get aiApplied;
 
+  /// No description provided for @mixToolbarButton.
+  ///
+  /// In es, this message translates to:
+  /// **'Asistente de mezcla'**
+  String get mixToolbarButton;
+
+  /// No description provided for @mixToolbarTooltip.
+  ///
+  /// In es, this message translates to:
+  /// **'Analiza y corrige la mezcla'**
+  String get mixToolbarTooltip;
+
+  /// No description provided for @mixDialogTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Asistente de mezcla'**
+  String get mixDialogTitle;
+
+  /// No description provided for @mixPromptLabel.
+  ///
+  /// In es, this message translates to:
+  /// **'¿Cómo debería sonar la mezcla?'**
+  String get mixPromptLabel;
+
+  /// No description provided for @mixPromptHint.
+  ///
+  /// In es, this message translates to:
+  /// **'p. ej. -14 LUFS, -1 dBTP, pop, suave, solo máster'**
+  String get mixPromptHint;
+
+  /// No description provided for @mixMasterOnly.
+  ///
+  /// In es, this message translates to:
+  /// **'Solo bus máster'**
+  String get mixMasterOnly;
+
+  /// No description provided for @mixAnalyze.
+  ///
+  /// In es, this message translates to:
+  /// **'Analizar mezcla'**
+  String get mixAnalyze;
+
+  /// No description provided for @mixAnalyzing.
+  ///
+  /// In es, this message translates to:
+  /// **'Analizando la mezcla…'**
+  String get mixAnalyzing;
+
+  /// No description provided for @mixApplyAll.
+  ///
+  /// In es, this message translates to:
+  /// **'Aplicar todas las correcciones'**
+  String get mixApplyAll;
+
+  /// No description provided for @mixApplyIssue.
+  ///
+  /// In es, this message translates to:
+  /// **'Aplicar'**
+  String get mixApplyIssue;
+
+  /// No description provided for @mixNoIssues.
+  ///
+  /// In es, this message translates to:
+  /// **'No se han encontrado problemas'**
+  String get mixNoIssues;
+
+  /// No description provided for @mixIssues.
+  ///
+  /// In es, this message translates to:
+  /// **'Problemas'**
+  String get mixIssues;
+
+  /// No description provided for @mixPlan.
+  ///
+  /// In es, this message translates to:
+  /// **'Plan de correcciones'**
+  String get mixPlan;
+
+  /// No description provided for @mixTargets.
+  ///
+  /// In es, this message translates to:
+  /// **'Objetivos'**
+  String get mixTargets;
+
+  /// No description provided for @mixMaster.
+  ///
+  /// In es, this message translates to:
+  /// **'Máster'**
+  String get mixMaster;
+
+  /// No description provided for @mixApplied.
+  ///
+  /// In es, this message translates to:
+  /// **'Correcciones aplicadas'**
+  String get mixApplied;
+
+  /// No description provided for @mixBusy.
+  ///
+  /// In es, this message translates to:
+  /// **'Ya hay un análisis de mezcla en curso'**
+  String get mixBusy;
+
+  /// No description provided for @mixFailed.
+  ///
+  /// In es, this message translates to:
+  /// **'Error al analizar la mezcla'**
+  String get mixFailed;
+
+  /// No description provided for @mixClose.
+  ///
+  /// In es, this message translates to:
+  /// **'Cerrar'**
+  String get mixClose;
+
+  /// No description provided for @mixRetry.
+  ///
+  /// In es, this message translates to:
+  /// **'Analizar de nuevo'**
+  String get mixRetry;
+
+  /// No description provided for @mixProjectEmpty.
+  ///
+  /// In es, this message translates to:
+  /// **'Añade pistas antes de analizar la mezcla'**
+  String get mixProjectEmpty;
+
+  /// No description provided for @mixLoudness.
+  ///
+  /// In es, this message translates to:
+  /// **'Sonoridad'**
+  String get mixLoudness;
+
+  /// No description provided for @mixTruePeak.
+  ///
+  /// In es, this message translates to:
+  /// **'Pico real'**
+  String get mixTruePeak;
+
+  /// No description provided for @mixProfile.
+  ///
+  /// In es, this message translates to:
+  /// **'Balance'**
+  String get mixProfile;
+
+  /// No description provided for @mixSeverityHigh.
+  ///
+  /// In es, this message translates to:
+  /// **'Alta'**
+  String get mixSeverityHigh;
+
+  /// No description provided for @mixSeverityMedium.
+  ///
+  /// In es, this message translates to:
+  /// **'Media'**
+  String get mixSeverityMedium;
+
+  /// No description provided for @mixSeverityLow.
+  ///
+  /// In es, this message translates to:
+  /// **'Baja'**
+  String get mixSeverityLow;
+
+  /// No description provided for @mixNoMoves.
+  ///
+  /// In es, this message translates to:
+  /// **'Sin corrección automática'**
+  String get mixNoMoves;
+
   /// No description provided for @aiGenerateClip.
   ///
   /// In es, this message translates to:
