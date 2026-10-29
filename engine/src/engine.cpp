@@ -14,7 +14,9 @@
 #include <bit>
 #include <cmath>
 #include <cstdlib>
+#include <pthread.h>
 #include <thread>
+#include <dispatch/dispatch.h>
 
 namespace cadence {
 
@@ -2724,13 +2726,19 @@ void Engine::startMessageLoop()
 {
     // On macOS JUCE's dispatch loop IS [NSApp run] — AppKit only allows it
     // on the process main thread, where Flutter already pumps its own loop.
-    // Spawning a dedicated dispatch thread exits silently ([NSApp run] is
-    // not legal off-main), so instead we create the manager here: its first
-    // caller becomes the message thread, JUCE async work (chunked plugin
-    // scans, marshaled device ops) is processed by the main run loop that
-    // Flutter keeps pumping, and runOnMessageThread() from Dart FFI calls
-    // (which arrive on the main thread) runs synchronously.
-    juce::MessageManager::getInstance();
+    // The manager's first caller becomes JUCE's "message thread", so it MUST
+    // be created on the Cocoa main thread. Dart FFI calls (including this
+    // constructor) arrive on Flutter's UI thread; creating the manager there
+    // makes JUCE believe main is a background thread, and every async plugin
+    // instantiation then posts a message to a run loop that is already
+    // blocked waiting for it (project open deadlock).
+    if (pthread_main_np() == 0)
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            juce::MessageManager::getInstance();
+        });
+    else
+        juce::MessageManager::getInstance();
+
     messageLoopRunning_ = true;
 }
 
@@ -2739,6 +2747,14 @@ void Engine::stopMessageLoop()
     // No dispatch loop of our own to stop — and stopDispatchLoop() must NOT
     // be sent to the shared main-thread run loop that Flutter owns.
     messageLoopRunning_ = false;
+}
+
+void Engine::pumpOnePluginJob()
+{
+    // The Flutter frame ticker calls this from Dart's UI thread. Plugin
+    // creation and the job queue are message-thread-only; marshal the call
+    // so it can never race with the engine's own callAsync pump.
+    runOnMessageThread([this] { transport_->pumpOnePluginJob(); });
 }
 
 void Engine::runOnMessageThread(const std::function<void()>& fn)

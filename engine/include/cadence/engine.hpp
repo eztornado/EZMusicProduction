@@ -676,7 +676,7 @@ public:
     {
         return transport_->hasPendingPluginJobs();
     }
-    void pumpOnePluginJob() { transport_->pumpOnePluginJob(); }
+    void pumpOnePluginJob();
 
     juce::Result addMasterFx(int pluginIndex);
     juce::Result removeMasterFx(int slotIndex);
