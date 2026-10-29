@@ -589,22 +589,14 @@ class _HomePageState extends State<HomePage>
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Container(
-                              width: 22,
-                              height: 22,
-                              decoration: BoxDecoration(
-                                color: AppColors.accentSoft,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: AppColors.accent.withValues(
-                                    alpha: 0.45,
-                                  ),
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.graphic_eq_rounded,
-                                size: 14,
-                                color: AppColors.accent,
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(5),
+                              child: Image.asset(
+                                'assets/branding/icon.png',
+                                width: 22,
+                                height: 22,
+                                fit: BoxFit.cover,
+                                filterQuality: FilterQuality.high,
                               ),
                             ),
                             const SizedBox(width: 7),
