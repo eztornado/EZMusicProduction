@@ -619,6 +619,65 @@ private:
 
 } // namespace
 
+ProjectAudioSource::ProjectAudioSource()
+{
+    // Releases retired snapshots on the message thread once the audio
+    // callback is no longer inside them.
+    startTimer(50);
+}
+
+ProjectAudioSource::~ProjectAudioSource()
+{
+    stopTimer();
+}
+
+void ProjectAudioSource::timerCallback()
+{
+    drainRetiredStates();
+}
+
+void ProjectAudioSource::retireState(
+    std::shared_ptr<const TrackNodeState> state)
+{
+    if (state != nullptr)
+        retiredTrackStates_.emplace_back(
+            std::move(state),
+            audioBlockCounter_.load(std::memory_order_acquire));
+}
+
+void ProjectAudioSource::retireMasterChain(
+    std::shared_ptr<const FxChain> chain)
+{
+    if (chain != nullptr)
+        retiredMasterChains_.emplace_back(
+            std::move(chain),
+            audioBlockCounter_.load(std::memory_order_acquire));
+}
+
+void ProjectAudioSource::drainRetiredStates()
+{
+    // Message thread only. If a callback is in flight, a snapshot retired at
+    // block N can only have been loaded by a callback that started before it
+    // was swapped out; that callback increments the counter when it ends.
+    // With no callback in flight, every possible reader has already returned.
+    const auto block = audioBlockCounter_.load(std::memory_order_acquire);
+    const bool inCallback = audioInCallback_.load(std::memory_order_acquire);
+    const auto canRelease = [&](std::uint64_t retiredAt) {
+        return ! inCallback || block > retiredAt;
+    };
+
+    retiredTrackStates_.erase(
+        std::remove_if(
+            retiredTrackStates_.begin(), retiredTrackStates_.end(),
+            [&](const auto& entry) { return canRelease(entry.second); }),
+        retiredTrackStates_.end());
+    retiredMasterChains_.erase(
+        std::remove_if(
+            retiredMasterChains_.begin(), retiredMasterChains_.end(),
+            [&](const auto& entry) { return canRelease(entry.second); }),
+        retiredMasterChains_.end());
+}
+
 void ProjectAudioSource::setProject(std::shared_ptr<const Project> newProject)
 {
     // Never erase synths while the audio thread may hold a raw pointer to
@@ -1207,11 +1266,15 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
         if (it == builds.end())
             continue;
         auto& node = ensureNode(track.id);
+        auto oldState = std::atomic_load(&node.state);
         if (it->second.keepState != nullptr)
         {
+            if (oldState != it->second.keepState)
+                retireState(std::move(oldState));
             std::atomic_store(&node.state, it->second.keepState);
             continue;
         }
+        retireState(std::move(oldState));
         auto next = std::make_shared<TrackNodeState>();
         next->fx = it->second.fx;
         next->instrument = it->second.instrument;
@@ -1244,8 +1307,11 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
                 return false;
             }();
             if (! live)
+            {
+                retireState(std::atomic_load(&nodePtr->state));
                 std::atomic_store(&nodePtr->state,
                                   std::shared_ptr<const TrackNodeState>());
+            }
         }
     }
 
@@ -1274,6 +1340,7 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
                  ++i)
                 updated->bypass[(size_t) i] =
                     project.masterFx[(size_t) i].bypass;
+            retireMasterChain(oldMaster);
             std::atomic_store(&masterFxChain_,
                               std::shared_ptr<const FxChain>(std::move(updated)));
         }
@@ -1325,6 +1392,7 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
                 fx->valid.push_back(fx->processors.back() != nullptr);
                 fx->preparedRates.push_back(pluginRate);
             }
+            retireMasterChain(oldMaster);
             std::atomic_store(&masterFxChain_,
                               std::shared_ptr<const FxChain>(std::move(fx)));
         }
@@ -1335,6 +1403,7 @@ void ProjectAudioSource::reconcileNodes(const Project& project, PluginHost& host
     prepareInternalSynths(project, pluginRate);
 
     lock.unlock();
+    drainRetiredStates();
     if (pluginsChangedCallback_)
         pluginsChangedCallback_();
 
@@ -1555,10 +1624,12 @@ void ProjectAudioSource::applyPluginJob(const PluginJob& job,
     next->midiFxUid = std::move(midiFxUid);
     next->midiFxPreparedRate = next->midiFx ? job.sampleRate : 0.0;
     next->midiFxPreparedBlock = next->midiFx ? job.maxBlock : 0;
+    retireState(oldState);
     std::atomic_store(&node.state,
                       std::shared_ptr<const TrackNodeState>(std::move(next)));
 
     lock.unlock();
+    drainRetiredStates();
     if (pluginsChangedCallback_)
         pluginsChangedCallback_();
 }
@@ -1701,6 +1772,24 @@ void ProjectAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
 {
     if (info.buffer == nullptr)
         return;
+
+    struct CallbackScope {
+        std::atomic<bool>& inCallback;
+        std::atomic<std::uint64_t>& blockCounter;
+        CallbackScope(std::atomic<bool>& in, std::atomic<std::uint64_t>& counter)
+            : inCallback(in), blockCounter(counter)
+        {
+            inCallback.store(true, std::memory_order_release);
+        }
+        ~CallbackScope()
+        {
+            // The local snapshot references are gone before this destructor
+            // runs; publish the completed block so retired states can be
+            // released on the message thread.
+            blockCounter.fetch_add(1, std::memory_order_release);
+            inCallback.store(false, std::memory_order_release);
+        }
+    } callbackScope(audioInCallback_, audioBlockCounter_);
 
     // Live MIDI monitoring: empty the input queue so the notes played reach
     // the armed instrument tracks' synths. Offline export has no live input.

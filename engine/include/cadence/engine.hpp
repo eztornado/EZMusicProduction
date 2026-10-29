@@ -177,8 +177,12 @@ struct TrackAudioNode {
 // Engine owns one live instance driven by the audio device; extra instances
 // can be created for offline pulls (Engine::renderToFile).
 class ProjectAudioSource : public juce::AudioSource,
-                           public juce::AudioPlayHead {
+                           public juce::AudioPlayHead,
+                           private juce::Timer {
 public:
+    ProjectAudioSource();
+    ~ProjectAudioSource() override;
+
     // Replaces the project being rendered; the transport position is kept.
     void setProject(std::shared_ptr<const Project> project);
     // Rebuilds fx/instrument plugin nodes that changed (message thread).
@@ -338,6 +342,24 @@ private:
     std::vector<PluginJob> pluginJobs_;      // message thread only
     bool pluginJobsPumping_ = false;         // message thread only
     std::function<void()> pluginsChangedCallback_; // message thread only
+
+    // A published snapshot must never be destroyed by the audio thread: the
+    // AU/VST3 teardown can wait for the message thread, and destroying an old
+    // AudioUnit inside getNextAudioBlock() deadlocks with the HAL lock held by
+    // a plugin being prepared on the message thread. Retired snapshots are
+    // kept alive here and released by drainRetiredStates() once the audio
+    // callback has provably finished with them.
+    std::atomic<bool> audioInCallback_ { false };
+    std::atomic<std::uint64_t> audioBlockCounter_ { 0 };
+    std::vector<std::pair<std::shared_ptr<const TrackNodeState>,
+                          std::uint64_t>> retiredTrackStates_;
+    std::vector<std::pair<std::shared_ptr<const FxChain>,
+                          std::uint64_t>> retiredMasterChains_;
+    void retireState(std::shared_ptr<const TrackNodeState> state);
+    void retireMasterChain(std::shared_ptr<const FxChain> chain);
+    void drainRetiredStates();
+    void timerCallback() override;
+
     void enqueuePluginJob(const Track& track, double rate, int maxBlock);
     bool jobQueuedFor(const Track& track, double rate, int maxBlock) const;
     void applyPluginJob(const PluginJob& job, PluginHost& host);
