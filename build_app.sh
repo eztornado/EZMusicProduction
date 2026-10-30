@@ -6,7 +6,8 @@ cd "$(dirname "$0")"
 # The brew Flutter (3.47+) needs macOS 14; this Mac runs 13 — pin the SDK.
 # The pod wrapper runs CocoaPods with Homebrew's portable ruby (brew install
 # hung on this network; the gem install needed the stdckdint shim — done).
-export PATH="$HOME/.local/bin:$HOME/development/flutter/bin:$PATH"
+FLUTTER_BIN="${FLUTTER_BIN:-$HOME/development/flutter-3.29.3/bin}"
+export PATH="$FLUTTER_BIN:$HOME/.local/bin:$PATH"
 
 BUILD_DIR="${CADENCE_BUILD_DIR:-build}"
 if [ "${UNIVERSAL:-0}" = "1" ]; then
@@ -24,7 +25,13 @@ if [ "${UNIVERSAL:-0}" = "1" ]; then
 fi
 
 echo "=== 1/3 Engine (C++/JUCE) ==="
-cmake --build "$BUILD_DIR" -j $(sysctl -n hw.ncpu)
+if [ "${UNIVERSAL:-0}" = "1" ]; then
+  # Release only needs the shared engine. Building the universal CLI too
+  # doubles the JUCE compile time for a test harness that users never run.
+  cmake --build "$BUILD_DIR" --target cadence_engine_shared -j $(sysctl -n hw.ncpu)
+else
+  cmake --build "$BUILD_DIR" -j $(sysctl -n hw.ncpu)
+fi
 
 echo "=== 2/3 Flutter (UI) ==="
 cd ui

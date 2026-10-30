@@ -309,6 +309,7 @@ juce::Result projectFromVar(const juce::var& value, Project& out)
     out.timeSigNumerator = (int) prop(root, "timeSigNum", 4);
     out.timeSigDenominator = (int) prop(root, "timeSigDen", 4);
     out.masterGain = (float) (double) prop(root, "masterGain", 1.0);
+    out.masterFx = fxFromArray(root->getProperty("masterFx"));
     out.inputQuantizeSeconds = (double) prop(root, "inputQuantize", 0.0);
     out.nextTrackId = (juce::int64) prop(root, "nextTrackId", (juce::int64) 1);
     out.nextClipId = (juce::int64) prop(root, "nextClipId", (juce::int64) 1);

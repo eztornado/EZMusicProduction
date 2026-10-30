@@ -200,10 +200,11 @@ public:
 
     void prepareToPlay(double sr, int) override {
         sampleRate_ = sr;
-        for (int b = 0; b < kNumBands; ++b)
-            for (int st = 0; st < 2; ++st)
-                for (int ch = 0; ch < 2; ++ch)
-                    biq_[b][st].reset(ch);
+        for (int b = 0; b < kNumBands; ++b) {
+            resetBand(b);
+            lastEnabled_[b] = bandEnabled(b) ? 1 : 0;
+            lastType_[b] = bandType(b);
+        }
     }
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout& l) const override {
@@ -215,15 +216,11 @@ public:
     void processBlock(juce::AudioBuffer<float>& buffer,
                       juce::MidiBuffer&) override {
         if (bypass_->get()) return;
-        // Recalc every block: ~50 flops for 8 bands, and it guarantees the
-        // coefficients track automation (the old dirty-flag froze them at
-        // defaults forever once prepared).
+        // Recalc every block so the coefficients track automation. Do not
+        // reset the filter state here: doing that at every block boundary
+        // turns the EQ into a click/buzz generator (the state carries the
+        // low-frequency tail of the previous block).
         recalc();
-        if ((recalcCounter_++ % 200) == 0)
-            juce::Logger::writeToLog(juce::String::formatted(
-                "[ezq] sr=%.0f b2: en=%d ty=%d f=%.0f | outGain=%.2f",
-                sampleRate_, (int) bandEn_[2]->get(), bandTy_[2]->getIndex(),
-                freq_[2]->get(), outGain_->get()));
         const int numCh = juce::jmin(2, buffer.getNumChannels());
         const int n = buffer.getNumSamples();
 
@@ -322,14 +319,29 @@ private:
     juce::AudioParameterBool* enableParam(int b) { return bandEn_[b]; }
     juce::AudioParameterChoice* typeParam(int b) { return bandTy_[b]; }
 
+    void resetBand(int b) {
+        for (int st = 0; st < 2; ++st)
+            for (int ch = 0; ch < 2; ++ch)
+                biq_[b][st].reset(ch);
+    }
+
     void recalc() {
         for (int b = 0; b < kNumBands; ++b) {
             const double f = freq_[b]->get();
             const double g = gain_[b]->get();
             const double q = juce::jmax(0.05, (double) q_[b]->get());
             const int ty = bandType(b);
+            const bool enabled = bandEnabled(b);
+            // Reset only when a band is switched on/off or changes type.
+            // Resetting on every block would inject a click at the block
+            // rate; keeping the state lets the filters run continuously.
+            if (enabled != (lastEnabled_[b] != 0) || ty != lastType_[b]) {
+                resetBand(b);
+                lastEnabled_[b] = enabled ? 1 : 0;
+                lastType_[b] = ty;
+            }
             Biquad s0 = Biquad::allPass(), s1 = Biquad::allPass();
-            if (bandEnabled(b)) {
+            if (enabled) {
                 switch (ty) {
                     case kBell: s0 = Biquad::peaking(sampleRate_, f, g, q); break;
                     case kLowShelf: s0 = Biquad::lowShelving(sampleRate_, f, g, q); break;
@@ -343,9 +355,9 @@ private:
             }
             for (int ch = 0; ch < 2; ++ch) {
                 biq_[b][0].b0 = s0.b0; biq_[b][0].b1 = s0.b1; biq_[b][0].b2 = s0.b2;
-                biq_[b][0].a1 = s0.a1; biq_[b][0].a2 = s0.a2; biq_[b][0].reset(ch);
+                biq_[b][0].a1 = s0.a1; biq_[b][0].a2 = s0.a2;
                 biq_[b][1].b0 = s1.b0; biq_[b][1].b1 = s1.b1; biq_[b][1].b2 = s1.b2;
-                biq_[b][1].a1 = s1.a1; biq_[b][1].a2 = s1.a2; biq_[b][1].reset(ch);
+                biq_[b][1].a1 = s1.a1; biq_[b][1].a2 = s1.a2;
             }
         }
     }
@@ -359,7 +371,8 @@ private:
     juce::AudioParameterFloat* outGain_ = nullptr;
 
     std::array<std::array<Biquad, 2>, kNumBands> biq_ {};
-    int recalcCounter_ = 0;
+    int lastEnabled_[kNumBands] = {};
+    int lastType_[kNumBands] = {};
     double sampleRate_ = 48000.0;
 
     // Post-EQ tap ring (audio thread writes, editor timer reads).

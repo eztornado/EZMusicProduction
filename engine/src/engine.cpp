@@ -7614,7 +7614,9 @@ const char* Engine::pluginStateBase64(TrackId trackId, int slotKind,
     stringOut_.clear();
     runOnMessageThread([&] {
         std::shared_ptr<juce::AudioProcessor> proc;
-        if (slotKind == 1)
+        if (trackId < 0)
+            proc = transport_->masterFxProcessorFor(slotIndex);
+        else if (slotKind == 1)
             proc = transport_->instrumentProcessorFor(trackId);
         else
             proc = transport_->fxProcessorFor(trackId, slotIndex);

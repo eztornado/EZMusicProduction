@@ -5,6 +5,7 @@
 #include "../src/ezsynth.h"
 #include "../src/ezorq.h"
 #include "../src/ezdrums.h"
+#include "../src/ezq4.h"
 #include "../src/magenta_vae.h"
 #include "../src/ai_generation.h"
 #include <fstream>
@@ -59,7 +60,9 @@ void printUsage()
         "  cadence-cli ai-test [models-dir]\n"
         "      end-to-end AI generation test (analysis, model, apply, undo).\n"
         "  cadence-cli mix-test\n"
-        "      offline mix analysis, JSON report, one-entry apply and undo.\n");
+        "      offline mix analysis, JSON report, one-entry apply and undo.\n"
+        "  cadence-cli eqclicktest\n"
+        "      checks the EQ does not reset its state at block boundaries.\n");
 }
 
 int cmdDevices()
@@ -664,6 +667,21 @@ int cmdMasterTest()
         const double rmsBypass = rmsInRange(
             formats, juce::File("/tmp/cadence_master_bypass.wav"), 0.1, 0.9);
         fxOk = fxOk && bypassResult.wasOk() && rmsBypass > 0.001;
+
+        // Master inserts used to disappear on reload: projectFromVar parsed
+        // masterGain but silently ignored masterFx. The saved chain must
+        // survive a save/load round-trip.
+        const auto roundTrip = juce::File("/tmp/cadence_master_roundtrip.ezmpp");
+        bool persistOk = engine.saveProject(roundTrip).wasOk();
+        if (persistOk)
+        {
+            persistOk = engine.newProject(44100).wasOk()
+                && engine.loadProject(roundTrip).wasOk()
+                && engine.masterFxCount() == 1
+                && juce::String(engine.masterFxNameAt(0)) == "EZ EQ Pro"
+                && engine.masterFxBypassAt(0);
+        }
+        fxOk = fxOk && persistOk;
     }
 
     std::printf("mastertest: full=%.5f half=%.5f ratio=%.2f gain=%s "
@@ -1709,6 +1727,63 @@ int cmdEzQTest()
     flat.deleteFile();
     cut.deleteFile();
     toneFile.deleteFile();
+    return pass ? 0 : 1;
+}
+
+int cmdEqClickTest()
+{
+    // Regression: EZ EQ Pro used to reset every biquad's state on every
+    // processBlock. With bass-heavy material that produces a click at the
+    // block rate (48 kHz / 512 = 93.75 Hz) and a bright, buzzy texture.
+    // A continuous 60 Hz tone makes the state-reset discontinuity obvious.
+    std::unique_ptr<juce::AudioProcessor> proc(ezq4::create());
+    if (proc == nullptr)
+    {
+        std::fprintf(stderr, "eqclicktest: could not create EZ EQ Pro\n");
+        return 1;
+    }
+
+    constexpr int blockSize = 512;
+    constexpr int blocks = 100;
+    proc->prepareToPlay(48000.0, blockSize);
+
+    juce::AudioBuffer<float> buffer(2, blockSize);
+    juce::MidiBuffer midi;
+    std::vector<float> out;
+    out.reserve((size_t) blockSize * blocks);
+
+    const double inc = 2.0 * juce::MathConstants<double>::pi * 60.0 / 48000.0;
+    double phase = 0.0;
+    for (int b = 0; b < blocks; ++b)
+    {
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const auto s = (float) (0.5 * std::sin(phase));
+            phase += inc;
+            buffer.setSample(0, i, s);
+            buffer.setSample(1, i, s);
+        }
+        proc->processBlock(buffer, midi);
+        for (int i = 0; i < blockSize; ++i)
+            out.push_back(buffer.getSample(0, i));
+    }
+
+    double boundaryJump = 0.0;
+    double interiorJump = 0.0;
+    for (size_t i = blockSize; i < out.size(); ++i)
+    {
+        const double jump = std::abs((double) out[i] - (double) out[i - 1]);
+        if (i % (size_t) blockSize == 0)
+            boundaryJump = juce::jmax(boundaryJump, jump);
+        else
+            interiorJump = juce::jmax(interiorJump, jump);
+    }
+
+    const double ratio = boundaryJump / (interiorJump + 1.0e-9);
+    const bool pass = ratio < 3.0;
+    std::printf("eqclicktest: boundary=%.6f interior=%.6f ratio=%.2f -> %s\n",
+                boundaryJump, interiorJump, ratio,
+                pass ? "CONTINUOUS" : "BLOCK CLICKS");
     return pass ? 0 : 1;
 }
 
@@ -3999,6 +4074,9 @@ int main(int argc, char** argv)
 
     if (cmd == "ezqtest")
         return cmdEzQTest();
+
+    if (cmd == "eqclicktest")
+        return cmdEqClickTest();
 
     if (cmd == "ezinsttest")
         return cmdEzInstTest();
