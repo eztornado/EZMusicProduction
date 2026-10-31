@@ -103,6 +103,12 @@ public:
     // serialises jobs. Never touches the live project.
     Result generate(const Project& project, const Request& request);
 
+    // Compact JSON description of the project for an external arranger:
+    // tempo/meter, key and bar chords, every track and instrument, and short
+    // note excerpts from the existing clips. Read-only.
+    juce::String contextJson(const Project& project, TrackId selectedTrack,
+                             double anchorSeconds, int bars) const;
+
     struct Analysis;
     struct Intent;
 

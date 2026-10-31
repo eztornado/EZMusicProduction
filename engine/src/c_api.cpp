@@ -1158,6 +1158,31 @@ CadenceResult cadence_engine_apply_ai_generation(CadenceEngine* engine,
     return kCadenceOk;
 }
 
+const char* cadence_engine_ai_context_json(CadenceEngine* engine,
+                                           CadenceTrackId selected_track_id,
+                                           double anchor_seconds, int bars)
+{
+    if (engine == nullptr)
+        return "";
+    return asEngine(engine)->aiContextJson(selected_track_id, anchor_seconds, bars);
+}
+
+CadenceResult cadence_engine_apply_ai_arrangement(CadenceEngine* engine,
+                                                  const char* utf8_json)
+{
+    if (engine == nullptr || utf8_json == nullptr)
+        return kCadenceErrorNullArgument;
+    return asEngine(engine)->applyAiArrangement(juce::String::fromUTF8(utf8_json))
+                   .failed()
+               ? kCadenceErrorInvalidArgument
+               : kCadenceOk;
+}
+
+const char* cadence_engine_ai_arrangement_result_json(CadenceEngine* engine)
+{
+    return engine != nullptr ? asEngine(engine)->aiArrangementResultJson() : "";
+}
+
 int cadence_engine_start_mix_analysis(CadenceEngine* engine,
                                       const char* utf8_prompt,
                                       double target_lufs, double true_peak_db,

@@ -332,6 +332,25 @@ void cadence_engine_ai_result_note_at(CadenceEngine* engine, int index,
 CadenceResult cadence_engine_apply_ai_generation(CadenceEngine* engine,
                                                  CadenceClipId* out_clip_id);
 
+/* ---- AI song arranger (multiple tracks in one undo entry) ----
+   The UI builds the creative brief and the model returns a JSON plan; these
+   calls only expose the project context and apply the plan. No network code
+   lives in the engine.
+   cadence_engine_ai_context_json returns a compact, read-only description of
+   the project (tempo, meter, key/chords, tracks, instruments and short note
+   excerpts) for the selected track and anchor. selected_track_id may be -1.
+   cadence_engine_apply_ai_arrangement validates the whole plan first and then
+   creates missing instrument tracks and MIDI clips as one undo entry. The
+   result summary (created/reused tracks, clip ids, note count) is available as
+   JSON through cadence_engine_ai_arrangement_result_json. On failure the last
+   error is returned by cadence_engine_last_error. */
+const char* cadence_engine_ai_context_json(CadenceEngine* engine,
+                                           CadenceTrackId selected_track_id,
+                                           double anchor_seconds, int bars);
+CadenceResult cadence_engine_apply_ai_arrangement(CadenceEngine* engine,
+                                                  const char* utf8_json);
+const char* cadence_engine_ai_arrangement_result_json(CadenceEngine* engine);
+
 /* ---- AI mix analysis / mastering ----
    Renders the project offline and analyses levels, loudness, spectrum, stereo
    image and cross-track masking. Poll cadence_engine_mix_analysis_state:

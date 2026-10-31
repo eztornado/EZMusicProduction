@@ -800,6 +800,193 @@ class AppLocalizationsEn extends AppLocalizations {
   String get aiApplied => 'Generated clip applied';
 
   @override
+  String get arrangerToolbarButton => 'Arrange';
+
+  @override
+  String get arrangerToolbarTooltip =>
+      'Create a multi-track arrangement with AI';
+
+  @override
+  String get arrangerTitle => 'AI arranger';
+
+  @override
+  String get arrangerSubtitle =>
+      'Compose several tracks at once with an external model';
+
+  @override
+  String get arrangerBrief => 'What do you want to create?';
+
+  @override
+  String get arrangerBriefHint =>
+      'e.g. 16 bars of organic house: groovy drums, moving bass, warm pads and a simple lead';
+
+  @override
+  String get arrangerPrivacyHint =>
+      'Only the compact context (tracks, chords and MIDI excerpts) is sent to the server you configure; audio never leaves this computer.';
+
+  @override
+  String get arrangerBars => 'Bars';
+
+  @override
+  String get arrangerStartBeginning => 'From the start of the project';
+
+  @override
+  String arrangerStartAtBar(int bar) {
+    return 'From bar $bar';
+  }
+
+  @override
+  String get arrangerNoKey =>
+      'Set an API key in AI settings, or use a local server.';
+
+  @override
+  String get arrangerSettings => 'AI settings';
+
+  @override
+  String get arrangerThinking => 'The model is composing…';
+
+  @override
+  String get arrangerThinkingHint =>
+      'This can take a minute or two. The project does not change until you apply it.';
+
+  @override
+  String get arrangerRefining => 'Refining the proposal…';
+
+  @override
+  String get arrangerCancelRequest => 'Cancel request';
+
+  @override
+  String get arrangerCancelling => 'Cancelling…';
+
+  @override
+  String get arrangerClose => 'Close';
+
+  @override
+  String get arrangerGenerate => 'Create arrangement';
+
+  @override
+  String get arrangerCancel => 'Cancel';
+
+  @override
+  String get arrangerDiscard => 'Discard';
+
+  @override
+  String get arrangerApply => 'Apply arrangement';
+
+  @override
+  String arrangerApplyFailed(String error) {
+    return 'Could not apply: $error';
+  }
+
+  @override
+  String arrangerGenerationFailed(String error) {
+    return 'Could not generate: $error';
+  }
+
+  @override
+  String get arrangerProposal => 'Proposal';
+
+  @override
+  String arrangerSummary(
+    int newTracks,
+    int reusedTracks,
+    int clips,
+    int notes,
+  ) {
+    return '$newTracks new · $reusedTracks reused · $clips clips · $notes notes';
+  }
+
+  @override
+  String get arrangerPreviewHint => 'Applying it creates a single undo entry.';
+
+  @override
+  String get arrangerRefineHint => 'What to improve (optional)';
+
+  @override
+  String get arrangerRefineDefault =>
+      'Improve the groove, voice leading and contrast between sections.';
+
+  @override
+  String get arrangerRefine => 'Refine';
+
+  @override
+  String get arrangerRoleTrack => 'track';
+
+  @override
+  String get arrangerInstrumentDefault => 'project instrument';
+
+  @override
+  String get arrangerExistingTrack => 'Existing';
+
+  @override
+  String get arrangerNewTrack => 'New';
+
+  @override
+  String arrangerTrackStats(int clips, int notes) {
+    return '$clips clips · $notes notes';
+  }
+
+  @override
+  String get arrangerSettingsTitle => 'AI settings';
+
+  @override
+  String get arrangerSettingsHint =>
+      'Works with OpenAI, OpenRouter, LM Studio, Ollama and similar local servers.';
+
+  @override
+  String get arrangerBaseUrl => 'Server URL';
+
+  @override
+  String get arrangerModel => 'Model';
+
+  @override
+  String get arrangerApiKey => 'API key';
+
+  @override
+  String get arrangerApiKeyHint => 'Stored only on this computer';
+
+  @override
+  String get arrangerApiKeyKept => 'Leave empty to keep the current key';
+
+  @override
+  String get arrangerApiKeyPresent => 'Key configured';
+
+  @override
+  String get arrangerApiKeyMissing => 'No key';
+
+  @override
+  String get arrangerLocalNoKey => 'With a local server the key can be empty.';
+
+  @override
+  String get arrangerForgetKey => 'Forget saved key';
+
+  @override
+  String get arrangerTemperature => 'Creativity';
+
+  @override
+  String get arrangerMaxTokens => 'Maximum tokens';
+
+  @override
+  String get arrangerKeySecurity =>
+      'The key is stored in a separate file with restricted permissions and is never written to the project or the logs.';
+
+  @override
+  String get arrangerInvalidUrl =>
+      'The URL must start with http:// or https:// and include a server.';
+
+  @override
+  String get arrangerSave => 'Save';
+
+  @override
+  String get arrangerHideKey => 'Hide key';
+
+  @override
+  String get arrangerShowKey => 'Show key';
+
+  @override
+  String get aiArrangementApplied => 'Arrangement applied';
+
+  @override
   String get mixToolbarButton => 'Mix assistant';
 
   @override

@@ -596,6 +596,18 @@ final class CadenceEngine {
         Int32 Function(Pointer<Void>, Pointer<Int64>),
         int Function(Pointer<Void>, Pointer<Int64>)>(
         'cadence_engine_apply_ai_generation');
+    _aiContextJson = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Double, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, double, int)>(
+        'cadence_engine_ai_context_json');
+    _applyAiArrangement = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Utf8>),
+        int Function(Pointer<Void>, Pointer<Utf8>)>(
+        'cadence_engine_apply_ai_arrangement');
+    _aiArrangementResultJson = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>),
+        Pointer<Utf8> Function(Pointer<Void>)>(
+        'cadence_engine_ai_arrangement_result_json');
 
     // ---- AI mix analysis / mastering ----
     _startMixAnalysis = _lib.lookupFunction<
@@ -879,6 +891,10 @@ final class CadenceEngine {
   late final void Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Float>,
       Pointer<Double>, Pointer<Double>) _aiResultNoteAt;
   late final int Function(Pointer<Void>, Pointer<Int64>) _applyAiGeneration;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, double, int)
+      _aiContextJson;
+  late final int Function(Pointer<Void>, Pointer<Utf8>) _applyAiArrangement;
+  late final Pointer<Utf8> Function(Pointer<Void>) _aiArrangementResultJson;
 
   late final int Function(Pointer<Void>, Pointer<Utf8>, double, double, int,
       int, int) _startMixAnalysis;
@@ -1306,6 +1322,24 @@ final class CadenceEngine {
       calloc.free(out);
     }
   }
+
+  /// Compact project description for the external song arranger (read-only).
+  String aiContextJson({
+    int selectedTrackId = -1,
+    double anchorSeconds = 0.0,
+    int bars = 16,
+  }) =>
+      _aiContextJson(_handle, selectedTrackId, anchorSeconds, bars)
+          .toDartString();
+
+  /// Applies a song-arrangement plan (JSON) as one undo entry. Returns false
+  /// on failure; the engine's last error has the reason.
+  bool applyAiArrangement(String json) =>
+      _withUtf8(json, (p) => _applyAiArrangement(_handle, p) == 0);
+
+  /// Summary of the last arrangement apply, as JSON.
+  String get aiArrangementResultJson =>
+      _aiArrangementResultJson(_handle).toDartString();
 
   /// Starts the offline mix analysis worker. [profile] -1 infers it from the
   /// prompt; otherwise 0 pop, 1 electronic, 2 hiphop, 3 rock, 4 acoustic,

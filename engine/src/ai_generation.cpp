@@ -1551,6 +1551,196 @@ Service::Analysis Service::analyse(const Project& project, const Request& reques
     return a;
 }
 
+juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
+                                  double anchorSeconds, int bars) const
+{
+    Request request;
+    request.trackId = selectedTrack;
+    request.anchorSeconds = juce::jmax(0.0, anchorSeconds);
+    request.bars = juce::jlimit(1, 64, bars);
+    request.useModel = false;
+
+    const auto a = analyse(project, request);
+
+    auto roleName = [] (Mode mode)
+    {
+        switch (mode)
+        {
+            case Mode::Drums: return "drums";
+            case Mode::Bass: return "bass";
+            case Mode::Harmony: return "chords";
+            case Mode::Melody:
+            default: return "melody";
+        }
+    };
+
+    auto* root = new juce::DynamicObject();
+    root->setProperty("schema", 1);
+    root->setProperty("project_name", project.name);
+    root->setProperty("tempo_bpm", project.tempoBpm);
+    root->setProperty("time_signature_numerator", project.timeSigNumerator);
+    root->setProperty("time_signature_denominator", project.timeSigDenominator);
+    root->setProperty("beats_per_bar", a.barSeconds / juce::jmax(1.0e-9, a.beatSeconds));
+    root->setProperty("bar_seconds", a.barSeconds);
+    root->setProperty("beat_seconds", a.beatSeconds);
+    root->setProperty("anchor_seconds", a.anchor);
+    root->setProperty("anchor_beat", a.anchor / juce::jmax(1.0e-9, a.beatSeconds));
+    root->setProperty("anchor_bar", a.anchor / juce::jmax(1.0e-9, a.barSeconds));
+    root->setProperty("requested_bars", a.bars);
+    root->setProperty("selected_track_id", (juce::int64) selectedTrack);
+    root->setProperty("key", keyName(a.root, a.minor));
+    root->setProperty("minor", a.minor);
+
+    auto* analysis = new juce::DynamicObject();
+    analysis->setProperty("key", keyName(a.root, a.minor));
+    analysis->setProperty("root", a.root);
+    analysis->setProperty("minor", a.minor);
+    analysis->setProperty("confidence", (double) a.confidence);
+    analysis->setProperty("role", roleName(a.role));
+    analysis->setProperty("density_per_beat", (double) a.density);
+    analysis->setProperty("median_pitch", a.medianPitch);
+    analysis->setProperty("target_track", a.targetName);
+    analysis->setProperty("target_instrument",
+                          a.instrument.isNotEmpty() ? a.instrument
+                                                    : juce::String("Piano interno"));
+    analysis->setProperty("audio_used", a.audioUsed);
+    analysis->setProperty("audio_key_used", a.audioKeyUsed);
+    analysis->setProperty("audio_seconds", a.audioSeconds);
+    analysis->setProperty("audio_onsets_per_beat", a.audioOnsetsPerBeat);
+
+    juce::Array<juce::var> chords;
+    juce::String chordLine;
+    const bool flats = keyUsesFlats(a.root, a.minor);
+    for (int b = 0; b < a.bars; ++b)
+    {
+        auto* chord = new juce::DynamicObject();
+        const int r = a.chordRoot[(size_t) b];
+        const int q = a.chordQuality[(size_t) b];
+        const auto symbol = chordName(r, q, flats);
+        chord->setProperty("bar", b);
+        chord->setProperty("start_beat", (double) b * a.barSeconds
+                                             / juce::jmax(1.0e-9, a.beatSeconds));
+        chord->setProperty("symbol", symbol);
+        chord->setProperty("root", r);
+        chord->setProperty("quality", q);
+        chords.add(juce::var(chord));
+        if (b > 0)
+            chordLine << " | ";
+        chordLine << symbol;
+    }
+    analysis->setProperty("chords", chords);
+    analysis->setProperty("chord_line", chordLine);
+    root->setProperty("chord_line", chordLine);
+
+    juce::String heard;
+    heard << a.context.size() << " MIDI notes in the previous 4 bars and "
+          << a.window.size() << " in the target window";
+    if (a.audioUsed)
+        heard << "; audio listened for " << juce::String(a.audioSeconds, 1)
+              << " s";
+    if (a.audioKeyUsed)
+        heard << "; the key came from the audio";
+    analysis->setProperty("heard", heard);
+    root->setProperty("analysis", juce::var(analysis));
+
+    juce::Array<juce::var> tracks;
+    int totalClips = 0;
+    int noteBudget = 512;
+
+    for (const auto& track : project.tracks)
+    {
+        auto* t = new juce::DynamicObject();
+        t->setProperty("track_id", (juce::int64) track.id);
+        t->setProperty("name", track.name);
+        t->setProperty("type", track.type == Track::Type::Instrument
+                                   ? "instrument" : "audio");
+        t->setProperty("role",
+                       roleName(roleForTrack(track.name, track.instrument.name,
+                                             {})));
+        t->setProperty("instrument",
+                       track.instrument.name.isNotEmpty()
+                           ? track.instrument.name
+                           : juce::String("Piano interno"));
+        t->setProperty("volume_db",
+                       (double) juce::Decibels::gainToDecibels(track.volume,
+                                                               -60.0f));
+        t->setProperty("pan", (double) track.pan);
+        t->setProperty("muted", track.mute);
+        t->setProperty("solo", track.solo);
+
+        juce::Array<juce::var> clips;
+        for (const auto& clip : track.clips)
+        {
+            ++totalClips;
+            auto* c = new juce::DynamicObject();
+            c->setProperty("clip_id", (juce::int64) clip.id);
+            c->setProperty("is_midi", clip.isMidi());
+            c->setProperty("start_beat", clip.startSeconds
+                                             / juce::jmax(1.0e-9, a.beatSeconds));
+            c->setProperty("length_beats", clip.lengthSeconds
+                                               / juce::jmax(1.0e-9, a.beatSeconds));
+            c->setProperty("muted", clip.muted);
+
+            if (clip.isMidi() && clip.midi != nullptr)
+            {
+                int low = 127;
+                int high = 0;
+                for (const auto& n : clip.midi->notes)
+                {
+                    low = juce::jmin(low, n.pitch);
+                    high = juce::jmax(high, n.pitch);
+                }
+                c->setProperty("note_count", (int) clip.midi->notes.size());
+                c->setProperty("pitch_low", clip.midi->notes.empty() ? 0 : low);
+                c->setProperty("pitch_high", clip.midi->notes.empty() ? 0 : high);
+
+                if (noteBudget > 0 && ! clip.midi->notes.empty())
+                {
+                    juce::Array<juce::var> notes;
+                    const int take = juce::jmin(
+                        32, noteBudget, (int) clip.midi->notes.size());
+                    for (int i = 0; i < take; ++i)
+                    {
+                        const auto& n = clip.midi->notes[(size_t) i];
+                        auto* note = new juce::DynamicObject();
+                        note->setProperty("pitch", n.pitch);
+                        note->setProperty("start_beat",
+                                          n.startSeconds
+                                              / juce::jmax(1.0e-9, a.beatSeconds));
+                        note->setProperty("length_beats",
+                                          n.lengthSeconds
+                                              / juce::jmax(1.0e-9, a.beatSeconds));
+                        note->setProperty("velocity", (double) n.velocity);
+                        notes.add(juce::var(note));
+                    }
+                    c->setProperty("notes", notes);
+                    c->setProperty("notes_omitted",
+                                   (int) clip.midi->notes.size() - take);
+                    noteBudget -= take;
+                }
+            }
+            clips.add(juce::var(c));
+        }
+        t->setProperty("clip_count", clips.size());
+        t->setProperty("clips", clips);
+        tracks.add(juce::var(t));
+    }
+
+    root->setProperty("track_count", tracks.size());
+    root->setProperty("clip_count", totalClips);
+    root->setProperty("tracks", tracks);
+    root->setProperty(
+        "guidance",
+        "Positions and lengths are quarter-note beats. Reuse an existing "
+        "instrument track by passing its track_id; omit track_id to create a "
+        "new instrument track. Add clips without deleting existing material. "
+        "Keep the project key/chords unless the brief asks to change them. "
+        "Use GM drum notes (36 kick, 38 snare, 42 closed hat, 46 open hat) on "
+        "drum tracks. Leave room for the other parts.");
+
+    return juce::JSON::toString(juce::var(root), false, 15);
+}
+
 Service::Intent Service::interpretPrompt(const juce::String& prompt,
                                          const Analysis& analysis) const
 {

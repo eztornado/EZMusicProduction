@@ -1510,6 +1510,330 @@ abstract class AppLocalizations {
   /// **'Clip generado aplicado'**
   String get aiApplied;
 
+  /// No description provided for @arrangerToolbarButton.
+  ///
+  /// In es, this message translates to:
+  /// **'Arreglo'**
+  String get arrangerToolbarButton;
+
+  /// No description provided for @arrangerToolbarTooltip.
+  ///
+  /// In es, this message translates to:
+  /// **'Crear un arreglo de varias pistas con IA'**
+  String get arrangerToolbarTooltip;
+
+  /// No description provided for @arrangerTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Arreglista IA'**
+  String get arrangerTitle;
+
+  /// No description provided for @arrangerSubtitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Compón varias pistas a la vez con un modelo externo'**
+  String get arrangerSubtitle;
+
+  /// No description provided for @arrangerBrief.
+  ///
+  /// In es, this message translates to:
+  /// **'¿Qué quieres crear?'**
+  String get arrangerBrief;
+
+  /// No description provided for @arrangerBriefHint.
+  ///
+  /// In es, this message translates to:
+  /// **'p. ej. house orgánico de 16 compases: batería con groove, bajo con movimiento, pads cálidos y un lead sencillo'**
+  String get arrangerBriefHint;
+
+  /// No description provided for @arrangerPrivacyHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Solo se envía el contexto resumido (pistas, acordes y fragmentos MIDI) al servidor que configures; el audio no sale del equipo.'**
+  String get arrangerPrivacyHint;
+
+  /// No description provided for @arrangerBars.
+  ///
+  /// In es, this message translates to:
+  /// **'Compases'**
+  String get arrangerBars;
+
+  /// No description provided for @arrangerStartBeginning.
+  ///
+  /// In es, this message translates to:
+  /// **'Desde el inicio del proyecto'**
+  String get arrangerStartBeginning;
+
+  /// No description provided for @arrangerStartAtBar.
+  ///
+  /// In es, this message translates to:
+  /// **'Desde el compás {bar}'**
+  String arrangerStartAtBar(int bar);
+
+  /// No description provided for @arrangerNoKey.
+  ///
+  /// In es, this message translates to:
+  /// **'Configura una clave de API en Ajustes de IA, o usa un servidor local.'**
+  String get arrangerNoKey;
+
+  /// No description provided for @arrangerSettings.
+  ///
+  /// In es, this message translates to:
+  /// **'Ajustes de IA'**
+  String get arrangerSettings;
+
+  /// No description provided for @arrangerThinking.
+  ///
+  /// In es, this message translates to:
+  /// **'El modelo está componiendo…'**
+  String get arrangerThinking;
+
+  /// No description provided for @arrangerThinkingHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Puede tardar uno o dos minutos. El proyecto no cambia hasta que apliques.'**
+  String get arrangerThinkingHint;
+
+  /// No description provided for @arrangerRefining.
+  ///
+  /// In es, this message translates to:
+  /// **'Refinando la propuesta…'**
+  String get arrangerRefining;
+
+  /// No description provided for @arrangerCancelRequest.
+  ///
+  /// In es, this message translates to:
+  /// **'Cancelar petición'**
+  String get arrangerCancelRequest;
+
+  /// No description provided for @arrangerCancelling.
+  ///
+  /// In es, this message translates to:
+  /// **'Cancelando…'**
+  String get arrangerCancelling;
+
+  /// No description provided for @arrangerClose.
+  ///
+  /// In es, this message translates to:
+  /// **'Cerrar'**
+  String get arrangerClose;
+
+  /// No description provided for @arrangerGenerate.
+  ///
+  /// In es, this message translates to:
+  /// **'Crear arreglo'**
+  String get arrangerGenerate;
+
+  /// No description provided for @arrangerCancel.
+  ///
+  /// In es, this message translates to:
+  /// **'Cancelar'**
+  String get arrangerCancel;
+
+  /// No description provided for @arrangerDiscard.
+  ///
+  /// In es, this message translates to:
+  /// **'Descartar'**
+  String get arrangerDiscard;
+
+  /// No description provided for @arrangerApply.
+  ///
+  /// In es, this message translates to:
+  /// **'Aplicar arreglo'**
+  String get arrangerApply;
+
+  /// No description provided for @arrangerApplyFailed.
+  ///
+  /// In es, this message translates to:
+  /// **'No se pudo aplicar: {error}'**
+  String arrangerApplyFailed(String error);
+
+  /// No description provided for @arrangerGenerationFailed.
+  ///
+  /// In es, this message translates to:
+  /// **'No se pudo generar: {error}'**
+  String arrangerGenerationFailed(String error);
+
+  /// No description provided for @arrangerProposal.
+  ///
+  /// In es, this message translates to:
+  /// **'Propuesta'**
+  String get arrangerProposal;
+
+  /// No description provided for @arrangerSummary.
+  ///
+  /// In es, this message translates to:
+  /// **'{newTracks} nuevas · {reusedTracks} reutilizadas · {clips} clips · {notes} notas'**
+  String arrangerSummary(int newTracks, int reusedTracks, int clips, int notes);
+
+  /// No description provided for @arrangerPreviewHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Al aplicarla se crea una sola entrada de deshacer.'**
+  String get arrangerPreviewHint;
+
+  /// No description provided for @arrangerRefineHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Qué mejorar (opcional)'**
+  String get arrangerRefineHint;
+
+  /// No description provided for @arrangerRefineDefault.
+  ///
+  /// In es, this message translates to:
+  /// **'Mejora el groove, la conducción de voces y el contraste entre secciones.'**
+  String get arrangerRefineDefault;
+
+  /// No description provided for @arrangerRefine.
+  ///
+  /// In es, this message translates to:
+  /// **'Refinar'**
+  String get arrangerRefine;
+
+  /// No description provided for @arrangerRoleTrack.
+  ///
+  /// In es, this message translates to:
+  /// **'pista'**
+  String get arrangerRoleTrack;
+
+  /// No description provided for @arrangerInstrumentDefault.
+  ///
+  /// In es, this message translates to:
+  /// **'instrumento del proyecto'**
+  String get arrangerInstrumentDefault;
+
+  /// No description provided for @arrangerExistingTrack.
+  ///
+  /// In es, this message translates to:
+  /// **'Existente'**
+  String get arrangerExistingTrack;
+
+  /// No description provided for @arrangerNewTrack.
+  ///
+  /// In es, this message translates to:
+  /// **'Nueva'**
+  String get arrangerNewTrack;
+
+  /// No description provided for @arrangerTrackStats.
+  ///
+  /// In es, this message translates to:
+  /// **'{clips} clips · {notes} notas'**
+  String arrangerTrackStats(int clips, int notes);
+
+  /// No description provided for @arrangerSettingsTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Ajustes de IA'**
+  String get arrangerSettingsTitle;
+
+  /// No description provided for @arrangerSettingsHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Compatible con OpenAI, OpenRouter, LM Studio, Ollama y servidores locales similares.'**
+  String get arrangerSettingsHint;
+
+  /// No description provided for @arrangerBaseUrl.
+  ///
+  /// In es, this message translates to:
+  /// **'URL del servidor'**
+  String get arrangerBaseUrl;
+
+  /// No description provided for @arrangerModel.
+  ///
+  /// In es, this message translates to:
+  /// **'Modelo'**
+  String get arrangerModel;
+
+  /// No description provided for @arrangerApiKey.
+  ///
+  /// In es, this message translates to:
+  /// **'Clave de API'**
+  String get arrangerApiKey;
+
+  /// No description provided for @arrangerApiKeyHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Se guarda solo en este equipo'**
+  String get arrangerApiKeyHint;
+
+  /// No description provided for @arrangerApiKeyKept.
+  ///
+  /// In es, this message translates to:
+  /// **'Déjala vacía para conservar la clave actual'**
+  String get arrangerApiKeyKept;
+
+  /// No description provided for @arrangerApiKeyPresent.
+  ///
+  /// In es, this message translates to:
+  /// **'Clave configurada'**
+  String get arrangerApiKeyPresent;
+
+  /// No description provided for @arrangerApiKeyMissing.
+  ///
+  /// In es, this message translates to:
+  /// **'Sin clave'**
+  String get arrangerApiKeyMissing;
+
+  /// No description provided for @arrangerLocalNoKey.
+  ///
+  /// In es, this message translates to:
+  /// **'Si usas un servidor local, la clave puede estar vacía.'**
+  String get arrangerLocalNoKey;
+
+  /// No description provided for @arrangerForgetKey.
+  ///
+  /// In es, this message translates to:
+  /// **'Olvidar clave guardada'**
+  String get arrangerForgetKey;
+
+  /// No description provided for @arrangerTemperature.
+  ///
+  /// In es, this message translates to:
+  /// **'Creatividad'**
+  String get arrangerTemperature;
+
+  /// No description provided for @arrangerMaxTokens.
+  ///
+  /// In es, this message translates to:
+  /// **'Máximo de tokens'**
+  String get arrangerMaxTokens;
+
+  /// No description provided for @arrangerKeySecurity.
+  ///
+  /// In es, this message translates to:
+  /// **'La clave se guarda en un archivo aparte con permisos restringidos y nunca se escribe en el proyecto ni en los registros.'**
+  String get arrangerKeySecurity;
+
+  /// No description provided for @arrangerInvalidUrl.
+  ///
+  /// In es, this message translates to:
+  /// **'La URL debe empezar por http:// o https:// e incluir un servidor.'**
+  String get arrangerInvalidUrl;
+
+  /// No description provided for @arrangerSave.
+  ///
+  /// In es, this message translates to:
+  /// **'Guardar'**
+  String get arrangerSave;
+
+  /// No description provided for @arrangerHideKey.
+  ///
+  /// In es, this message translates to:
+  /// **'Ocultar clave'**
+  String get arrangerHideKey;
+
+  /// No description provided for @arrangerShowKey.
+  ///
+  /// In es, this message translates to:
+  /// **'Mostrar clave'**
+  String get arrangerShowKey;
+
+  /// No description provided for @aiArrangementApplied.
+  ///
+  /// In es, this message translates to:
+  /// **'Arreglo aplicado'**
+  String get aiArrangementApplied;
+
   /// No description provided for @mixToolbarButton.
   ///
   /// In es, this message translates to:

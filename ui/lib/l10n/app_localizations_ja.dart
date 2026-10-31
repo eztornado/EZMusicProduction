@@ -793,6 +793,188 @@ class AppLocalizationsJa extends AppLocalizations {
   String get aiApplied => '生成したクリップを適用しました';
 
   @override
+  String get arrangerToolbarButton => 'アレンジ';
+
+  @override
+  String get arrangerToolbarTooltip => 'AIで複数トラックのアレンジを作成';
+
+  @override
+  String get arrangerTitle => 'AI アレンジャー';
+
+  @override
+  String get arrangerSubtitle => '外部モデルで複数トラックを同時に作曲';
+
+  @override
+  String get arrangerBrief => '何を作りますか？';
+
+  @override
+  String get arrangerBriefHint =>
+      '例：16小節のオーガニックハウス。グルーヴのあるドラム、動くベース、温かいパッド、シンプルなリード';
+
+  @override
+  String get arrangerPrivacyHint =>
+      '送信されるのは要約されたコンテキスト（トラック、コード、MIDIの抜粋）のみです。音声はこのコンピューターから出ません。';
+
+  @override
+  String get arrangerBars => '小節';
+
+  @override
+  String get arrangerStartBeginning => 'プロジェクトの先頭から';
+
+  @override
+  String arrangerStartAtBar(int bar) {
+    return '$bar小節から';
+  }
+
+  @override
+  String get arrangerNoKey => 'AI設定でAPIキーを設定するか、ローカルサーバーを使用してください。';
+
+  @override
+  String get arrangerSettings => 'AI設定';
+
+  @override
+  String get arrangerThinking => 'モデルが作曲しています…';
+
+  @override
+  String get arrangerThinkingHint => '1〜2分かかることがあります。適用するまでプロジェクトは変更されません。';
+
+  @override
+  String get arrangerRefining => '提案を改善しています…';
+
+  @override
+  String get arrangerCancelRequest => 'リクエストをキャンセル';
+
+  @override
+  String get arrangerCancelling => 'キャンセル中…';
+
+  @override
+  String get arrangerClose => '閉じる';
+
+  @override
+  String get arrangerGenerate => 'アレンジを作成';
+
+  @override
+  String get arrangerCancel => 'キャンセル';
+
+  @override
+  String get arrangerDiscard => '破棄';
+
+  @override
+  String get arrangerApply => 'アレンジを適用';
+
+  @override
+  String arrangerApplyFailed(String error) {
+    return '適用できませんでした：$error';
+  }
+
+  @override
+  String arrangerGenerationFailed(String error) {
+    return '生成できませんでした：$error';
+  }
+
+  @override
+  String get arrangerProposal => '提案';
+
+  @override
+  String arrangerSummary(
+    int newTracks,
+    int reusedTracks,
+    int clips,
+    int notes,
+  ) {
+    return '新規 $newTracks · 再利用 $reusedTracks · $clips クリップ · $notes ノート';
+  }
+
+  @override
+  String get arrangerPreviewHint => '適用すると元に戻す操作は1回分になります。';
+
+  @override
+  String get arrangerRefineHint => '改善点（任意）';
+
+  @override
+  String get arrangerRefineDefault => 'グルーヴ、声部進行、セクションの対比を改善してください。';
+
+  @override
+  String get arrangerRefine => '改善';
+
+  @override
+  String get arrangerRoleTrack => 'トラック';
+
+  @override
+  String get arrangerInstrumentDefault => 'プロジェクトの音源';
+
+  @override
+  String get arrangerExistingTrack => '既存';
+
+  @override
+  String get arrangerNewTrack => '新規';
+
+  @override
+  String arrangerTrackStats(int clips, int notes) {
+    return '$clips クリップ · $notes ノート';
+  }
+
+  @override
+  String get arrangerSettingsTitle => 'AI設定';
+
+  @override
+  String get arrangerSettingsHint =>
+      'OpenAI、OpenRouter、LM Studio、Ollama などの互換サーバーに対応しています。';
+
+  @override
+  String get arrangerBaseUrl => 'サーバーURL';
+
+  @override
+  String get arrangerModel => 'モデル';
+
+  @override
+  String get arrangerApiKey => 'APIキー';
+
+  @override
+  String get arrangerApiKeyHint => 'このコンピューターにのみ保存されます';
+
+  @override
+  String get arrangerApiKeyKept => '空欄のままにすると現在のキーを保持します';
+
+  @override
+  String get arrangerApiKeyPresent => 'キー設定済み';
+
+  @override
+  String get arrangerApiKeyMissing => 'キーなし';
+
+  @override
+  String get arrangerLocalNoKey => 'ローカルサーバーの場合、キーは空欄でもかまいません。';
+
+  @override
+  String get arrangerForgetKey => '保存したキーを削除';
+
+  @override
+  String get arrangerTemperature => '創造性';
+
+  @override
+  String get arrangerMaxTokens => '最大トークン数';
+
+  @override
+  String get arrangerKeySecurity =>
+      'キーは制限された権限の別ファイルに保存され、プロジェクトやログには書き込まれません。';
+
+  @override
+  String get arrangerInvalidUrl =>
+      'URLは http:// または https:// で始まり、サーバーを含む必要があります。';
+
+  @override
+  String get arrangerSave => '保存';
+
+  @override
+  String get arrangerHideKey => 'キーを隠す';
+
+  @override
+  String get arrangerShowKey => 'キーを表示';
+
+  @override
+  String get aiArrangementApplied => 'アレンジを適用しました';
+
+  @override
   String get mixToolbarButton => 'ミックスアシスタント';
 
   @override

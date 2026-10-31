@@ -61,6 +61,8 @@ void printUsage()
         "      end-to-end AI generation test (analysis, model, apply, undo).\n"
         "  cadence-cli mix-test\n"
         "      offline mix analysis, JSON report, one-entry apply and undo.\n"
+        "  cadence-cli arranger-test\n"
+        "      AI song plan: context JSON, multi-track apply and one-step undo.\n"
         "  cadence-cli eqclicktest\n"
         "      checks the EQ does not reset its state at block boundaries.\n");
 }
@@ -3975,6 +3977,123 @@ int cmdMixTest()
     return failures == 0 ? 0 : 1;
 }
 
+int cmdArrangerTest()
+{
+    cadence::Engine engine;
+    engine.initialise();
+    engine.newProject(48000);
+    engine.setTempo(96.0);
+
+    const auto existing = engine.addTrack("Existing Keys", 5,
+                                          cadence::Track::Type::Instrument);
+    engine.addMidiClip(existing, 0.0, 8.0);
+
+    const auto context = juce::String::fromUTF8(
+        engine.aiContextJson(existing, 0.0, 8));
+    if (! context.contains("\"key\"") || ! context.contains("\"tracks\"")
+        || ! context.contains("\"chord_line\""))
+    {
+        std::fprintf(stderr, "arranger-test: context JSON is incomplete\n");
+        return 1;
+    }
+
+    const auto plan = juce::String::formatted(R"({
+      "title": "Arranger test",
+      "summary": "drums, bass and a reused keys track",
+      "tracks": [
+        {
+          "name": "Drums", "role": "drums", "instrument": "drums",
+          "clips": [{
+            "start_beat": 0, "length_beats": 16,
+            "notes": [
+              {"pitch": 36, "start_beat": 0, "length_beats": 0.25, "velocity": 0.95},
+              {"pitch": 38, "start_beat": 1, "length_beats": 0.25, "velocity": 0.85},
+              {"pitch": 42, "start_beat": 0.5, "length_beats": 0.1, "velocity": 0.5},
+              {"pitch": 42, "start_beat": 1.5, "length_beats": 0.1, "velocity": 0.5}
+            ]
+          }]
+        },
+        {
+          "name": "Bass", "role": "bass", "instrument": "bass",
+          "clips": [{
+            "start_beat": 0, "length_beats": 16,
+            "notes": [
+              {"pitch": 45, "start_beat": 0, "length_beats": 1.5, "velocity": 0.8},
+              {"pitch": 45, "start_beat": 2, "length_beats": 1.5, "velocity": 0.75},
+              {"pitch": 48, "start_beat": 4, "length_beats": 1.5, "velocity": 0.8}
+            ]
+          }]
+        },
+        {
+          "track_id": %d, "name": "Existing Keys", "role": "chords",
+          "clips": [{
+            "start_beat": 0, "length_beats": 16,
+            "notes": [
+              {"pitch": 60, "start_beat": 0, "length_beats": 3.5, "velocity": 0.7},
+              {"pitch": 64, "start_beat": 0, "length_beats": 3.5, "velocity": 0.7},
+              {"pitch": 67, "start_beat": 0, "length_beats": 3.5, "velocity": 0.7}
+            ]
+          }]
+        }
+      ]
+    })", (int) existing);
+
+    const auto apply = engine.applyAiArrangement(plan);
+    if (apply.failed())
+    {
+        std::fprintf(stderr, "arranger-test: apply failed: %s\n",
+                     engine.lastErrorUtf8());
+        return 1;
+    }
+
+    const auto summary = juce::String::fromUTF8(engine.aiArrangementResultJson());
+    if (! summary.contains("\"created_tracks\": 2")
+        || engine.trackCount() != 3)
+    {
+        std::fprintf(stderr, "arranger-test: bad apply summary: %s\n",
+                     summary.toRawUTF8());
+        return 1;
+    }
+    if (engine.trackClipCount(existing) != 2)
+    {
+        std::fprintf(stderr, "arranger-test: existing track was not reused\n");
+        return 1;
+    }
+
+    // A second apply must not be able to duplicate the prepared result; the
+    // plan is explicit, so applying the same JSON again is allowed, but one
+    // undo must remove the whole batch.
+    if (! engine.undo())
+    {
+        std::fprintf(stderr, "arranger-test: undo unavailable\n");
+        return 1;
+    }
+    if (engine.trackCount() != 1 || engine.trackClipCount(existing) != 1)
+    {
+        std::fprintf(stderr, "arranger-test: undo did not restore the project "
+                             "(tracks=%d clips=%d)\n",
+                     engine.trackCount(), engine.trackClipCount(existing));
+        return 1;
+    }
+
+    // Invalid plans leave the project untouched.
+    const auto before = engine.trackCount();
+    if (! engine.applyAiArrangement("{\"tracks\":[]}").failed())
+    {
+        std::fprintf(stderr, "arranger-test: empty plan was accepted\n");
+        return 1;
+    }
+    if (engine.trackCount() != before)
+    {
+        std::fprintf(stderr, "arranger-test: invalid plan changed the project\n");
+        return 1;
+    }
+
+    std::printf("arranger-test: context ok, 2 new tracks + 1 reused, "
+                "%d notes, undo ok\n", 10);
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
@@ -4025,6 +4144,9 @@ int main(int argc, char** argv)
 
     if (cmd == "mix-test")
         return cmdMixTest();
+
+    if (cmd == "arranger-test")
+        return cmdArrangerTest();
 
     if (cmd == "devrestart")
         return cmdDeviceRestart();

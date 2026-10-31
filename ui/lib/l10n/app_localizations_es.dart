@@ -801,6 +801,196 @@ class AppLocalizationsEs extends AppLocalizations {
   String get aiApplied => 'Clip generado aplicado';
 
   @override
+  String get arrangerToolbarButton => 'Arreglo';
+
+  @override
+  String get arrangerToolbarTooltip =>
+      'Crear un arreglo de varias pistas con IA';
+
+  @override
+  String get arrangerTitle => 'Arreglista IA';
+
+  @override
+  String get arrangerSubtitle =>
+      'Compón varias pistas a la vez con un modelo externo';
+
+  @override
+  String get arrangerBrief => '¿Qué quieres crear?';
+
+  @override
+  String get arrangerBriefHint =>
+      'p. ej. house orgánico de 16 compases: batería con groove, bajo con movimiento, pads cálidos y un lead sencillo';
+
+  @override
+  String get arrangerPrivacyHint =>
+      'Solo se envía el contexto resumido (pistas, acordes y fragmentos MIDI) al servidor que configures; el audio no sale del equipo.';
+
+  @override
+  String get arrangerBars => 'Compases';
+
+  @override
+  String get arrangerStartBeginning => 'Desde el inicio del proyecto';
+
+  @override
+  String arrangerStartAtBar(int bar) {
+    return 'Desde el compás $bar';
+  }
+
+  @override
+  String get arrangerNoKey =>
+      'Configura una clave de API en Ajustes de IA, o usa un servidor local.';
+
+  @override
+  String get arrangerSettings => 'Ajustes de IA';
+
+  @override
+  String get arrangerThinking => 'El modelo está componiendo…';
+
+  @override
+  String get arrangerThinkingHint =>
+      'Puede tardar uno o dos minutos. El proyecto no cambia hasta que apliques.';
+
+  @override
+  String get arrangerRefining => 'Refinando la propuesta…';
+
+  @override
+  String get arrangerCancelRequest => 'Cancelar petición';
+
+  @override
+  String get arrangerCancelling => 'Cancelando…';
+
+  @override
+  String get arrangerClose => 'Cerrar';
+
+  @override
+  String get arrangerGenerate => 'Crear arreglo';
+
+  @override
+  String get arrangerCancel => 'Cancelar';
+
+  @override
+  String get arrangerDiscard => 'Descartar';
+
+  @override
+  String get arrangerApply => 'Aplicar arreglo';
+
+  @override
+  String arrangerApplyFailed(String error) {
+    return 'No se pudo aplicar: $error';
+  }
+
+  @override
+  String arrangerGenerationFailed(String error) {
+    return 'No se pudo generar: $error';
+  }
+
+  @override
+  String get arrangerProposal => 'Propuesta';
+
+  @override
+  String arrangerSummary(
+    int newTracks,
+    int reusedTracks,
+    int clips,
+    int notes,
+  ) {
+    return '$newTracks nuevas · $reusedTracks reutilizadas · $clips clips · $notes notas';
+  }
+
+  @override
+  String get arrangerPreviewHint =>
+      'Al aplicarla se crea una sola entrada de deshacer.';
+
+  @override
+  String get arrangerRefineHint => 'Qué mejorar (opcional)';
+
+  @override
+  String get arrangerRefineDefault =>
+      'Mejora el groove, la conducción de voces y el contraste entre secciones.';
+
+  @override
+  String get arrangerRefine => 'Refinar';
+
+  @override
+  String get arrangerRoleTrack => 'pista';
+
+  @override
+  String get arrangerInstrumentDefault => 'instrumento del proyecto';
+
+  @override
+  String get arrangerExistingTrack => 'Existente';
+
+  @override
+  String get arrangerNewTrack => 'Nueva';
+
+  @override
+  String arrangerTrackStats(int clips, int notes) {
+    return '$clips clips · $notes notas';
+  }
+
+  @override
+  String get arrangerSettingsTitle => 'Ajustes de IA';
+
+  @override
+  String get arrangerSettingsHint =>
+      'Compatible con OpenAI, OpenRouter, LM Studio, Ollama y servidores locales similares.';
+
+  @override
+  String get arrangerBaseUrl => 'URL del servidor';
+
+  @override
+  String get arrangerModel => 'Modelo';
+
+  @override
+  String get arrangerApiKey => 'Clave de API';
+
+  @override
+  String get arrangerApiKeyHint => 'Se guarda solo en este equipo';
+
+  @override
+  String get arrangerApiKeyKept =>
+      'Déjala vacía para conservar la clave actual';
+
+  @override
+  String get arrangerApiKeyPresent => 'Clave configurada';
+
+  @override
+  String get arrangerApiKeyMissing => 'Sin clave';
+
+  @override
+  String get arrangerLocalNoKey =>
+      'Si usas un servidor local, la clave puede estar vacía.';
+
+  @override
+  String get arrangerForgetKey => 'Olvidar clave guardada';
+
+  @override
+  String get arrangerTemperature => 'Creatividad';
+
+  @override
+  String get arrangerMaxTokens => 'Máximo de tokens';
+
+  @override
+  String get arrangerKeySecurity =>
+      'La clave se guarda en un archivo aparte con permisos restringidos y nunca se escribe en el proyecto ni en los registros.';
+
+  @override
+  String get arrangerInvalidUrl =>
+      'La URL debe empezar por http:// o https:// e incluir un servidor.';
+
+  @override
+  String get arrangerSave => 'Guardar';
+
+  @override
+  String get arrangerHideKey => 'Ocultar clave';
+
+  @override
+  String get arrangerShowKey => 'Mostrar clave';
+
+  @override
+  String get aiArrangementApplied => 'Arreglo aplicado';
+
+  @override
   String get mixToolbarButton => 'Asistente de mezcla';
 
   @override

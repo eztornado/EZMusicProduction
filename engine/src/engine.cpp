@@ -1,5 +1,6 @@
 #include "cadence/engine.hpp"
 #include "ai_generation.h"
+#include "ai_arranger.h"
 #include "mix_ai.h"
 #include "ezq4.h"
 #include "ezcomp.h"
@@ -24,6 +25,7 @@
 namespace cadence {
 
 namespace {
+juce::String builtinIdentifier(const char* displayName, const char* token);
 constexpr double kMinClipLength = 0.05; // seconds; one gesture cannot vanish a clip
 
 float absMax(const float* data, int numSamples)
@@ -4816,6 +4818,297 @@ juce::Result Engine::applyAiGeneration(ClipId* outClipId)
     const std::scoped_lock lock(aiMutex_);
     aiResult_ = {};
     aiState_.store(kAiIdle, std::memory_order_release);
+    return juce::Result::ok();
+}
+
+const char* Engine::aiContextJson(TrackId selectedTrack, double anchorSeconds,
+                                 int bars) const
+{
+    auto project = std::atomic_load(&project_);
+    if (project == nullptr)
+    {
+        aiStringOut_ = "{}";
+        return aiStringOut_.c_str();
+    }
+
+    ai::Service service;
+    aiStringOut_ = service.contextJson(*project, selectedTrack, anchorSeconds, bars)
+                       .toStdString();
+    return aiStringOut_.c_str();
+}
+
+const char* Engine::aiArrangementResultJson() const
+{
+    return aiArrangementResultJson_.c_str();
+}
+
+juce::Result Engine::applyAiArrangement(const juce::String& json)
+{
+    ai::ArrangementPlan plan;
+    juce::String error;
+    if (! ai::parseArrangementPlan(json, plan, error))
+    {
+        aiArrangementResultJson_ =
+            ("{\"ok\":false,\"error\":"
+             + juce::JSON::toString(juce::var(error)) + "}")
+                .toStdString();
+        return fail(error.isNotEmpty() ? error : juce::String("invalid arrangement plan"));
+    }
+
+    auto makeInstrument = [&] (const juce::String& instrument,
+                               const juce::String& role) -> FxSlot
+    {
+        auto token = instrument.trim().toLowerCase();
+        token = token.replaceCharacter(' ', '_')
+                     .replaceCharacter('-', '_');
+        while (token.contains("__"))
+            token = token.replace("__", "_");
+        if (token.isEmpty())
+        {
+            const auto r = role.toLowerCase();
+            if (r.contains("drum") || r.contains("perc")) token = "drums";
+            else if (r.contains("bass")) token = "bass";
+            else if (r.contains("pad")) token = "pad";
+            else if (r.contains("lead") || r.contains("melody")) token = "lead";
+            else if (r.contains("arp") || r.contains("pluck")) token = "pluck";
+            else if (r.contains("organ")) token = "organ";
+            else if (r.contains("string") || r.contains("orchestra")) token = "strings";
+            else if (r.contains("bell")) token = "bell";
+            else if (r.contains("fx") || r.contains("riser")
+                     || r.contains("sweep")) token = "riser";
+            else if (r.contains("texture")) token = "pad";
+            else if (r.contains("key") || r.contains("chord") || r.contains("comp")) token = "keys";
+            else token = "piano";
+        }
+
+        FxSlot slot;
+        auto synth = [&] (const char* preset)
+        {
+            slot.name = "EZSynth";
+            slot.pluginUid = builtinIdentifier("EZSynth", "ezsynth");
+            slot.state = ezsynth::makePresetState(preset);
+        };
+
+        if (token == "drums" || token == "drum" || token == "drum_kit"
+            || token == "percussion")
+        {
+            slot.name = "EZDrums";
+            slot.pluginUid = builtinIdentifier("EZDrums", "ezdrums");
+        }
+        else if (token == "piano" || token == "grand_piano"
+                 || token == "internal" || token == "none")
+        {
+            // Empty slot = the engine's internal piano voice.
+        }
+        else if (token == "orchestra" || token == "orq")
+        {
+            slot.name = "EZOrquestra";
+            slot.pluginUid = builtinIdentifier("EZOrquestra", "ezorq");
+        }
+        else if (token.startsWith("gm:"))
+        {
+            const int program = juce::jlimit(0, 127,
+                                             token.fromFirstOccurrenceOf(":", false, false)
+                                                 .getIntValue());
+            juce::XmlElement state("EZINST");
+            state.setAttribute("prog", program);
+            juce::MemoryBlock block;
+            juce::AudioProcessor::copyXmlToBinary(state, block);
+            slot.name = "EZInstruments";
+            slot.pluginUid = builtinIdentifier("EZInstruments", "ezinst");
+            slot.state = block.toBase64Encoding();
+        }
+        else if (token == "bass" || token == "bass_guitar"
+                 || token == "electric_bass")
+            synth("Bajo Gordo");
+        else if (token == "sub" || token == "sub_bass")
+            synth("Bajo Sub");
+        else if (token == "acid")
+            synth("Bajo Ácido");
+        else if (token == "keys" || token == "rhodes" || token == "electric_piano")
+            synth("Teclas Eléctricas");
+        else if (token == "pad" || token == "warm_pad"
+                 || token == "ambient_pad")
+            synth("Pad Etéreo");
+        else if (token == "lead" || token == "saw_lead")
+            synth("Lead Sincero");
+        else if (token == "pluck" || token == "arp")
+            synth("Pluck Cristal");
+        else if (token == "organ")
+            synth("Órgano");
+        else if (token == "strings" || token == "string"
+                 || token == "string_ensemble")
+            synth("Cuerdas Analógicas");
+        else if (token == "bell" || token == "bells")
+            synth("Campanas");
+        else if (token == "riser" || token == "fx")
+            synth("FX Riser");
+        else
+            synth("Init");
+
+        return slot;
+    };
+
+    juce::DynamicObject::Ptr resultRoot(new juce::DynamicObject());
+    resultRoot->setProperty("ok", true);
+    resultRoot->setProperty("title", plan.title);
+    resultRoot->setProperty("summary", plan.summary);
+    juce::Array<juce::var> resultTracks;
+    juce::Array<juce::var> resultClips;
+    juce::int64 firstTrack = -1;
+    juce::int64 firstClip = -1;
+    int createdTracks = 0;
+
+    const auto edit = editProject([&] (Project& project)
+    {
+        const double beatSeconds =
+            60.0 / juce::jmax(20.0, project.tempoBpm);
+
+        auto uniqueName = [&] (juce::String base)
+        {
+            base = base.trim();
+            if (base.isEmpty())
+                base = "Track";
+            auto taken = [&] (const juce::String& candidate)
+            {
+                for (const auto& track : project.tracks)
+                    if (track.name.equalsIgnoreCase(candidate))
+                        return true;
+                return false;
+            };
+            if (! taken(base))
+                return base;
+            for (int i = 2; i < 1000; ++i)
+            {
+                const auto candidate = base + " " + juce::String(i);
+                if (! taken(candidate))
+                    return candidate;
+            }
+            return base + " " + juce::String(juce::Random::getSystemRandom().nextInt(1000));
+        };
+
+        for (const auto& planned : plan.tracks)
+        {
+            Track* track = nullptr;
+            if (planned.trackId > 0)
+                track = project.findTrack(planned.trackId);
+
+            if (track == nullptr && planned.name.isNotEmpty())
+                for (auto& candidate : project.tracks)
+                    if (candidate.type == Track::Type::Instrument
+                        && candidate.name.equalsIgnoreCase(planned.name))
+                    {
+                        track = &candidate;
+                        break;
+                    }
+
+            if (track != nullptr && track->type != Track::Type::Instrument)
+            {
+                fail("track " + juce::String((int) track->id)
+                     + " is not an instrument track");
+                return false;
+            }
+
+            bool created = false;
+            if (track == nullptr)
+            {
+                Track fresh;
+                fresh.id = project.nextTrackId++;
+                fresh.type = Track::Type::Instrument;
+                fresh.name = uniqueName(planned.name);
+                fresh.colorIndex = planned.color >= 0
+                    ? planned.color
+                    : (int) (project.tracks.size() % 16);
+                fresh.instrument = makeInstrument(planned.instrument, planned.role);
+                if (planned.hasVolume)
+                    fresh.volume = juce::jlimit(
+                        0.0f, 2.0f,
+                        juce::Decibels::decibelsToGain((float) planned.volumeDb));
+                if (planned.hasPan)
+                    fresh.pan = (float) planned.pan;
+                project.tracks.push_back(std::move(fresh));
+                track = &project.tracks.back();
+                created = true;
+                ++createdTracks;
+                if (firstTrack < 0)
+                    firstTrack = track->id;
+            }
+            else
+            {
+                if (planned.hasVolume)
+                    track->volume = juce::jlimit(
+                        0.0f, 2.0f,
+                        juce::Decibels::decibelsToGain((float) planned.volumeDb));
+                if (planned.hasPan)
+                    track->pan = (float) planned.pan;
+            }
+
+            juce::Array<juce::var> trackClipIds;
+            for (const auto& plannedClip : planned.clips)
+            {
+                Clip clip;
+                clip.id = project.nextClipId++;
+                clip.startSeconds = juce::jmax(0.0, plannedClip.startBeat * beatSeconds);
+                clip.lengthSeconds = juce::jmax(kMinClipLength,
+                                                plannedClip.lengthBeats * beatSeconds);
+                auto midi = std::make_shared<MidiClipData>();
+                midi->notes.reserve(plannedClip.notes.size());
+                for (const auto& plannedNote : plannedClip.notes)
+                {
+                    MidiNote note;
+                    note.pitch = juce::jlimit(0, 127, plannedNote.pitch);
+                    note.velocity = juce::jlimit(0.01f, 1.0f, plannedNote.velocity);
+                    note.startSeconds = juce::jlimit(
+                        0.0, juce::jmax(0.0, clip.lengthSeconds - 0.01),
+                        plannedNote.startBeat * beatSeconds);
+                    note.lengthSeconds = juce::jlimit(
+                        0.01, juce::jmax(0.01, clip.lengthSeconds - note.startSeconds),
+                        plannedNote.lengthBeats * beatSeconds);
+                    note.origStartSeconds = note.startSeconds;
+                    midi->notes.push_back(note);
+                }
+                clip.midi = std::move(midi);
+                const auto clipId = clip.id;
+                track->clips.push_back(std::move(clip));
+                trackClipIds.add(juce::var((juce::int64) clipId));
+                resultClips.add(juce::var((juce::int64) clipId));
+                if (firstClip < 0)
+                    firstClip = clipId;
+                if (firstTrack < 0)
+                    firstTrack = track->id;
+            }
+
+            auto* summary = new juce::DynamicObject();
+            summary->setProperty("track_id", (juce::int64) track->id);
+            summary->setProperty("name", track->name);
+            summary->setProperty("created", created);
+            summary->setProperty("role", planned.role);
+            summary->setProperty("instrument", planned.instrument);
+            summary->setProperty("clip_ids", trackClipIds);
+            resultTracks.add(juce::var(summary));
+        }
+
+        return true;
+    });
+
+    if (edit.failed())
+    {
+        aiArrangementResultJson_ =
+            ("{\"ok\":false,\"error\":"
+             + juce::JSON::toString(juce::var(lastErrorUtf8_)) + "}")
+                .toStdString();
+        return edit;
+    }
+
+    resultRoot->setProperty("created_tracks", createdTracks);
+    resultRoot->setProperty("tracks", resultTracks);
+    resultRoot->setProperty("clips", resultClips);
+    resultRoot->setProperty("note_count", plan.totalNotes);
+    resultRoot->setProperty("first_track_id", firstTrack);
+    resultRoot->setProperty("first_clip_id", firstClip);
+    aiArrangementResultJson_ =
+        juce::JSON::toString(juce::var(resultRoot.get()), false, 15)
+            .toStdString();
     return juce::Result::ok();
 }
 

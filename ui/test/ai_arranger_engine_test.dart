@@ -1,0 +1,143 @@
+// Song-arranger path through the real dylib and stable C ABI.
+//
+// A plan is pure JSON here: no network and no model are involved. The test
+// verifies context extraction, multi-track apply, reuse of an existing track,
+// result summary and one-step undo.
+
+import 'dart:convert';
+
+import 'package:cadence_ui/engine/cadence_bindings.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  late CadenceEngine engine;
+
+  setUpAll(() {
+    try {
+      engine = CadenceEngine();
+    } catch (error) {
+      fail('dylib no encontrada — compila el engine primero: $error');
+    }
+  });
+
+  tearDownAll(() => engine.dispose());
+
+  test('context JSON and atomic multi-track apply', () {
+    engine.newProject(48000);
+    engine.setTempoBpm(96);
+    final existing = engine.addTrack('Existing Keys', 5, type: 1);
+    engine.addMidiClip(existing, 0, 8);
+
+    final context = engine.aiContextJson(
+      selectedTrackId: existing,
+      anchorSeconds: 0,
+      bars: 8,
+    );
+    final contextJson = jsonDecode(context) as Map<String, dynamic>;
+    expect(contextJson['key'], isA<String>());
+    expect(contextJson['tracks'], isA<List>());
+    expect((contextJson['analysis'] as Map)['chord_line'], isA<String>());
+
+    final plan = jsonEncode({
+      'title': 'Test arrangement',
+      'tracks': [
+        {
+          'name': 'Drums',
+          'role': 'drums',
+          'instrument': 'drums',
+          'clips': [
+            {
+              'start_beat': 0,
+              'length_beats': 16,
+              'notes': [
+                {
+                  'pitch': 36,
+                  'start_beat': 0,
+                  'length_beats': 0.25,
+                  'velocity': 0.9,
+                },
+                {
+                  'pitch': 38,
+                  'start_beat': 1,
+                  'length_beats': 0.25,
+                  'velocity': 0.8,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          'name': 'Bass',
+          'role': 'bass',
+          'instrument': 'bass',
+          'clips': [
+            {
+              'start_beat': 0,
+              'length_beats': 16,
+              'notes': [
+                {
+                  'pitch': 'A1',
+                  'start_beat': 0,
+                  'length_beats': 2,
+                  'velocity': 100,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          'track_id': existing,
+          'name': 'Existing Keys',
+          'role': 'chords',
+          'clips': [
+            {
+              'start_beat': 0,
+              'length_beats': 8,
+              'notes': [
+                {
+                  'pitch': 60,
+                  'start_beat': 0,
+                  'length_beats': 4,
+                  'velocity': 0.7,
+                },
+                {
+                  'pitch': 64,
+                  'start_beat': 0,
+                  'length_beats': 4,
+                  'velocity': 0.7,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(engine.applyAiArrangement(plan), isTrue, reason: engine.lastError);
+    expect(engine.trackCount, 3);
+    expect(engine.trackClipCount(existing), 2);
+
+    final summary =
+        jsonDecode(engine.aiArrangementResultJson) as Map<String, dynamic>;
+    expect(summary['ok'], isTrue);
+    expect(summary['created_tracks'], 2);
+    expect(summary['note_count'], 5);
+    expect(summary['first_track_id'], greaterThan(0));
+    expect(summary['first_clip_id'], greaterThan(0));
+
+    expect(engine.canUndo, isTrue);
+    expect(engine.undo(), isTrue);
+    expect(engine.trackCount, 1);
+    expect(engine.trackClipCount(existing), 1);
+  });
+
+  test('invalid plans leave the project untouched', () {
+    engine.newProject(48000);
+    engine.addTrack('Lead', 0, type: 1);
+    final before = engine.trackCount;
+
+    expect(engine.applyAiArrangement('{"tracks": []}'), isFalse);
+    expect(engine.lastError, isNotEmpty);
+    expect(engine.trackCount, before);
+  });
+}

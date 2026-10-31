@@ -18,8 +18,10 @@ import 'engine/engine_service.dart';
 import 'l10n/l10n.dart';
 import 'l10n/locale_store.dart';
 import 'remote/remote_settings.dart';
+import 'ai/ai_settings.dart';
 import 'ui/ai_generation_dialog.dart'
     show defaultAiModeForTrack, showAiGenerationDialog;
+import 'ui/song_arranger_dialog.dart' show showSongArrangerDialog;
 import 'ui/mix_assistant_dialog.dart' show showMixAssistantDialog;
 import 'ui/app_alert.dart';
 import 'ui/automation_lane.dart';
@@ -41,6 +43,7 @@ Future<void> main(List<String> args) async {
   // Preferencias del control remoto (mismo fichero de interfaz). Solo la
   // ventana principal arranca el servidor; las sub-ventanas comparten motor.
   RemoteSettings.load();
+  AiSettings.load();
   // Sub-window engines relaunch main with ['multi_window', windowId, json].
   if (args.isNotEmpty && args[0] == 'multi_window') {
     final conf =
@@ -488,6 +491,19 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  /// Toolbar entry point: compose several tracks at once. The dialog owns the
+  /// HTTP request and the engine applies the returned plan as one undo entry.
+  Future<void> _openSongArranger() async {
+    final service = _service;
+    if (service == null) return;
+    await showSongArrangerDialog(
+      context,
+      service,
+      trackId: service.aiTargetTrack?.id,
+      anchorSeconds: service.positionSeconds,
+    );
+  }
+
   @override
   void dispose() {
     _lifecycle.dispose();
@@ -661,6 +677,13 @@ class _HomePageState extends State<HomePage>
                               accent: true,
                               tooltip: context.l10n.aiToolbarTooltip,
                               onTap: _openAiGeneration,
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.queue_music_rounded,
+                              label: context.l10n.arrangerToolbarButton,
+                              accent: true,
+                              tooltip: context.l10n.arrangerToolbarTooltip,
+                              onTap: _openSongArranger,
                             ),
                             _ToolbarButton(
                               icon: Icons.tune_rounded,

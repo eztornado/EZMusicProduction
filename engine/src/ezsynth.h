@@ -50,4 +50,9 @@ void setEditorPageForTest(juce::AudioProcessorEditor* editor, int page);
 void applyPresetForTest(juce::AudioProcessor* proc, int index);
 int presetCountForTest();
 
+// Base64 state for a named preset, for hosts that create a track without an
+// editor instance (song arranger, project import). Empty when the name is
+// unknown. The blob is the same format getStateInformation() produces.
+juce::String makePresetState(const juce::String& presetName);
+
 } // namespace ezsynth

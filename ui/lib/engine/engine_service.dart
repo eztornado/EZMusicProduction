@@ -1078,6 +1078,53 @@ class EngineService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---- AI song arranger ----
+
+  /// Compact project description for the external arrangement model.
+  String aiContextJson({
+    int? trackId,
+    double anchorSeconds = 0,
+    int bars = 16,
+  }) => _engine.aiContextJson(
+    selectedTrackId: trackId ?? selectedTrackId ?? -1,
+    anchorSeconds: anchorSeconds,
+    bars: bars,
+  );
+
+  /// Applies a validated multi-track plan as one undo entry, then selects the
+  /// first created track/clip. Returns the engine summary, or null on failure.
+  Map<String, dynamic>? applyAiArrangement(String planJson) {
+    if (!_engine.applyAiArrangement(planJson)) {
+      statusMessage = _engine.lastError;
+      notifyListeners();
+      return null;
+    }
+
+    Map<String, dynamic> summary = const {};
+    final raw = _engine.aiArrangementResultJson;
+    if (raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) summary = decoded;
+      } catch (_) {
+        // A summary we cannot parse must not hide the successful edit.
+      }
+    }
+
+    refresh();
+    final firstTrack = summary['first_track_id'];
+    if (firstTrack is int && firstTrack > 0) {
+      selectTrack(firstTrack);
+      final firstClip = summary['first_clip_id'];
+      if (firstClip is int && firstClip > 0) {
+        selectClip(firstClip);
+      }
+    }
+    statusMessage = L10n.current.aiArrangementApplied;
+    notifyListeners();
+    return summary;
+  }
+
   // ---- AI mix analysis / mastering ----
 
   MixAnalysisSnapshot _mixAnalysis = MixAnalysisSnapshot.idle;

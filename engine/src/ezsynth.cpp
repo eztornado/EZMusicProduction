@@ -2106,6 +2106,41 @@ void applyPresetForTest(juce::AudioProcessor* proc, int index)
 
 int presetCountForTest() { return (int) presets().size(); }
 
+juce::String makePresetState(const juce::String& presetName)
+{
+    const auto wanted = presetName.trim();
+    if (wanted.isEmpty())
+        return {};
+
+    int index = -1;
+    for (int i = 0; i < (int) presets().size(); ++i)
+    {
+        if (juce::String(presets()[(size_t) i].name)
+                .equalsIgnoreCase(wanted))
+        {
+            index = i;
+            break;
+        }
+    }
+    if (index < 0)
+        return {};
+
+    juce::XmlElement state("EZSYNTH2");
+    for (int i = 0; i < kNumParams; ++i)
+        if (i != p_preset)
+            state.setAttribute(kSpecs[i].id, (double) kSpecs[i].def);
+    for (const auto& setting : presets()[(size_t) index].set)
+        if (setting.id >= 0 && setting.id < kNumParams
+            && setting.id != p_preset)
+            state.setAttribute(kSpecs[setting.id].id,
+                               (double) setting.value);
+
+    juce::MemoryBlock block;
+    juce::AudioProcessor::copyXmlToBinary(state, block);
+    return block.toBase64Encoding();
+}
+
+
 juce::AudioProcessorEditor* EzSynthProcessor::createEditor()
 {
     return new EzSynthEditor(*this);

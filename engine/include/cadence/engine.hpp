@@ -798,6 +798,20 @@ public:
     // Strings of the current result, valid until the next call on this engine.
     const char* aiResultString(int field) const; // 0 error 1 provider 2 key 3 chords 4 prompt
 
+    // Project context for an external arranger (tempo, meter, key, chords,
+    // tracks, instruments and short note excerpts), as JSON. Read-only.
+    const char* aiContextJson(TrackId selectedTrack, double anchorSeconds,
+                              int bars) const;
+
+    // Applies a song-arrangement plan (JSON, positions in quarter-note beats)
+    // as ONE undo entry. Creates missing instrument tracks and MIDI clips.
+    // Returns failure and leaves the project untouched when the plan is not
+    // valid. The applied summary is available through
+    // aiArrangementResultJson().
+    juce::Result applyAiArrangement(const juce::String& json);
+    const char* aiArrangementResultJson() const;
+
+
     // ---- AI mix analysis (offline render -> report -> moves) ----
     enum MixState { kMixIdle = 0, kMixRunning = 1, kMixReady = 2, kMixFailed = 3 };
     struct MixAnalysisRequest {
@@ -1090,6 +1104,7 @@ private:
     std::atomic<bool> aiCancel_ {false};
     AiGenerationResult aiResult_;
     mutable std::string aiStringOut_;
+    std::string aiArrangementResultJson_;
     void runAiGeneration(std::shared_ptr<const Project> project,
                          AiGenerationRequest request);
 
