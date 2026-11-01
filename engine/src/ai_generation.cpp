@@ -1760,6 +1760,12 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
         namesAsArray(catalog.ezinstPrograms));
     available->setProperty("ezorq_programs",
                            namesAsArray(catalog.ezorqPrograms));
+    available->setProperty(
+        "ezorq_hint",
+        "Prefer an exact ezorq_programs entry. Short names are also accepted "
+        "(flute, oboe, clarinet, bassoon, horn, trumpet, trombone, tuba, sax, "
+        "piccolo, viola, cello, basses, pizzicato, tremolo, strings) and map "
+        "to the closest installed program or General MIDI fallback.");
     available->setProperty("ezdrums_kits",
                            namesAsArray(catalog.ezdrumsKits));
 

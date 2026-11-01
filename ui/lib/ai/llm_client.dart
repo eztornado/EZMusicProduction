@@ -429,8 +429,11 @@ RULES
   EZOrquestra catalog provides (violas, cellos, basses, flute, oboe, clarinet,
   bassoon, horn, trumpet, trombone, tuba, sax, piccolo) and `gm:` for the rest
   (for example gm:40 violin, gm:48 string ensemble, gm:47 timpani, gm:46 harp).
-  Do not use EZSynth pads or synth strings for orchestral parts unless the
-  brief explicitly asks for a synth/hybrid orchestra.
+  Prefer an exact string from `ezorq_programs`; short names such as
+  `ezorq:flute`, `ezorq:oboe` or `ezorq:cello` also resolve to the nearest
+  installed program or a GM fallback. Do not use EZSynth pads or synth strings
+  for orchestral parts unless the brief explicitly asks for a synth/hybrid
+  orchestra.
 - `instrument_name` is a short human-readable label for the UI. For a VST use
   its listed name; for an EZ token use the preset or program name.
 - Roles: drums, bass, chords, melody, pad, arp, texture, fx, strings, brass,
