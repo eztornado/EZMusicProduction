@@ -828,6 +828,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get arrangerBars => 'Bars';
 
   @override
+  String get arrangerBarsCustom => 'Custom';
+
+  @override
+  String get arrangerBarsRange => '1–64';
+
+  @override
+  String get arrangerBarsInvalid => 'Enter a number between 1 and 64.';
+
+  @override
   String get arrangerStartBeginning => 'From the start of the project';
 
   @override

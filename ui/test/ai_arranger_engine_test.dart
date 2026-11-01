@@ -38,6 +38,19 @@ void main() {
     expect(contextJson['tracks'], isA<List>());
     expect((contextJson['analysis'] as Map)['chord_line'], isA<String>());
 
+    final available =
+        contextJson['available_instruments'] as Map<String, dynamic>;
+    expect(available['ezsynth_presets'], isA<List>());
+    expect((available['ezinst_programs'] as List), hasLength(128));
+    expect(available['ezorq_programs'], isA<List>());
+    expect(available['ezdrums_kits'], isA<List>());
+    final vst =
+        (available['vst_instruments'] as List).cast<Map<String, dynamic>>();
+    for (final plugin in vst) {
+      expect(plugin['token'], startsWith('vst:'));
+      expect(plugin['name'], isA<String>());
+    }
+
     final plan = jsonEncode({
       'title': 'Test arrangement',
       'tracks': [
@@ -69,7 +82,8 @@ void main() {
         {
           'name': 'Bass',
           'role': 'bass',
-          'instrument': 'bass',
+          'instrument': 'gm:40',
+          'instrument_name': 'Violin',
           'clips': [
             {
               'start_beat': 0,
@@ -125,10 +139,70 @@ void main() {
     expect(summary['first_track_id'], greaterThan(0));
     expect(summary['first_clip_id'], greaterThan(0));
 
+    final summaryTracks =
+        (summary['tracks'] as List).cast<Map<String, dynamic>>();
+    final bass = summaryTracks.firstWhere((track) => track['name'] == 'Bass');
+    expect(
+      engine.trackInstrumentName(bass['track_id'] as int),
+      'EZInstruments',
+    );
+
     expect(engine.canUndo, isTrue);
     expect(engine.undo(), isTrue);
     expect(engine.trackCount, 1);
     expect(engine.trackClipCount(existing), 1);
+  });
+
+  test('EZOrquestra programs can be selected by token', () {
+    engine.newProject(48000);
+    final context =
+        jsonDecode(
+              engine.aiContextJson(
+                selectedTrackId: -1,
+                anchorSeconds: 0,
+                bars: 4,
+              ),
+            )
+            as Map<String, dynamic>;
+    final available = context['available_instruments'] as Map<String, dynamic>;
+    final programs = (available['ezorq_programs'] as List).cast<String>();
+    if (programs.isEmpty) return;
+
+    final program = programs.first;
+    final plan = jsonEncode({
+      'title': 'Orchestra token',
+      'tracks': [
+        {
+          'name': 'Viola',
+          'role': 'strings',
+          'instrument': 'ezorq:$program',
+          'instrument_name': program,
+          'clips': [
+            {
+              'start_beat': 0,
+              'length_beats': 4,
+              'notes': [
+                {
+                  'pitch': 60,
+                  'start_beat': 0,
+                  'length_beats': 4,
+                  'velocity': 0.7,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(engine.applyAiArrangement(plan), isTrue, reason: engine.lastError);
+    final summary =
+        jsonDecode(engine.aiArrangementResultJson) as Map<String, dynamic>;
+    final tracks = (summary['tracks'] as List).cast<Map<String, dynamic>>();
+    expect(
+      engine.trackInstrumentName(tracks.single['track_id'] as int),
+      'EZOrquestra',
+    );
   });
 
   test('invalid plans leave the project untouched', () {
@@ -138,6 +212,16 @@ void main() {
 
     expect(engine.applyAiArrangement('{"tracks": []}'), isFalse);
     expect(engine.lastError, isNotEmpty);
+    expect(engine.trackCount, before);
+
+    expect(
+      engine.applyAiArrangement(
+        '{"tracks":[{"name":"Ghost","instrument":"vst:missing",'
+        '"clips":[{"start_beat":0,"length_beats":4,"notes":[]}]}]}',
+      ),
+      isFalse,
+    );
+    expect(engine.lastError, contains('not installed'));
     expect(engine.trackCount, before);
   });
 }

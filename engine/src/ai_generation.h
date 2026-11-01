@@ -50,6 +50,7 @@ struct Request
     Mode mode = Mode::Melody;
     int bars = 4;                 // total bars when lengthSeconds is 0
     double lengthSeconds = 0.0;   // desired clip length; 0 = bars * bar length
+    double maxLengthSeconds = 120.0; // generation cap; context raises it
     double temperature = 0.95;
     int variations = 1;           // candidates evaluated; best is returned
     int seed = 0;                 // 0 = derive from clock
@@ -57,6 +58,27 @@ struct Request
     bool replaceClip = false;     // rewrite clipId instead of adding a clip
     bool harmonize = false;       // add chord tones under the melody
     bool useModel = true;         // false forces the procedural path
+};
+
+// Installed instruments and sounds offered by the host. The engine fills this
+// from its plugin cache and built-in plugins; it is sent read-only to the
+// external arranger so the model chooses real instruments instead of inventing
+// names. Tokens use the `ezsynth:`, `gm:`, `ezorq:` and `vst:` prefixes.
+struct AvailablePlugin
+{
+    juce::String name;
+    juce::String manufacturer;
+    juce::String format;
+    juce::String uid;
+};
+
+struct InstrumentCatalog
+{
+    juce::StringArray ezsynthPresets;
+    juce::StringArray ezinstPrograms;
+    juce::StringArray ezorqPrograms;
+    juce::StringArray ezdrumsKits;
+    std::vector<AvailablePlugin> vstInstruments;
 };
 
 struct GeneratedNote
@@ -107,7 +129,8 @@ public:
     // tempo/meter, key and bar chords, every track and instrument, and short
     // note excerpts from the existing clips. Read-only.
     juce::String contextJson(const Project& project, TrackId selectedTrack,
-                             double anchorSeconds, int bars) const;
+                             double anchorSeconds, int bars,
+                             const InstrumentCatalog& catalog) const;
 
     struct Analysis;
     struct Intent;

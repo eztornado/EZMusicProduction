@@ -829,6 +829,15 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerBars => 'Compases';
 
   @override
+  String get arrangerBarsCustom => 'Otro';
+
+  @override
+  String get arrangerBarsRange => '1–64';
+
+  @override
+  String get arrangerBarsInvalid => 'Introduce un número entre 1 y 64.';
+
+  @override
   String get arrangerStartBeginning => 'Desde el inicio del proyecto';
 
   @override

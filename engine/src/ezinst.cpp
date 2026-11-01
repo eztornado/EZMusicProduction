@@ -687,6 +687,8 @@ juce::AudioProcessorEditor* EzInstProcessor::createEditor()
     return new EzInstEditor(*this);
 }
 
+juce::StringArray programNames() { return programChoices(); }
+
 juce::AudioProcessor* create() { return new EzInstProcessor(); }
 
 } // namespace ezinst

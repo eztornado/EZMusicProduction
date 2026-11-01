@@ -2106,6 +2106,8 @@ void applyPresetForTest(juce::AudioProcessor* proc, int index)
 
 int presetCountForTest() { return (int) presets().size(); }
 
+juce::StringArray presetNamesForCatalog() { return presetNames(); }
+
 juce::String makePresetState(const juce::String& presetName)
 {
     const auto wanted = presetName.trim();

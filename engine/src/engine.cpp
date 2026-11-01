@@ -4831,8 +4831,31 @@ const char* Engine::aiContextJson(TrackId selectedTrack, double anchorSeconds,
         return aiStringOut_.c_str();
     }
 
+    ai::InstrumentCatalog catalog;
+    catalog.ezsynthPresets = ezsynth::presetNamesForCatalog();
+    catalog.ezinstPrograms = ezinst::programNames();
+    catalog.ezorqPrograms = ezorq::availablePrograms();
+    catalog.ezdrumsKits = ezdrums::availableKitNames();
+
+    for (int i = 0; i < pluginHost_.pluginCount(); ++i)
+    {
+        auto desc = pluginHost_.descriptionAt(i);
+        if (desc == nullptr || ! desc->isInstrument
+            || desc->pluginFormatName == "Internal")
+            continue;
+        ai::AvailablePlugin plugin;
+        plugin.name = desc->name;
+        plugin.manufacturer = desc->manufacturerName;
+        plugin.format = desc->pluginFormatName;
+        plugin.uid = desc->createIdentifierString();
+        if (plugin.name.isNotEmpty() && plugin.uid.isNotEmpty())
+            catalog.vstInstruments.push_back(std::move(plugin));
+    }
+
     ai::Service service;
-    aiStringOut_ = service.contextJson(*project, selectedTrack, anchorSeconds, bars)
+    aiStringOut_ = service
+                       .contextJson(*project, selectedTrack, anchorSeconds,
+                                    bars, catalog)
                        .toStdString();
     return aiStringOut_.c_str();
 }
@@ -4856,13 +4879,24 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
     }
 
     auto makeInstrument = [&] (const juce::String& instrument,
-                               const juce::String& role) -> FxSlot
+                               const juce::String& role,
+                               juce::String& error) -> FxSlot
     {
-        auto token = instrument.trim().toLowerCase();
-        token = token.replaceCharacter(' ', '_')
-                     .replaceCharacter('-', '_');
-        while (token.contains("__"))
-            token = token.replace("__", "_");
+        error.clear();
+        const auto raw = instrument.trim();
+        auto lower = raw.toLowerCase();
+
+        auto normalise = [] (juce::String text)
+        {
+            text = text.trim().toLowerCase();
+            text = text.replaceCharacter(' ', '_')
+                       .replaceCharacter('-', '_');
+            while (text.contains("__"))
+                text = text.replace("__", "_");
+            return text;
+        };
+
+        auto token = normalise(lower);
         if (token.isEmpty())
         {
             const auto r = role.toLowerCase();
@@ -4882,12 +4916,182 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
         }
 
         FxSlot slot;
-        auto synth = [&] (const char* preset)
+        auto synth = [&] (const juce::String& preset) -> bool
         {
+            auto state = ezsynth::makePresetState(preset);
+            if (state.isEmpty())
+                state = ezsynth::makePresetState("Init");
+            if (state.isEmpty())
+                return false;
             slot.name = "EZSynth";
             slot.pluginUid = builtinIdentifier("EZSynth", "ezsynth");
-            slot.state = ezsynth::makePresetState(preset);
+            slot.state = state;
+            return true;
         };
+
+        const auto orqPrograms = ezorq::availablePrograms();
+        auto setOrq = [&] (int index) -> bool
+        {
+            if (index < 0 || index >= orqPrograms.size())
+                return false;
+            juce::XmlElement state("EZORQ");
+            state.setAttribute("prog", index);
+            state.setAttribute("progname", orqPrograms[index]);
+            juce::MemoryBlock block;
+            juce::AudioProcessor::copyXmlToBinary(state, block);
+            slot.name = "EZOrquestra";
+            slot.pluginUid = builtinIdentifier("EZOrquestra", "ezorq");
+            slot.state = block.toBase64Encoding();
+            return true;
+        };
+
+        auto findOrq = [&] (const juce::String& wanted) -> int
+        {
+            const auto want = normalise(wanted);
+            if (want.isEmpty())
+                return -1;
+            for (int i = 0; i < orqPrograms.size(); ++i)
+                if (normalise(orqPrograms[i]) == want)
+                    return i;
+            for (int i = 0; i < orqPrograms.size(); ++i)
+                if (normalise(orqPrograms[i]).contains(want))
+                    return i;
+            return -1;
+        };
+
+        const auto gmPrograms = ezinst::programNames();
+        auto setGm = [&] (int program)
+        {
+            program = juce::jlimit(0, 127, program);
+            juce::XmlElement state("EZINST");
+            state.setAttribute("prog", program);
+            juce::MemoryBlock block;
+            juce::AudioProcessor::copyXmlToBinary(state, block);
+            slot.name = "EZInstruments";
+            slot.pluginUid = builtinIdentifier("EZInstruments", "ezinst");
+            slot.state = block.toBase64Encoding();
+        };
+
+        auto findGm = [&] (const juce::String& wanted) -> int
+        {
+            const auto text = wanted.trim();
+            if (text.containsOnly("0123456789"))
+                return juce::jlimit(0, 127, text.getIntValue());
+            const auto want = normalise(text);
+            for (int i = 0; i < gmPrograms.size(); ++i)
+                if (normalise(gmPrograms[i]) == want)
+                    return i;
+            for (int i = 0; i < gmPrograms.size(); ++i)
+                if (normalise(gmPrograms[i]).contains(want))
+                    return i;
+            return -1;
+        };
+
+        auto setVst = [&] (juce::String wanted) -> bool
+        {
+            wanted = wanted.trim();
+            if (wanted.isEmpty())
+                return false;
+            std::unique_ptr<juce::PluginDescription> found;
+            for (int i = 0; i < pluginHost_.pluginCount(); ++i)
+            {
+                auto desc = pluginHost_.descriptionAt(i);
+                if (desc == nullptr || ! desc->isInstrument)
+                    continue;
+                if (desc->createIdentifierString() == wanted
+                    || desc->name.equalsIgnoreCase(wanted))
+                {
+                    found = std::move(desc);
+                    break;
+                }
+            }
+            if (found == nullptr)
+                return false;
+            slot.name = found->name;
+            slot.pluginUid = found->createIdentifierString();
+            return true;
+        };
+
+        if (lower.startsWith("vst:"))
+        {
+            if (! setVst(raw.substring(4)))
+                error = "VST instrument is not installed: "
+                        + raw.substring(4).trim();
+            return slot;
+        }
+
+        if (lower.startsWith("ezsynth:"))
+        {
+            const auto preset = raw.substring(8).trim();
+            if (! synth(preset))
+                error = "EZSynth has no preset named " + preset;
+            return slot;
+        }
+
+        if (lower.startsWith("ezorq:"))
+        {
+            const auto program = raw.substring(6).trim();
+            const int index = findOrq(program);
+            if (index < 0)
+                error = "EZOrquestra has no program named " + program;
+            else if (! setOrq(index))
+                error = "EZOrquestra could not load " + program;
+            return slot;
+        }
+
+        if (lower.startsWith("gm:"))
+        {
+            const auto program = raw.substring(3).trim();
+            const int index = findGm(program);
+            if (index < 0)
+                error = "EZInstruments has no General MIDI program named "
+                        + program;
+            else
+                setGm(index);
+            return slot;
+        }
+
+        struct OrqAlias
+        {
+            const char* token;
+            const char* program;
+            int gm;
+        };
+        static const OrqAlias aliases[] = {
+            { "violin", "violins_longs", 40 },
+            { "violins", "violins_longs", 40 },
+            { "viola", "violas_longs", 41 },
+            { "violas", "violas_longs", 41 },
+            { "cello", "cellos_vibrato", 42 },
+            { "cellos", "cellos_vibrato", 42 },
+            { "basses", "basses_vibrato", 43 },
+            { "contrabass", "basses_vibrato", 43 },
+            { "double_bass", "basses_vibrato", 43 },
+            { "flute", "flute_longs", 73 },
+            { "piccolo", "piccolo_sustain", 72 },
+            { "oboe", "oboe_vibrato", 68 },
+            { "clarinet", "bb_clarinet_longs", 71 },
+            { "bass_clarinet", "bass_clarinet_longs", 71 },
+            { "bassoon", "bassoon_longs", 70 },
+            { "horn", "metal_horn_longs", 60 },
+            { "french_horn", "metal_horn_longs", 60 },
+            { "trumpet", "trumpet_vibrato", 56 },
+            { "trombone", "t_bone_sustain", 57 },
+            { "tuba", "tuba_longs", 58 },
+            { "sax", "sax_vibrato", 65 },
+            { "saxophone", "sax_vibrato", 65 },
+        };
+
+        for (const auto& alias : aliases)
+        {
+            if (token != alias.token)
+                continue;
+            const int index = findOrq(alias.program);
+            if (index >= 0 && setOrq(index))
+                return slot;
+            setGm(alias.gm);
+            return slot;
+        }
 
         if (token == "drums" || token == "drum" || token == "drum_kit"
             || token == "percussion")
@@ -4902,21 +5106,50 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
         }
         else if (token == "orchestra" || token == "orq")
         {
-            slot.name = "EZOrquestra";
-            slot.pluginUid = builtinIdentifier("EZOrquestra", "ezorq");
+            int index = findOrq("violas_longs");
+            if (index < 0)
+                index = findOrq("cellos_vibrato");
+            if (index < 0 && ! orqPrograms.isEmpty())
+                index = 0;
+            if (index >= 0)
+                setOrq(index);
+            else
+                setGm(48);
         }
-        else if (token.startsWith("gm:"))
+        else if (token == "strings" || token == "string"
+                 || token == "string_ensemble"
+                 || token == "ensemble_strings")
         {
-            const int program = juce::jlimit(0, 127,
-                                             token.fromFirstOccurrenceOf(":", false, false)
-                                                 .getIntValue());
-            juce::XmlElement state("EZINST");
-            state.setAttribute("prog", program);
-            juce::MemoryBlock block;
-            juce::AudioProcessor::copyXmlToBinary(state, block);
-            slot.name = "EZInstruments";
-            slot.pluginUid = builtinIdentifier("EZInstruments", "ezinst");
-            slot.state = block.toBase64Encoding();
+            // A section, not a solo instrument: GM 48 is the closest full
+            // string ensemble. Specific orchestral instruments above use
+            // the sampled EZOrquestra programs instead.
+            setGm(48);
+        }
+        else if (token == "brass" || token == "brass_section")
+            setGm(61);
+        else if (token == "woodwind" || token == "woodwinds")
+            setGm(71);
+        else if (token == "choir" || token == "voices" || token == "vox")
+            setGm(52);
+        else if (token == "harp")
+            setGm(46);
+        else if (token == "timpani")
+            setGm(47);
+        else if (token == "pizzicato" || token == "pizzicato_strings")
+        {
+            const int index = findOrq("violas_pizzicato");
+            if (index >= 0)
+                setOrq(index);
+            else
+                setGm(45);
+        }
+        else if (token == "tremolo" || token == "tremolo_strings")
+        {
+            const int index = findOrq("violas_tremolo");
+            if (index >= 0)
+                setOrq(index);
+            else
+                setGm(44);
         }
         else if (token == "bass" || token == "bass_guitar"
                  || token == "electric_bass")
@@ -4936,9 +5169,6 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
             synth("Pluck Cristal");
         else if (token == "organ")
             synth("Órgano");
-        else if (token == "strings" || token == "string"
-                 || token == "string_ensemble")
-            synth("Cuerdas Analógicas");
         else if (token == "bell" || token == "bells")
             synth("Campanas");
         else if (token == "riser" || token == "fx")
@@ -5019,7 +5249,15 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
                 fresh.colorIndex = planned.color >= 0
                     ? planned.color
                     : (int) (project.tracks.size() % 16);
-                fresh.instrument = makeInstrument(planned.instrument, planned.role);
+                juce::String instrumentError;
+                fresh.instrument =
+                    makeInstrument(planned.instrument, planned.role,
+                                   instrumentError);
+                if (instrumentError.isNotEmpty())
+                {
+                    fail(instrumentError);
+                    return false;
+                }
                 if (planned.hasVolume)
                     fresh.volume = juce::jlimit(
                         0.0f, 2.0f,

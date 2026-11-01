@@ -12,6 +12,10 @@ namespace ezdrums {
 
 juce::AudioProcessor* create();
 
+// Factory and user sample-kit names offered by the instrument, for menus and
+// the AI arranger's instrument catalog.
+juce::StringArray availableKitNames();
+
 // A processor that COMPOSES its own MIDI (drum patterns) exposes it here:
 // the host drains what the plugin "performed" this block and, while the
 // transport records an armed track, writes it into the track's MIDI take.

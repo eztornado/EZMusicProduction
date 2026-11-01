@@ -237,6 +237,8 @@ bool parseArrangementPlan(const juce::String& json, ArrangementPlan& out,
         track.instrument =
             textValue(firstProperty(trackValue, { "instrument", "sound" }))
                 .toLowerCase();
+        track.instrumentName = textValue(
+            firstProperty(trackValue, { "instrument_name", "instrumentName" }));
 
         int color = -1;
         if (integerValue(firstProperty(trackValue, { "color", "color_index" }),

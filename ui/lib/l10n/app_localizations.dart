@@ -1558,6 +1558,24 @@ abstract class AppLocalizations {
   /// **'Compases'**
   String get arrangerBars;
 
+  /// No description provided for @arrangerBarsCustom.
+  ///
+  /// In es, this message translates to:
+  /// **'Otro'**
+  String get arrangerBarsCustom;
+
+  /// No description provided for @arrangerBarsRange.
+  ///
+  /// In es, this message translates to:
+  /// **'1–64'**
+  String get arrangerBarsRange;
+
+  /// No description provided for @arrangerBarsInvalid.
+  ///
+  /// In es, this message translates to:
+  /// **'Introduce un número entre 1 y 64.'**
+  String get arrangerBarsInvalid;
+
   /// No description provided for @arrangerStartBeginning.
   ///
   /// In es, this message translates to:

@@ -55,10 +55,19 @@ void main() {
 
     expect(find.text('Arreglista IA'), findsOneWidget);
     expect(find.text('Crear arreglo'), findsOneWidget);
+    expect(find.text('Otro'), findsOneWidget);
     // No key is configured in the temporary settings, and the default
     // endpoint is remote, so the missing-key notice must be visible.
     expect(find.textContaining('Configura una clave de API'), findsOneWidget);
     expect(find.text('Ajustes de IA'), findsAtLeastNWidgets(1));
+
+    await tester.tap(find.text('Otro'));
+    await tester.pumpAndSettle();
+    final customBars = find.byKey(const Key('arranger-custom-bars'));
+    expect(customBars, findsOneWidget);
+    await tester.enterText(customBars, '48');
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(customBars).controller?.text, '48');
 
     await tester.tap(find.text('Ajustes de IA').first);
     await tester.pumpAndSettle();

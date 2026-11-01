@@ -35,6 +35,7 @@ struct PlanTrack
     juce::String name;
     juce::String role;        // drums, bass, chords, pad, lead, counter, arp...
     juce::String instrument;  // drums, bass, keys, pad, lead, piano, gm:0...
+    juce::String instrumentName; // human-readable label for previews
     int color = -1;
     bool hasVolume = false;
     double volumeDb = 0.0;

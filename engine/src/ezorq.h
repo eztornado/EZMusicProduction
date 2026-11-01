@@ -13,6 +13,10 @@ namespace ezorq {
 
 juce::AudioProcessor* create();
 
+// Program stems currently installed (raw names, underscores intact), sorted.
+// Used by the instrument selector and the AI arranger's instrument catalog.
+juce::StringArray availablePrograms();
+
 // Goertzel + harmonic-coverage pitch detector. detectPitchHzEx also
 // reports how much peak power the measured series explains versus the
 // label's series (cov ratio >= 1.3 = the label is really mislabeled).

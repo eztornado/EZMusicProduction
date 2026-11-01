@@ -379,7 +379,46 @@ struct Program
     }
 };
 
+std::vector<juce::File> programDirectories()
+{
+    // The CLI scanner writes to the JUCE dir; the BUNDLED app resolves
+    // userApplicationDataDirectory to Application Support — search both.
+    return {
+        juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+            .getChildFile("Library/EZMusicProduction/Orchestra"),
+        juce::File::getSpecialLocation(
+            juce::File::userApplicationDataDirectory)
+            .getChildFile("EZMusicProduction")
+            .getChildFile("Orchestra"),
+    };
+}
+
 } // namespace
+
+juce::StringArray availablePrograms()
+{
+    juce::StringArray out;
+    for (const auto& dir : programDirectories())
+    {
+        // Manual readdir: JUCE's findChildFiles returned 0 entries in the
+        // bundled app for a directory the shell sees populated.
+        DIR* dp = opendir(dir.getFullPathName().toRawUTF8());
+        if (dp == nullptr)
+            continue;
+        while (auto* ent = readdir(dp))
+        {
+            const juce::String n = juce::String::fromUTF8(ent->d_name);
+            if (! n.endsWithIgnoreCase(".json"))
+                continue;
+            const auto stem = n.upToLastOccurrenceOf(".", false, true);
+            if (! out.contains(stem))
+                out.add(stem);
+        }
+        closedir(dp);
+    }
+    out.sort(true);
+    return out;
+}
 
 int scanLibrary(const juce::File& root, const juce::File& outDir)
 {
@@ -1323,18 +1362,9 @@ private:
     friend class EzOrqEditor;
 
 private:
-    // The CLI scanner writes to the JUCE dir; the BUNDLED app resolves
-    // userApplicationDataDirectory to Application Support — search both.
     std::vector<juce::File> programsDirs() const
     {
-        return {
-            juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                .getChildFile("Library/EZMusicProduction/Orchestra"),
-            juce::File::getSpecialLocation(
-                juce::File::userApplicationDataDirectory)
-                .getChildFile("EZMusicProduction")
-                .getChildFile("Orchestra"),
-        };
+        return programDirectories();
     }
 
     juce::File fileForProgram(const juce::String& name) const
@@ -1359,27 +1389,7 @@ private:
     {
         // RAW stems (underscores intact) — the editor parses family /
         // instrument / articulation back out of them.
-        juce::StringArray out;
-        for (const auto& dir : programsDirs())
-        {
-            // Manual readdir: JUCE's findChildFiles returned 0 entries in
-            // the bundled app for a directory the shell sees populated.
-            DIR* dp = opendir(dir.getFullPathName().toRawUTF8());
-            if (dp == nullptr)
-                continue;
-            while (auto* ent = readdir(dp))
-            {
-                const juce::String n = juce::String::fromUTF8(ent->d_name);
-                if (! n.endsWithIgnoreCase(".json"))
-                    continue;
-                const auto stem = n.upToLastOccurrenceOf(".", false, true);
-                if (! out.contains(stem))
-                    out.add(stem);
-            }
-            closedir(dp);
-        }
-        out.sort(true);
-        return out;
+        return availablePrograms();
     }
 
     void loadProgram(int index)

@@ -12,6 +12,7 @@ void main() {
             "name": "Drums",
             "role": "drums",
             "instrument": "drums",
+            "instrument_name": "EZDrums",
             "clips": [
               {
                 "start_beat": 4,
@@ -44,6 +45,8 @@ void main() {
 
     expect(plan.title, 'Night drive');
     expect(plan.tracks, hasLength(2));
+    expect(plan.tracks.first.instrumentName, 'EZDrums');
+    expect(plan.tracks.last.instrumentName, isEmpty);
     expect(plan.newTrackCount, 1);
     expect(plan.reusedTrackCount, 1);
     expect(plan.clipCount, 2);

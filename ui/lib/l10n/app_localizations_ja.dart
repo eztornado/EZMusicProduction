@@ -819,6 +819,15 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerBars => '小節';
 
   @override
+  String get arrangerBarsCustom => 'その他';
+
+  @override
+  String get arrangerBarsRange => '1〜64';
+
+  @override
+  String get arrangerBarsInvalid => '1〜64の数値を入力してください。';
+
+  @override
   String get arrangerStartBeginning => 'プロジェクトの先頭から';
 
   @override

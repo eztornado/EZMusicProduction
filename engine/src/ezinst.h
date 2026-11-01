@@ -11,4 +11,7 @@ namespace ezinst {
 
 juce::AudioProcessor* create();
 
+// General MIDI Level 1 program names, index = program number (0..127).
+juce::StringArray programNames();
+
 } // namespace ezinst

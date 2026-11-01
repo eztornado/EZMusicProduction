@@ -5,6 +5,7 @@
 // and applies it as a single undo entry (creating tracks and clips as needed).
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../ai/ai_settings.dart';
 import '../ai/ai_settings_dialog.dart';
@@ -54,10 +55,15 @@ class _SongArrangerBody extends StatefulWidget {
 }
 
 class _SongArrangerBodyState extends State<_SongArrangerBody> {
+  static const int _minBars = 1;
+  static const int _maxBars = 64;
+
   late final TextEditingController _brief = TextEditingController();
   late final TextEditingController _refine = TextEditingController();
+  final TextEditingController _customBars = TextEditingController();
   late double _anchorSeconds;
   int _bars = 16;
+  bool _customBarsMode = false;
   bool _busy = false;
   bool _refining = false;
   bool _cancelRequested = false;
@@ -78,6 +84,15 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
 
   bool get _needsKey => !AiSettings.isLocalEndpoint && !AiSettings.hasKey;
 
+  int? get _customBarsValue {
+    if (!_customBarsMode) return null;
+    final value = int.tryParse(_customBars.text.trim());
+    if (value == null || value < _minBars || value > _maxBars) return null;
+    return value;
+  }
+
+  bool get _barsValid => !_customBarsMode || _customBarsValue != null;
+
   @override
   void initState() {
     super.initState();
@@ -90,6 +105,7 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
     _client?.cancel();
     _brief.dispose();
     _refine.dispose();
+    _customBars.dispose();
     super.dispose();
   }
 
@@ -110,6 +126,10 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
 
   Future<void> _generate() async {
     final l = context.l10n;
+    if (!_barsValid) {
+      setState(() => _error = l.arrangerBarsInvalid);
+      return;
+    }
     if (_needsKey) {
       setState(() => _error = l.arrangerNoKey);
       return;
@@ -163,6 +183,10 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
     final l = context.l10n;
     final plan = _plan;
     if (plan == null || _busy) return;
+    if (!_barsValid) {
+      setState(() => _error = l.arrangerBarsInvalid);
+      return;
+    }
     if (_needsKey) {
       setState(() => _error = l.arrangerNoKey);
       return;
@@ -302,18 +326,84 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
                   ),
                   const SizedBox(width: 10),
                   SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment(value: 4, label: Text('4')),
-                      ButtonSegment(value: 8, label: Text('8')),
-                      ButtonSegment(value: 16, label: Text('16')),
-                      ButtonSegment(value: 32, label: Text('32')),
+                    segments: [
+                      const ButtonSegment(value: 4, label: Text('4')),
+                      const ButtonSegment(value: 8, label: Text('8')),
+                      const ButtonSegment(value: 16, label: Text('16')),
+                      const ButtonSegment(value: 32, label: Text('32')),
+                      ButtonSegment(
+                        value: 0,
+                        label: Text(l.arrangerBarsCustom),
+                      ),
                     ],
-                    selected: {_bars},
+                    selected: {_customBarsMode ? 0 : _bars},
                     showSelectedIcon: false,
                     style: _segmentStyle(),
                     onSelectionChanged:
-                        _busy ? null : (v) => setState(() => _bars = v.first),
+                        _busy
+                            ? null
+                            : (v) {
+                              if (v.first == 0) {
+                                setState(() {
+                                  _customBarsMode = true;
+                                  if (_customBarsValue == null) {
+                                    _customBars.text = _bars.toString();
+                                  }
+                                });
+                              } else {
+                                setState(() {
+                                  _customBarsMode = false;
+                                  _bars = v.first;
+                                });
+                              }
+                            },
                   ),
+                  if (_customBarsMode) ...[
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 118,
+                      child: TextField(
+                        key: const Key('arranger-custom-bars'),
+                        controller: _customBars,
+                        enabled: !_busy,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(2),
+                        ],
+                        style: const TextStyle(fontSize: 12),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          labelText: l.arrangerBars,
+                          helperText: l.arrangerBarsRange,
+                          errorText:
+                              _customBarsValue == null
+                                  ? l.arrangerBarsInvalid
+                                  : null,
+                          labelStyle: const TextStyle(
+                            fontSize: 10,
+                            color: _kTextDim,
+                          ),
+                          helperStyle: const TextStyle(
+                            fontSize: 9,
+                            color: _kTextDim,
+                          ),
+                          errorStyle: const TextStyle(fontSize: 9),
+                          border: const OutlineInputBorder(),
+                        ),
+                        onChanged: (text) {
+                          final value = int.tryParse(text.trim());
+                          setState(() {
+                            if (value != null &&
+                                value >= _minBars &&
+                                value <= _maxBars) {
+                              _bars = value;
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                  ],
                   const SizedBox(width: 12),
                   Expanded(
                     child: Row(
@@ -438,7 +528,7 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
               child: Text(l.arrangerCancel),
             ),
             FilledButton.icon(
-              onPressed: _generate,
+              onPressed: _barsValid ? _generate : null,
               style: FilledButton.styleFrom(backgroundColor: _kAccent),
               icon: const Icon(Icons.auto_awesome, size: 16),
               label: Text(l.arrangerGenerate),
@@ -542,7 +632,7 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
           Align(
             alignment: Alignment.centerRight,
             child: OutlinedButton.icon(
-              onPressed: _busy ? null : _refinePlan,
+              onPressed: _busy || !_barsValid ? null : _refinePlan,
               icon: const Icon(Icons.refresh_rounded, size: 15),
               label: Text(l.arrangerRefine),
             ),
@@ -555,7 +645,9 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
   Widget _trackRow(AppLocalizations l, SongPlanTrack track) {
     final role = track.role.isEmpty ? l.arrangerRoleTrack : track.role;
     final instrument =
-        track.instrument.isEmpty
+        track.instrumentName.isNotEmpty
+            ? track.instrumentName
+            : track.instrument.isEmpty
             ? l.arrangerInstrumentDefault
             : track.instrument;
     return Container(

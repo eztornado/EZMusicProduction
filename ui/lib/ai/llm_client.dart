@@ -51,11 +51,8 @@ class LlmClient {
   String get _apiKey => (_apiKeyOverride ?? AiSettings.apiKey).trim();
   double get _temperature => _temperatureOverride ?? AiSettings.temperature;
   int get _maxTokens => _maxTokensOverride ?? AiSettings.maxTokens;
-  int get _timeoutSeconds =>
-      (_timeoutOverride ?? AiSettings.timeoutSeconds).clamp(
-        kMinAiTimeoutSeconds,
-        kMaxAiTimeoutSeconds,
-      );
+  int get _timeoutSeconds => (_timeoutOverride ?? AiSettings.timeoutSeconds)
+      .clamp(kMinAiTimeoutSeconds, kMaxAiTimeoutSeconds);
 
   /// Stops an in-flight request. Its future completes with [LlmException].
   void cancel() {
@@ -390,6 +387,7 @@ Return exactly one JSON object. No markdown, no code fences, no commentary.
       "name": "Drums",
       "role": "drums",
       "instrument": "drums",
+      "instrument_name": "EZDrums",
       "color": 2,
       "volume_db": -3,
       "pan": 0,
@@ -423,14 +421,26 @@ RULES
 - Drums use GM notes: 36 kick, 38 snare, 39 clap, 42 closed hat, 44 pedal hat,
   46 open hat, 49 crash, 51 ride, 37 side stick, 41/43/45/47 toms.
 - Instrument tokens: drums, piano, bass, sub, keys, pad, lead, pluck, organ,
-  strings, orchestra, bell, acid, riser, gm:<0-127> for a General MIDI program.
-  Prefer these tokens; the host maps them to its built-in instruments.
-- Roles: drums, bass, chords, melody, pad, arp, texture, fx.
+  bell, acid, riser, ezsynth:<preset>, gm:<0-127>, ezorq:<program> and
+  vst:<uid>. The context's `available_instruments` object is the authoritative
+  catalog of sounds installed on this computer: use its exact names and tokens,
+  and never invent a VST or preset that is not listed.
+- For orchestral music use `ezorq:<program>` for every instrument the
+  EZOrquestra catalog provides (violas, cellos, basses, flute, oboe, clarinet,
+  bassoon, horn, trumpet, trombone, tuba, sax, piccolo) and `gm:` for the rest
+  (for example gm:40 violin, gm:48 string ensemble, gm:47 timpani, gm:46 harp).
+  Do not use EZSynth pads or synth strings for orchestral parts unless the
+  brief explicitly asks for a synth/hybrid orchestra.
+- `instrument_name` is a short human-readable label for the UI. For a VST use
+  its listed name; for an EZ token use the preset or program name.
+- Roles: drums, bass, chords, melody, pad, arp, texture, fx, strings, brass,
+  woodwinds, percussion.
 - Make parts idiomatic and playable: bass with roots and motion, chords voiced
   in a useful register, melody with motifs and rests, drums with groove and
   fills. Leave frequency space between parts.
-- Aim for a coherent 4/8/16-bar structure with intro/verse/chorus or an
-  equivalent arc when the window allows it.
+- Organize the requested number of bars into a coherent arc (intro, verse,
+  chorus, bridge, outro) when the window allows it. The requested count is
+  explicit in the user message; do not silently shorten it.
 - Be economical: at most 8 tracks, 24 clips, 1600 notes total. Do not repeat
   identical dense patterns beyond what is needed to state the idea.
 - Use the existing tracks when they already serve a role. If a role is missing,

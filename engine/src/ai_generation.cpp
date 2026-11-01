@@ -1350,7 +1350,9 @@ Service::Analysis Service::analyse(const Project& project, const Request& reques
     const double requestedLength = request.lengthSeconds > 0.0
         ? request.lengthSeconds
         : (double) juce::jlimit(1, 64, request.bars) * a.barSeconds;
-    a.lengthSeconds = juce::jlimit(a.barSeconds, 120.0, requestedLength);
+    a.lengthSeconds = juce::jlimit(
+        a.barSeconds, juce::jmax(a.barSeconds, request.maxLengthSeconds),
+        requestedLength);
     a.bars = juce::jlimit(1, 64, (int) std::ceil(a.lengthSeconds / a.barSeconds
                                                 - 1.0e-6));
     a.lengthSeconds = juce::jmin(a.lengthSeconds,
@@ -1552,12 +1554,16 @@ Service::Analysis Service::analyse(const Project& project, const Request& reques
 }
 
 juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
-                                  double anchorSeconds, int bars) const
+                                  double anchorSeconds, int bars,
+                                  const InstrumentCatalog& catalog) const
 {
     Request request;
     request.trackId = selectedTrack;
     request.anchorSeconds = juce::jmax(0.0, anchorSeconds);
     request.bars = juce::jlimit(1, 64, bars);
+    // The arranger window can be longer than the 120 s used by clip
+    // generation: at slow tempos, 64 bars exceed two minutes.
+    request.maxLengthSeconds = 4096.0;
     request.useModel = false;
 
     const auto a = analyse(project, request);
@@ -1661,6 +1667,8 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
                        track.instrument.name.isNotEmpty()
                            ? track.instrument.name
                            : juce::String("Piano interno"));
+        if (track.instrument.pluginUid.isNotEmpty())
+            t->setProperty("instrument_uid", track.instrument.pluginUid);
         t->setProperty("volume_db",
                        (double) juce::Decibels::gainToDecibels(track.volume,
                                                                -60.0f));
@@ -1729,6 +1737,45 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
     root->setProperty("track_count", tracks.size());
     root->setProperty("clip_count", totalClips);
     root->setProperty("tracks", tracks);
+
+    auto namesAsArray = [] (const juce::StringArray& names)
+    {
+        juce::Array<juce::var> out;
+        for (const auto& name : names)
+            out.add(name);
+        return out;
+    };
+
+    auto* available = new juce::DynamicObject();
+    available->setProperty(
+        "tokens",
+        "drums = EZDrums; piano = internal piano; ezsynth:<preset> = EZSynth; "
+        "gm:<0-127> = EZInstruments General MIDI; "
+        "ezorq:<program> = EZOrquestra program; "
+        "vst:<uid> = any installed VST/AU instrument listed below.");
+    available->setProperty("ezsynth_presets",
+                           namesAsArray(catalog.ezsynthPresets));
+    available->setProperty(
+        "ezinst_programs",
+        namesAsArray(catalog.ezinstPrograms));
+    available->setProperty("ezorq_programs",
+                           namesAsArray(catalog.ezorqPrograms));
+    available->setProperty("ezdrums_kits",
+                           namesAsArray(catalog.ezdrumsKits));
+
+    juce::Array<juce::var> plugins;
+    for (const auto& plugin : catalog.vstInstruments)
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("token", "vst:" + plugin.uid);
+        p->setProperty("name", plugin.name);
+        p->setProperty("manufacturer", plugin.manufacturer);
+        p->setProperty("format", plugin.format);
+        plugins.add(juce::var(p));
+    }
+    available->setProperty("vst_instruments", plugins);
+    root->setProperty("available_instruments", juce::var(available));
+
     root->setProperty(
         "guidance",
         "Positions and lengths are quarter-note beats. Reuse an existing "
@@ -1736,7 +1783,15 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
         "new instrument track. Add clips without deleting existing material. "
         "Keep the project key/chords unless the brief asks to change them. "
         "Use GM drum notes (36 kick, 38 snare, 42 closed hat, 46 open hat) on "
-        "drum tracks. Leave room for the other parts.");
+        "drum tracks. Leave room for the other parts. The "
+        "available_instruments object is the authoritative list of sounds "
+        "installed on this computer: use its exact tokens and do not invent "
+        "plugin names. The index of ezinst_programs is its gm: program "
+        "number. For orchestral music prefer ezorq:<program> for the "
+        "instruments it provides, and gm: for the rest (for example gm:40 "
+        "violin, gm:48 string ensemble); do not substitute EZSynth pads or "
+        "synth strings unless the brief explicitly asks for a synth/hybrid "
+        "orchestra.");
 
     return juce::JSON::toString(juce::var(root), false, 15);
 }

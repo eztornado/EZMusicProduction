@@ -38,6 +38,7 @@ class SongPlanTrack {
     required this.name,
     required this.role,
     required this.instrument,
+    required this.instrumentName,
     required this.clips,
   });
 
@@ -46,6 +47,9 @@ class SongPlanTrack {
   final String name;
   final String role;
   final String instrument;
+
+  /// Optional readable label; [instrument] may be a long VST UID token.
+  final String instrumentName;
   final List<SongPlanClip> clips;
 
   bool get reusesExisting => trackId > 0;
@@ -177,6 +181,10 @@ class SongPlan {
           role: _string(value, const ['role']).toLowerCase(),
           instrument:
               _string(value, const ['instrument', 'sound']).toLowerCase(),
+          instrumentName: _string(value, const [
+            'instrument_name',
+            'instrumentName',
+          ]),
           clips: clips,
         ),
       );

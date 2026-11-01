@@ -1450,6 +1450,17 @@ juce::AudioProcessorEditor* EzDrumsProcessor::createEditor()
     return new EzDrumsEditor(*this);
 }
 
+juce::StringArray availableKitNames()
+{
+    juce::StringArray names;
+    for (const auto& kit : kKits)
+        names.add(kit.name);
+    for (const auto& info : SampleKit::scanLibrary())
+        if (! names.contains(info.name))
+            names.add(info.name);
+    return names;
+}
+
 juce::AudioProcessor* create() { return new EzDrumsProcessor(); }
 
 } // namespace ezdrums
