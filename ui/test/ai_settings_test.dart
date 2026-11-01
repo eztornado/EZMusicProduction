@@ -23,6 +23,7 @@ void main() {
       newKey: 'super-secret',
       temperature: 0.55,
       maxTokens: 4096,
+      timeoutSeconds: 420,
     );
 
     final config = jsonDecode(settings.readAsStringSync()) as Map;
@@ -31,6 +32,7 @@ void main() {
     expect(config['ai']['model'], 'local-model');
     expect(config['ai']['temperature'], 0.55);
     expect(config['ai']['max_tokens'], 4096);
+    expect(config['ai']['timeout_seconds'], 420);
     expect(settings.readAsStringSync(), isNot(contains('super-secret')));
 
     final creds = jsonDecode(credentials.readAsStringSync()) as Map;
@@ -45,6 +47,12 @@ void main() {
     expect(AiSettings.model, 'local-model');
     expect(AiSettings.apiKey, 'super-secret');
     expect(AiSettings.hasKey, isTrue);
+    expect(AiSettings.timeoutSeconds, 420);
+
+    AiSettings.save(timeoutSeconds: 5);
+    expect(AiSettings.timeoutSeconds, kMinAiTimeoutSeconds);
+    AiSettings.save(timeoutSeconds: 9999);
+    expect(AiSettings.timeoutSeconds, kMaxAiTimeoutSeconds);
 
     AiSettings.save(newKey: '');
     expect(credentials.readAsStringSync(), isNot(contains('super-secret')));

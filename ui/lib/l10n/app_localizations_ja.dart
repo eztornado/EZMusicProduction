@@ -955,6 +955,27 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerMaxTokens => '最大トークン数';
 
   @override
+  String get arrangerTimeout => 'タイムアウト';
+
+  @override
+  String get arrangerTimeoutHint =>
+      'アレンジ生成時にモデルを待つ最大秒数です。遅いモデルやローカルサーバーでは増やしてください。';
+
+  @override
+  String get arrangerTestConnection => '接続をテスト';
+
+  @override
+  String get arrangerTestingConnection => 'テスト中…';
+
+  @override
+  String get arrangerTestOk => '接続に成功しました。モデルが応答しました。';
+
+  @override
+  String arrangerTestFailed(String error) {
+    return '接続に失敗しました：$error';
+  }
+
+  @override
   String get arrangerKeySecurity =>
       'キーは制限された権限の別ファイルに保存され、プロジェクトやログには書き込まれません。';
 

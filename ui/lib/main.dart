@@ -19,8 +19,6 @@ import 'l10n/l10n.dart';
 import 'l10n/locale_store.dart';
 import 'remote/remote_settings.dart';
 import 'ai/ai_settings.dart';
-import 'ui/ai_generation_dialog.dart'
-    show defaultAiModeForTrack, showAiGenerationDialog;
 import 'ui/song_arranger_dialog.dart' show showSongArrangerDialog;
 import 'ui/mix_assistant_dialog.dart' show showMixAssistantDialog;
 import 'ui/app_alert.dart';
@@ -472,25 +470,6 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  /// Toolbar entry point: generate on the active instrument track at the
-  /// playhead. The dialog itself handles polling, preview and apply/undo.
-  Future<void> _openAiGeneration() async {
-    final service = _service;
-    if (service == null) return;
-    final track = service.aiTargetTrack;
-    if (track == null) {
-      showAppError(context, context.l10n.aiNoInstrumentTrack);
-      return;
-    }
-    await showAiGenerationDialog(
-      context,
-      service,
-      trackId: track.id,
-      startSeconds: service.positionSeconds,
-      initialMode: defaultAiModeForTrack(track),
-    );
-  }
-
   /// Toolbar entry point: compose several tracks at once. The dialog owns the
   /// HTTP request and the engine applies the returned plan as one undo entry.
   Future<void> _openSongArranger() async {
@@ -672,13 +651,6 @@ class _HomePageState extends State<HomePage>
                                       showSoundLibraryDialog(context, service),
                             ),
                             _ToolbarButton(
-                              icon: Icons.auto_awesome,
-                              label: context.l10n.aiToolbarButton,
-                              accent: true,
-                              tooltip: context.l10n.aiToolbarTooltip,
-                              onTap: _openAiGeneration,
-                            ),
-                            _ToolbarButton(
                               icon: Icons.queue_music_rounded,
                               label: context.l10n.arrangerToolbarButton,
                               accent: true,
@@ -727,15 +699,6 @@ class _HomePageState extends State<HomePage>
                                 } else if (service.selectedClipIsMidi) {
                                   service.openEditor(service.selectedClipId!);
                                 }
-                                setState(() {});
-                              },
-                            ),
-                            _ToolbarButton(
-                              icon: Icons.show_chart_rounded,
-                              label: context.l10n.appMenuAutomation,
-                              active: service.automationOpen,
-                              onTap: () {
-                                service.toggleAutomationOpen();
                                 setState(() {});
                               },
                             ),

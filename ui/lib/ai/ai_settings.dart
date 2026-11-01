@@ -13,6 +13,9 @@ const String kDefaultAiBaseUrl = 'https://openrouter.ai/api/v1';
 const String kDefaultAiModel = 'openai/gpt-4.1-mini';
 const double kDefaultAiTemperature = 0.8;
 const int kDefaultAiMaxTokens = 8192;
+const int kDefaultAiTimeoutSeconds = 180;
+const int kMinAiTimeoutSeconds = 30;
+const int kMaxAiTimeoutSeconds = 1800;
 
 class AiSettings {
   AiSettings._();
@@ -49,6 +52,7 @@ class AiSettings {
   static String apiKey = '';
   static double temperature = kDefaultAiTemperature;
   static int maxTokens = kDefaultAiMaxTokens;
+  static int timeoutSeconds = kDefaultAiTimeoutSeconds;
 
   static bool get hasKey => apiKey.trim().isNotEmpty;
 
@@ -60,6 +64,7 @@ class AiSettings {
     apiKey = '';
     temperature = kDefaultAiTemperature;
     maxTokens = kDefaultAiMaxTokens;
+    timeoutSeconds = kDefaultAiTimeoutSeconds;
 
     try {
       final f = file;
@@ -84,6 +89,13 @@ class AiSettings {
             final storedTokens = ai['max_tokens'];
             if (storedTokens is num) {
               maxTokens = storedTokens.toInt().clamp(256, 32768);
+            }
+            final storedTimeout = ai['timeout_seconds'];
+            if (storedTimeout is num) {
+              timeoutSeconds = storedTimeout.toInt().clamp(
+                kMinAiTimeoutSeconds,
+                kMaxAiTimeoutSeconds,
+              );
             }
           }
         }
@@ -123,6 +135,7 @@ class AiSettings {
     String? newKey,
     double? temperature,
     int? maxTokens,
+    int? timeoutSeconds,
   }) {
     if (baseUrl != null) AiSettings.baseUrl = baseUrl.trim();
     if (model != null) AiSettings.model = model.trim();
@@ -132,6 +145,12 @@ class AiSettings {
     }
     if (maxTokens != null) {
       AiSettings.maxTokens = maxTokens.clamp(256, 32768);
+    }
+    if (timeoutSeconds != null) {
+      AiSettings.timeoutSeconds = timeoutSeconds.clamp(
+        kMinAiTimeoutSeconds,
+        kMaxAiTimeoutSeconds,
+      );
     }
 
     try {
@@ -151,6 +170,7 @@ class AiSettings {
         'model': AiSettings.model,
         'temperature': AiSettings.temperature,
         'max_tokens': AiSettings.maxTokens,
+        'timeout_seconds': AiSettings.timeoutSeconds,
       };
       const encoder = JsonEncoder.withIndent('  ');
       f.writeAsStringSync('${encoder.convert(data)}\n');

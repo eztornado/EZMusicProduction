@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 
 import '../ai/ai_settings.dart';
+import '../ai/llm_client.dart';
 import '../l10n/l10n.dart';
 
 const Color _kDialogBg = Color(0xFF252830);
@@ -36,18 +37,24 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
   late final TextEditingController _key = TextEditingController();
   late double _temperature = AiSettings.temperature;
   late int _maxTokens = AiSettings.maxTokens;
+  late int _timeoutSeconds = AiSettings.timeoutSeconds;
   bool _showKey = false;
+  bool _testing = false;
+  bool _testOk = false;
+  String? _testMessage;
   String? _error;
+  LlmClient? _testClient;
 
   @override
   void dispose() {
+    _testClient?.cancel();
     _baseUrl.dispose();
     _model.dispose();
     _key.dispose();
     super.dispose();
   }
 
-  void _save() {
+  bool _validate() {
     final l = context.l10n;
     final base = _baseUrl.text.trim();
     final model = _model.text.trim();
@@ -57,29 +64,90 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
         !(uri.scheme == 'http' || uri.scheme == 'https') ||
         uri.host.isEmpty) {
       setState(() => _error = l.arrangerInvalidUrl);
-      return;
+      return false;
     }
     if (model.isEmpty) {
       setState(() => _error = l.arrangerModel);
-      return;
+      return false;
     }
+    return true;
+  }
 
+  void _persist() {
     AiSettings.save(
-      baseUrl: base,
-      model: model,
+      baseUrl: _baseUrl.text.trim(),
+      model: _model.text.trim(),
       // Empty means "keep the saved key"; the Forget button clears it.
       newKey: _key.text.trim().isEmpty ? null : _key.text,
       temperature: _temperature,
       maxTokens: _maxTokens,
+      timeoutSeconds: _timeoutSeconds,
     );
+  }
+
+  void _save() {
+    if (!_validate()) return;
+    _persist();
     if (!mounted) return;
     Navigator.of(context).pop(true);
+  }
+
+  Future<void> _testConnection() async {
+    if (_testing || !_validate()) return;
+    final l = context.l10n;
+    final client = LlmClient(
+      baseUrl: _baseUrl.text.trim(),
+      model: _model.text.trim(),
+      // Empty means "keep the saved key".
+      apiKey: _key.text.trim().isEmpty ? null : _key.text,
+      temperature: _temperature,
+      maxTokens: _maxTokens,
+      timeoutSeconds: _timeoutSeconds,
+    );
+    _testClient = client;
+    setState(() {
+      _testing = true;
+      _testMessage = null;
+      _error = null;
+    });
+
+    try {
+      await client.testConnection();
+      if (!mounted || client.isCancelled) return;
+      setState(() {
+        _testOk = true;
+        _testMessage = l.arrangerTestOk;
+      });
+    } on LlmException catch (e) {
+      if (!mounted || client.isCancelled) return;
+      setState(() {
+        _testOk = false;
+        _testMessage = l.arrangerTestFailed(e.message);
+      });
+    } catch (e) {
+      if (!mounted || client.isCancelled) return;
+      setState(() {
+        _testOk = false;
+        _testMessage = l.arrangerTestFailed('$e');
+      });
+    } finally {
+      if (identical(_testClient, client)) _testClient = null;
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  void _invalidateTest() {
+    if (_testMessage == null) return;
+    setState(() => _testMessage = null);
   }
 
   void _forgetKey() {
     AiSettings.save(newKey: '');
     _key.clear();
-    setState(() => _showKey = false);
+    setState(() {
+      _showKey = false;
+      _testMessage = null;
+    });
   }
 
   @override
@@ -113,6 +181,7 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
               const SizedBox(height: 12),
               TextField(
                 controller: _baseUrl,
+                onChanged: (_) => _invalidateTest(),
                 decoration: InputDecoration(
                   labelText: l.arrangerBaseUrl,
                   hintText: 'https://openrouter.ai/api/v1',
@@ -124,6 +193,7 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
               const SizedBox(height: 10),
               TextField(
                 controller: _model,
+                onChanged: (_) => _invalidateTest(),
                 decoration: InputDecoration(
                   labelText: l.arrangerModel,
                   hintText: 'openai/gpt-4.1-mini',
@@ -135,6 +205,7 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
               const SizedBox(height: 10),
               TextField(
                 controller: _key,
+                onChanged: (_) => _invalidateTest(),
                 obscureText: !_showKey,
                 enableSuggestions: false,
                 autocorrect: false,
@@ -195,7 +266,11 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
                 max: 1.5,
                 divisions: 30,
                 activeColor: _kAccent,
-                onChanged: (v) => setState(() => _temperature = v),
+                onChanged:
+                    (v) => setState(() {
+                      _temperature = v;
+                      _testMessage = null;
+                    }),
               ),
               const SizedBox(height: 2),
               Text(
@@ -209,9 +284,77 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
                 divisions: 15,
                 activeColor: _kAccent,
                 onChanged:
-                    (v) =>
-                        setState(() => _maxTokens = (v / 1024).round() * 1024),
+                    (v) => setState(() {
+                      _maxTokens = (v / 1024).round() * 1024;
+                      _testMessage = null;
+                    }),
               ),
+              const SizedBox(height: 2),
+              Text(
+                '${l.arrangerTimeout} $_timeoutSeconds s',
+                style: const TextStyle(fontSize: 11, color: _kTextDim),
+              ),
+              Slider(
+                value: _timeoutSeconds.toDouble(),
+                min: kMinAiTimeoutSeconds.toDouble(),
+                max: kMaxAiTimeoutSeconds.toDouble(),
+                divisions: (kMaxAiTimeoutSeconds - kMinAiTimeoutSeconds) ~/ 30,
+                activeColor: _kAccent,
+                onChanged:
+                    (v) => setState(() {
+                      _timeoutSeconds = (v / 30).round() * 30;
+                      _testMessage = null;
+                    }),
+              ),
+              Text(
+                l.arrangerTimeoutHint,
+                style: const TextStyle(fontSize: 10, color: _kTextDim),
+              ),
+              if (_testMessage != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color:
+                        _testOk
+                            ? const Color(0x334CC38A)
+                            : const Color(0x33E5484D),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color:
+                          _testOk
+                              ? const Color(0x664CC38A)
+                              : const Color(0x66E5484D),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _testOk
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.error_outline_rounded,
+                        size: 15,
+                        color:
+                            _testOk
+                                ? const Color(0xFF8BE0B4)
+                                : const Color(0xFFFF8A8D),
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          _testMessage!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color:
+                                _testOk
+                                    ? const Color(0xFF8BE0B4)
+                                    : const Color(0xFFFF8A8D),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               if (_error != null)
                 Container(
                   margin: const EdgeInsets.only(top: 6),
@@ -243,8 +386,22 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
           onPressed: () => Navigator.of(context).pop(false),
           child: Text(l.arrangerCancel),
         ),
+        OutlinedButton.icon(
+          onPressed: _testing ? null : _testConnection,
+          icon:
+              _testing
+                  ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                  : const Icon(Icons.wifi_tethering_rounded, size: 15),
+          label: Text(
+            _testing ? l.arrangerTestingConnection : l.arrangerTestConnection,
+          ),
+        ),
         FilledButton(
-          onPressed: _save,
+          onPressed: _testing ? null : _save,
           style: FilledButton.styleFrom(backgroundColor: _kAccent),
           child: Text(l.arrangerSave),
         ),

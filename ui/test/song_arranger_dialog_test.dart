@@ -64,5 +64,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('URL del servidor'), findsOneWidget);
     expect(find.text('Clave de API'), findsOneWidget);
+    expect(find.text('Probar conexión'), findsOneWidget);
+    expect(find.textContaining('Tiempo de espera'), findsOneWidget);
   });
 }

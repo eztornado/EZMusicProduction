@@ -1798,6 +1798,42 @@ abstract class AppLocalizations {
   /// **'Máximo de tokens'**
   String get arrangerMaxTokens;
 
+  /// No description provided for @arrangerTimeout.
+  ///
+  /// In es, this message translates to:
+  /// **'Tiempo de espera'**
+  String get arrangerTimeout;
+
+  /// No description provided for @arrangerTimeoutHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Segundos máximos que se esperará al modelo al generar un arreglo. Súbelo para modelos lentos o servidores locales.'**
+  String get arrangerTimeoutHint;
+
+  /// No description provided for @arrangerTestConnection.
+  ///
+  /// In es, this message translates to:
+  /// **'Probar conexión'**
+  String get arrangerTestConnection;
+
+  /// No description provided for @arrangerTestingConnection.
+  ///
+  /// In es, this message translates to:
+  /// **'Probando…'**
+  String get arrangerTestingConnection;
+
+  /// No description provided for @arrangerTestOk.
+  ///
+  /// In es, this message translates to:
+  /// **'Conexión correcta. El modelo ha respondido.'**
+  String get arrangerTestOk;
+
+  /// No description provided for @arrangerTestFailed.
+  ///
+  /// In es, this message translates to:
+  /// **'Fallo de conexión: {error}'**
+  String arrangerTestFailed(String error);
+
   /// No description provided for @arrangerKeySecurity.
   ///
   /// In es, this message translates to:

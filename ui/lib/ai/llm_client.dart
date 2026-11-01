@@ -19,11 +19,43 @@ class LlmException implements Exception {
 }
 
 class LlmClient {
+  LlmClient({
+    String? baseUrl,
+    String? model,
+    String? apiKey,
+    double? temperature,
+    int? maxTokens,
+    int? timeoutSeconds,
+  }) : _baseUrlOverride = baseUrl,
+       _modelOverride = model,
+       _apiKeyOverride = apiKey,
+       _temperatureOverride = temperature,
+       _maxTokensOverride = maxTokens,
+       _timeoutOverride = timeoutSeconds;
+
+  final String? _baseUrlOverride;
+  final String? _modelOverride;
+  final String? _apiKeyOverride;
+  final double? _temperatureOverride;
+  final int? _maxTokensOverride;
+  final int? _timeoutOverride;
+
   HttpClient? _client;
   bool _cancelled = false;
 
   bool get isBusy => _client != null;
   bool get isCancelled => _cancelled;
+
+  String get _baseUrl => (_baseUrlOverride ?? AiSettings.baseUrl).trim();
+  String get _model => (_modelOverride ?? AiSettings.model).trim();
+  String get _apiKey => (_apiKeyOverride ?? AiSettings.apiKey).trim();
+  double get _temperature => _temperatureOverride ?? AiSettings.temperature;
+  int get _maxTokens => _maxTokensOverride ?? AiSettings.maxTokens;
+  int get _timeoutSeconds =>
+      (_timeoutOverride ?? AiSettings.timeoutSeconds).clamp(
+        kMinAiTimeoutSeconds,
+        kMaxAiTimeoutSeconds,
+      );
 
   /// Stops an in-flight request. Its future completes with [LlmException].
   void cancel() {
@@ -115,16 +147,39 @@ class LlmClient {
     ]);
   }
 
-  Future<String> _send(List<Map<String, dynamic>> messages) async {
+  /// Minimal request used by the settings dialog to verify the endpoint, the
+  /// model and the credentials without sending any project data.
+  Future<String> testConnection() {
+    return _send(
+      [
+        {
+          'role': 'system',
+          'content':
+              'You are a connectivity test. Reply with the single word OK.',
+        },
+        {'role': 'user', 'content': 'Reply with OK.'},
+      ],
+      jsonMode: false,
+      maxTokens: 16,
+      temperature: 0,
+    );
+  }
+
+  Future<String> _send(
+    List<Map<String, dynamic>> messages, {
+    bool jsonMode = true,
+    int? maxTokens,
+    double? temperature,
+  }) async {
     if (_cancelled) throw const LlmException('Solicitud cancelada.');
-    if (AiSettings.baseUrl.trim().isEmpty) {
+    if (_baseUrl.isEmpty) {
       throw const LlmException('Configura la URL del servidor de IA.');
     }
-    if (AiSettings.model.trim().isEmpty) {
+    if (_model.isEmpty) {
       throw const LlmException('Configura el modelo de IA.');
     }
 
-    final uri = _chatUri(AiSettings.baseUrl);
+    final uri = _chatUri(_baseUrl);
     final client =
         HttpClient()
           ..connectionTimeout = const Duration(seconds: 20)
@@ -132,17 +187,34 @@ class LlmClient {
     _client = client;
 
     try {
-      var content = await _post(client, uri, messages, includeJsonMode: true);
+      var content = await _post(
+        client,
+        uri,
+        messages,
+        includeJsonMode: jsonMode,
+        maxTokens: maxTokens,
+        temperature: temperature,
+      );
       // Some OpenAI-compatible servers reject response_format. Retry once
       // without it; the plan parser still recovers a fenced JSON object.
-      content ??= await _post(client, uri, messages, includeJsonMode: false);
+      if (content == null && jsonMode) {
+        content = await _post(
+          client,
+          uri,
+          messages,
+          includeJsonMode: false,
+          maxTokens: maxTokens,
+          temperature: temperature,
+        );
+      }
       if (content == null || content.trim().isEmpty) {
         throw const LlmException('El modelo devolvió una respuesta vacía.');
       }
       return content;
     } on TimeoutException {
-      throw const LlmException(
-        'El servidor de IA no respondió a tiempo. Inténtalo de nuevo.',
+      throw LlmException(
+        'El servidor de IA no respondió en $_timeoutSeconds s. '
+        'Sube el tiempo de espera en Ajustes de IA o prueba otro modelo.',
       );
     } on SocketException catch (e) {
       throw LlmException(
@@ -161,10 +233,12 @@ class LlmClient {
     Uri uri,
     List<Map<String, dynamic>> messages, {
     required bool includeJsonMode,
+    int? maxTokens,
+    double? temperature,
   }) async {
     final request = await client.postUrl(uri);
     request.headers.contentType = ContentType.json;
-    final key = AiSettings.apiKey.trim();
+    final key = _apiKey;
     if (key.isNotEmpty) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $key');
     }
@@ -173,20 +247,18 @@ class LlmClient {
     request.headers.set('HTTP-Referer', 'https://ezmusicproduction.local');
 
     final body = <String, dynamic>{
-      'model': AiSettings.model.trim(),
+      'model': _model,
       'messages': messages,
-      'temperature': AiSettings.temperature,
-      'max_tokens': AiSettings.maxTokens,
+      'temperature': temperature ?? _temperature,
+      'max_tokens': maxTokens ?? _maxTokens,
       'stream': false,
       if (includeJsonMode) 'response_format': {'type': 'json_object'},
     };
     request.write(jsonEncode(body));
 
-    final response = await request.close().timeout(const Duration(seconds: 90));
-    final text = await response
-        .transform(utf8.decoder)
-        .join()
-        .timeout(const Duration(seconds: 60));
+    final wait = Duration(seconds: _timeoutSeconds);
+    final response = await request.close().timeout(wait);
+    final text = await response.transform(utf8.decoder).join().timeout(wait);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       if (includeJsonMode && _isJsonModeRejection(response.statusCode, text)) {

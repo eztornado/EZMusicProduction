@@ -1,10 +1,9 @@
 # AI song arranger
 
 The song arranger composes several roles at once (drums, bass, harmony, melody,
-texture, FX) from the current project and a short creative brief. It is an
-optional, model-driven layer on top of the existing clip generator: the engine
-never talks to the network, and the offline/procedural clip generation keeps
-working on its own.
+texture, FX) from the current project and a short creative brief. It is the
+supported AI workflow: the engine never talks to the network, and all document
+edits stay inside C++.
 
 ## Architecture
 
@@ -27,7 +26,22 @@ stable C ABI ──► Engine::applyAiArrangement (C++20/JUCE)
   atomic apply call; no network code lives in C++.
 - A failed or malformed plan leaves the project untouched.
 - Applying a plan is one undo entry, including created tracks and clips.
-- The engine's existing single-clip AI generation remains available.
+- The old local clip generator is no longer exposed in the UI. Its engine/C ABI
+  entry points remain for legacy compatibility, but the arranger is the
+  supported AI workflow.
+
+## Connection settings
+
+The dialog reads the OpenAI-compatible endpoint, model, key, creativity, token
+limit and request timeout from **AI settings**. The timeout is stored as
+`ai.timeout_seconds` in `ui_settings.json`, defaults to 180 seconds and can be
+set from 30 to 1800 seconds. It applies to both the response headers and the
+streamed body, so slow local models can finish without being cut off.
+
+**Test connection** sends a minimal probe with the values currently entered in
+the form, without saving them and without project context. It verifies the URL,
+model and credentials before the user spends time generating an arrangement.
+The result is shown inline in the settings dialog.
 
 ## Time and pitch
 

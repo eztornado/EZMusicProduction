@@ -971,6 +971,27 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerMaxTokens => 'Máximo de tokens';
 
   @override
+  String get arrangerTimeout => 'Tiempo de espera';
+
+  @override
+  String get arrangerTimeoutHint =>
+      'Segundos máximos que se esperará al modelo al generar un arreglo. Súbelo para modelos lentos o servidores locales.';
+
+  @override
+  String get arrangerTestConnection => 'Probar conexión';
+
+  @override
+  String get arrangerTestingConnection => 'Probando…';
+
+  @override
+  String get arrangerTestOk => 'Conexión correcta. El modelo ha respondido.';
+
+  @override
+  String arrangerTestFailed(String error) {
+    return 'Fallo de conexión: $error';
+  }
+
+  @override
   String get arrangerKeySecurity =>
       'La clave se guarda en un archivo aparte con permisos restringidos y nunca se escribe en el proyecto ni en los registros.';
 

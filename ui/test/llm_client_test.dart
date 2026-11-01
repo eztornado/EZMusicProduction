@@ -40,6 +40,7 @@ void main() {
       newKey: 'test-secret',
       temperature: 0.7,
       maxTokens: 2048,
+      timeoutSeconds: 240,
     );
     AiSettings.load();
   }
@@ -88,6 +89,42 @@ void main() {
       expect(body['response_format'], {'type': 'json_object'});
       expect(body['messages'], hasLength(2));
       expect((body['messages'] as List).last['content'], contains('house'));
+    },
+  );
+
+  test(
+    'connection test sends a minimal request without project data',
+    () async {
+      final bodies = <Map<String, dynamic>>[];
+      final server = await serve((request, index) async {
+        expect(
+          request.headers.value(HttpHeaders.authorizationHeader),
+          'Bearer probe-secret',
+        );
+        bodies.add(
+          jsonDecode(await utf8.decoder.bind(request).join())
+              as Map<String, dynamic>,
+        );
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(successBody('OK'));
+        await request.response.close();
+      });
+      addTearDown(server.close);
+
+      final result = await LlmClient(
+        baseUrl: 'http://127.0.0.1:${server.port}/v1',
+        model: 'probe-model',
+        apiKey: 'probe-secret',
+        timeoutSeconds: 45,
+      ).testConnection();
+
+      expect(result, 'OK');
+      final body = bodies.single;
+      expect(body['model'], 'probe-model');
+      expect(body['max_tokens'], 16);
+      expect(body['temperature'], 0);
+      expect(body.containsKey('response_format'), isFalse);
+      expect(body['messages'], hasLength(2));
     },
   );
 

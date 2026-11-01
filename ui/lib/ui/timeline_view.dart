@@ -18,8 +18,6 @@ import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart';
 import '../l10n/l10n.dart';
 import 'add_track_dialog.dart' show showAddTrackDialog;
-import 'ai_generation_dialog.dart'
-    show defaultAiModeForTrack, showAiGenerationDialog;
 import 'channel_settings_dialog.dart' show showChannelSettingsDialog;
 import 'design.dart';
 import 'plugin_picker_dialog.dart' show showPluginPickerDialog;
@@ -98,25 +96,6 @@ Set<int> clipsIntersecting(
     }
   }
   return hits;
-}
-
-/// Track that owns [clipId], or null when the id is stale.
-TrackInfo? _trackForClip(ProjectSnapshot snapshot, int clipId) {
-  for (final track in snapshot.tracks) {
-    for (final clip in track.clips) {
-      if (clip.id == clipId) return track;
-    }
-  }
-  return null;
-}
-
-ClipInfo? _clipById(ProjectSnapshot snapshot, int clipId) {
-  for (final track in snapshot.tracks) {
-    for (final clip in track.clips) {
-      if (clip.id == clipId) return clip;
-    }
-  }
-  return null;
 }
 
 enum ClipEdge { move, left, right }
@@ -770,8 +749,6 @@ class _TimelineViewState extends State<TimelineView> {
     } else {
       widget.service.selectClipForDrag(clipId);
     }
-    final clip = _clipById(widget.service.snapshot, clipId);
-    final midi = clip?.isMidi ?? false;
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox?;
     showMenu<int>(
@@ -790,30 +767,13 @@ class _TimelineViewState extends State<TimelineView> {
           child: Text(context.l10n.timelineSplitAtPlayhead),
         ),
         PopupMenuItem(value: 2, child: Text(context.l10n.timelineDeleteClip)),
-        if (midi) ...[
-          const PopupMenuDivider(),
-          PopupMenuItem(value: 3, child: Text(context.l10n.aiGenerateClip)),
-          PopupMenuItem(value: 4, child: Text(context.l10n.aiRegenerateClip)),
-        ],
       ],
-    ).then((value) async {
+    ).then((value) {
       if (!mounted) return;
       if (value == 1) {
         widget.service.splitClip(clipId, widget.service.positionSeconds);
       } else if (value == 2) {
         widget.service.deleteSelectedClip();
-      } else if (value == 3 || value == 4) {
-        final track = _trackForClip(widget.service.snapshot, clipId);
-        final currentClip = _clipById(widget.service.snapshot, clipId);
-        if (track == null || currentClip == null || !currentClip.isMidi) return;
-        await showAiGenerationDialog(
-          context,
-          widget.service,
-          trackId: track.id,
-          clipId: value == 4 ? clipId : null,
-          startSeconds: currentClip.start,
-          replaceClip: value == 4,
-        );
       }
     });
   }
@@ -1620,11 +1580,6 @@ class _TrackHeader extends StatelessWidget {
         PopupMenuItem(value: 'mute', child: Text(context.l10n.timelineMute)),
         PopupMenuItem(value: 'solo', child: Text(context.l10n.timelineSolo)),
         const PopupMenuDivider(),
-        if (track.type == 1)
-          PopupMenuItem(
-            value: 'ai',
-            child: Text(context.l10n.aiGenerateAtPlayhead),
-          ),
         PopupMenuItem(
           value: 'delete',
           child: Text(context.l10n.timelineDeleteTrack),
@@ -1645,14 +1600,6 @@ class _TrackHeader extends StatelessWidget {
         service.setTrackMute(track.id, !track.mute);
       case 'solo':
         service.setTrackSolo(track.id, !track.solo);
-      case 'ai':
-        await showAiGenerationDialog(
-          context,
-          service,
-          trackId: track.id,
-          startSeconds: service.positionSeconds,
-          initialMode: defaultAiModeForTrack(track),
-        );
       case 'delete':
         service.removeTrack(track.id);
     }
@@ -1877,31 +1824,6 @@ class _TrackHeader extends StatelessWidget {
                                 ),
                               ),
                             ),
-                            if (track.type == 1)
-                              Tooltip(
-                                message: context.l10n.aiGenerateAtPlayhead,
-                                child: InkWell(
-                                  onTap:
-                                      () => showAiGenerationDialog(
-                                        context,
-                                        service,
-                                        trackId: track.id,
-                                        startSeconds: service.positionSeconds,
-                                        initialMode: defaultAiModeForTrack(
-                                          track,
-                                        ),
-                                      ),
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(2),
-                                    child: Icon(
-                                      Icons.auto_awesome,
-                                      size: 11,
-                                      color: AppColors.accent,
-                                    ),
-                                  ),
-                                ),
-                              ),
                             Builder(
                               builder:
                                   (buttonContext) => InkWell(
