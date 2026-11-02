@@ -1173,4 +1173,46 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get prefRemoteHelp =>
       'Abre la app remota y escribe esta dirección y el código.';
+
+  @override
+  String get prefSectionDebug => 'Depuración';
+
+  @override
+  String get prefDebugMode => 'Modo debug';
+
+  @override
+  String get prefDebugModeHelp =>
+      'Muestra el botón Debug en la barra superior y registra la actividad de la app, incluidos los prompts de Arreglo IA.';
+
+  @override
+  String get appMenuDebug => 'Debug';
+
+  @override
+  String get appMenuDebugTooltip =>
+      'Abrir la consola de depuración en tiempo real';
+
+  @override
+  String get debugConsoleTitle => 'Consola de depuración';
+
+  @override
+  String get debugConsoleLive => 'En vivo';
+
+  @override
+  String get debugConsolePaused => 'Pausada';
+
+  @override
+  String get debugConsolePause => 'Pausar';
+
+  @override
+  String get debugConsoleResume => 'Reanudar';
+
+  @override
+  String get debugConsoleClear => 'Limpiar';
+
+  @override
+  String get debugConsoleCopy => 'Copiar';
+
+  @override
+  String get debugConsoleEmpty =>
+      'Sin actividad todavía. Ejecuta Arreglo IA para ver los prompts enviados y recibidos.';
 }

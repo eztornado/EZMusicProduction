@@ -2175,6 +2175,58 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Abre la app remota y escribe esta dirección y el código.'**
   String get prefRemoteHelp;
+
+  /// In es, this message translates to:
+  /// **'Depuración'**
+  String get prefSectionDebug;
+
+  /// In es, this message translates to:
+  /// **'Modo debug'**
+  String get prefDebugMode;
+
+  /// In es, this message translates to:
+  /// **'Muestra el botón Debug en la barra superior y registra la actividad de la app, incluidos los prompts de Arreglo IA.'**
+  String get prefDebugModeHelp;
+
+  /// In es, this message translates to:
+  /// **'Debug'**
+  String get appMenuDebug;
+
+  /// In es, this message translates to:
+  /// **'Abrir la consola de depuración en tiempo real'**
+  String get appMenuDebugTooltip;
+
+  /// In es, this message translates to:
+  /// **'Consola de depuración'**
+  String get debugConsoleTitle;
+
+  /// In es, this message translates to:
+  /// **'En vivo'**
+  String get debugConsoleLive;
+
+  /// In es, this message translates to:
+  /// **'Pausada'**
+  String get debugConsolePaused;
+
+  /// In es, this message translates to:
+  /// **'Pausar'**
+  String get debugConsolePause;
+
+  /// In es, this message translates to:
+  /// **'Reanudar'**
+  String get debugConsoleResume;
+
+  /// In es, this message translates to:
+  /// **'Limpiar'**
+  String get debugConsoleClear;
+
+  /// In es, this message translates to:
+  /// **'Copiar'**
+  String get debugConsoleCopy;
+
+  /// In es, this message translates to:
+  /// **'Sin actividad todavía. Ejecuta Arreglo IA para ver los prompts enviados y recibidos.'**
+  String get debugConsoleEmpty;
 }
 
 class _AppLocalizationsDelegate

@@ -35,6 +35,7 @@ void main() {
 
     expect(find.text('Preferencias — Audio, MIDI y control remoto'),
         findsOneWidget);
+    expect(find.text('Modo debug'), findsOneWidget);
     expect(find.text('Activar control remoto por LAN'), findsOneWidget);
   });
 }

@@ -1169,4 +1169,45 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get prefRemoteHelp =>
       'Open the remote app and enter this address and code.';
+
+  @override
+  String get prefSectionDebug => 'Debugging';
+
+  @override
+  String get prefDebugMode => 'Debug mode';
+
+  @override
+  String get prefDebugModeHelp =>
+      'Shows the Debug button in the top bar and records app activity, including AI Arrangement prompts.';
+
+  @override
+  String get appMenuDebug => 'Debug';
+
+  @override
+  String get appMenuDebugTooltip => 'Open the real-time debug console';
+
+  @override
+  String get debugConsoleTitle => 'Debug console';
+
+  @override
+  String get debugConsoleLive => 'Live';
+
+  @override
+  String get debugConsolePaused => 'Paused';
+
+  @override
+  String get debugConsolePause => 'Pause';
+
+  @override
+  String get debugConsoleResume => 'Resume';
+
+  @override
+  String get debugConsoleClear => 'Clear';
+
+  @override
+  String get debugConsoleCopy => 'Copy';
+
+  @override
+  String get debugConsoleEmpty =>
+      'No activity yet. Run AI Arrangement to see the prompts sent and received.';
 }

@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../debug/debug_log.dart';
 import 'ai_settings.dart';
 
 class LlmException implements Exception {
@@ -57,6 +58,7 @@ class LlmClient {
   /// Stops an in-flight request. Its future completes with [LlmException].
   void cancel() {
     _cancelled = true;
+    DebugLog.write('ia', '✗ solicitud cancelada por el usuario');
     _client?.close(force: true);
     _client = null;
   }
@@ -205,15 +207,22 @@ class LlmClient {
         );
       }
       if (content == null || content.trim().isEmpty) {
+        DebugLog.write('ia', '✗ respuesta vacía');
         throw const LlmException('El modelo devolvió una respuesta vacía.');
       }
+      DebugLog.write('ia', '← assistant\n$content');
       return content;
     } on TimeoutException {
+      DebugLog.write(
+        'ia',
+        '✗ timeout tras $_timeoutSeconds s esperando a $uri',
+      );
       throw LlmException(
         'El servidor de IA no respondió en $_timeoutSeconds s. '
         'Sube el tiempo de espera en Ajustes de IA o prueba otro modelo.',
       );
     } on SocketException catch (e) {
+      DebugLog.write('ia', '✗ conexión fallida con $uri: ${e.message}');
       throw LlmException(
         'No se pudo conectar con el servidor de IA: ${e.message}',
       );
@@ -251,11 +260,18 @@ class LlmClient {
       'stream': false,
       if (includeJsonMode) 'response_format': {'type': 'json_object'},
     };
+    // El modo debug registra el prompt completo (sin cabeceras ni API key).
+    DebugLog.write(
+      'ia',
+      '→ $_model · $uri · JSON ${includeJsonMode ? 'on' : 'off'}\n'
+          '${const JsonEncoder.withIndent('  ').convert(body)}',
+    );
     request.write(jsonEncode(body));
 
     final wait = Duration(seconds: _timeoutSeconds);
     final response = await request.close().timeout(wait);
     final text = await response.transform(utf8.decoder).join().timeout(wait);
+    DebugLog.write('ia', '← HTTP ${response.statusCode} · $uri\n$text');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       if (includeJsonMode && _isJsonModeRejection(response.statusCode, text)) {

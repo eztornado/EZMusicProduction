@@ -1153,4 +1153,45 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefRemoteHelp => 'リモートアプリでこのアドレスとコードを入力してください。';
+
+  @override
+  String get prefSectionDebug => 'デバッグ';
+
+  @override
+  String get prefDebugMode => 'デバッグモード';
+
+  @override
+  String get prefDebugModeHelp =>
+      '上部バーにデバッグボタンを表示し、AIアレンジのプロンプトを含むアプリの活動を記録します。';
+
+  @override
+  String get appMenuDebug => 'デバッグ';
+
+  @override
+  String get appMenuDebugTooltip => 'リアルタイムデバッグコンソールを開く';
+
+  @override
+  String get debugConsoleTitle => 'デバッグコンソール';
+
+  @override
+  String get debugConsoleLive => 'ライブ';
+
+  @override
+  String get debugConsolePaused => '一時停止';
+
+  @override
+  String get debugConsolePause => '一時停止';
+
+  @override
+  String get debugConsoleResume => '再開';
+
+  @override
+  String get debugConsoleClear => 'クリア';
+
+  @override
+  String get debugConsoleCopy => 'コピー';
+
+  @override
+  String get debugConsoleEmpty =>
+      'まだ活動がありません。AIアレンジを実行すると、送受信したプロンプトが表示されます。';
 }
