@@ -26,7 +26,10 @@ void main() {
     engine.newProject(48000);
     engine.setTempoBpm(96);
     final existing = engine.addTrack('Existing Keys', 5, type: 1);
-    engine.addMidiClip(existing, 0, 8);
+    final existingClip = engine.addMidiClip(existing, 0, 8);
+    engine.midiClipAddNote(existingClip, 60, 0.8, 0.0, 1.0);
+    engine.midiClipAddNote(existingClip, 64, 0.8, 0.0, 1.0);
+    engine.midiClipAddNote(existingClip, 67, 0.8, 0.0, 1.0);
 
     final context = engine.aiContextJson(
       selectedTrackId: existing,
@@ -34,9 +37,15 @@ void main() {
       bars: 8,
     );
     final contextJson = jsonDecode(context) as Map<String, dynamic>;
+    expect(contextJson['has_material'], isTrue);
+    expect(contextJson['key'], isNot('unspecified'));
     expect(contextJson['key'], isA<String>());
     expect(contextJson['tracks'], isA<List>());
-    expect((contextJson['analysis'] as Map)['chord_line'], isA<String>());
+    expect((contextJson['analysis'] as Map)['has_material'], isTrue);
+    expect(
+      (contextJson['analysis'] as Map)['chord_line'],
+      isNotEmpty,
+    );
 
     final available =
         contextJson['available_instruments'] as Map<String, dynamic>;
