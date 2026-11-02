@@ -4825,11 +4825,6 @@ const char* Engine::aiContextJson(TrackId selectedTrack, double anchorSeconds,
                                  int bars) const
 {
     auto project = std::atomic_load(&project_);
-    if (project == nullptr)
-    {
-        aiStringOut_ = "{}";
-        return aiStringOut_.c_str();
-    }
 
     ai::InstrumentCatalog catalog;
     catalog.ezsynthPresets = ezsynth::presetNamesForCatalog();
@@ -4852,9 +4847,25 @@ const char* Engine::aiContextJson(TrackId selectedTrack, double anchorSeconds,
             catalog.vstInstruments.push_back(std::move(plugin));
     }
 
+    // The app can be used before the first document is created. Do not send
+    // an empty object to the model: give it the session defaults and, above
+    // all, the instrument catalog, so a blank-slate brief can still choose
+    // real sounds. The analysis will mark the key/chords as unspecified.
+    std::shared_ptr<const Project> effective = project;
+    if (effective == nullptr)
+    {
+        auto empty = std::make_shared<Project>();
+        empty->sampleRate = defaultRate();
+        empty->name = "Untitled";
+        empty->tempoBpm = 120.0;
+        empty->timeSigNumerator = 4;
+        empty->timeSigDenominator = 4;
+        effective = std::move(empty);
+    }
+
     ai::Service service;
     aiStringOut_ = service
-                       .contextJson(*project, selectedTrack, anchorSeconds,
+                       .contextJson(*effective, selectedTrack, anchorSeconds,
                                     bars, catalog)
                        .toStdString();
     return aiStringOut_.c_str();

@@ -88,7 +88,11 @@ void main() {
       expect(body['temperature'], 0.7);
       expect(body['response_format'], {'type': 'json_object'});
       expect(body['messages'], hasLength(2));
-      expect((body['messages'] as List).last['content'], contains('house'));
+      final userMessage = (body['messages'] as List).last['content'] as String;
+      expect(userMessage, contains('house'));
+      expect(userMessage, contains('MUSICAL PRIORITIES'));
+      expect(userMessage, contains('primary motif'));
+      expect(userMessage, contains('voice leading'));
     },
   );
 

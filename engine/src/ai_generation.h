@@ -127,7 +127,9 @@ public:
 
     // Compact JSON description of the project for an external arranger:
     // tempo/meter, key and bar chords, every track and instrument, and short
-    // note excerpts from the existing clips. Read-only.
+    // note excerpts from the existing clips. Read-only. A brand-new session
+    // is described with `has_material: false` so the model can choose a key
+    // and progression from the brief instead of trusting the default fallback.
     juce::String contextJson(const Project& project, TrackId selectedTrack,
                              double anchorSeconds, int bars,
                              const InstrumentCatalog& catalog) const;
