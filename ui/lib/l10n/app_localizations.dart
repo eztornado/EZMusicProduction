@@ -121,19 +121,19 @@ abstract class AppLocalizations {
   /// No description provided for @appDylibError.
   ///
   /// In es, this message translates to:
-  /// **'No se pudo cargar libcadence_engine.dylib: {error}\nCompila el engine: cmake --build ~/daw/build'**
+  /// **'No se pudo cargar la librería del motor: {error}\nCompila el engine: cmake --build build (o define CADENCE_ENGINE_DYLIB con la ruta completa)'**
   String appDylibError(String error);
 
   /// No description provided for @appDylibOk.
   ///
   /// In es, this message translates to:
-  /// **'dylib ok'**
+  /// **'engine ok'**
   String get appDylibOk;
 
   /// No description provided for @appStatusLine.
   ///
   /// In es, this message translates to:
-  /// **'{tracks} pistas · {duration} s · dylib ok'**
+  /// **'{tracks} pistas · {duration} s · engine ok'**
   String appStatusLine(String tracks, String duration);
 
   /// No description provided for @appWindowMixer.

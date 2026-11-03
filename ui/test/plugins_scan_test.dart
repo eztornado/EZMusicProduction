@@ -6,7 +6,8 @@
 // a big library takes minutes); with the cache it loads instantly.
 //
 // One engine per tester process (JUCE message loop singleton).
-// This machine has system-wide VST3s (/Library/Audio/Plug-Ins/VST3).
+// Needs at least one system VST3 on the machine — build and install the
+// CadenceTestTone fixture: see engine/tools/test-vst3/Main.cpp.
 
 import 'package:flutter_test/flutter_test.dart';
 

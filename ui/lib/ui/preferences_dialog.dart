@@ -316,6 +316,8 @@ Widget _dropdown(
       DropdownButtonFormField<String>(
         // ignore: deprecated_member_use
         value: current,
+        isDense: true,
+        isExpanded: true,
         items: [
           for (final item in items)
             DropdownMenuItem(value: item, child: Text(item, style: const TextStyle(fontSize: 12))),

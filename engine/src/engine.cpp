@@ -20,7 +20,9 @@
 #include <cstdlib>
 #include <pthread.h>
 #include <thread>
+#if defined(__APPLE__)
 #include <dispatch/dispatch.h>
+#endif
 
 namespace cadence {
 
@@ -2886,12 +2888,20 @@ void Engine::startMessageLoop()
     // makes JUCE believe main is a background thread, and every async plugin
     // instantiation then posts a message to a run loop that is already
     // blocked waiting for it (project open deadlock).
+#if defined(__APPLE__)
     if (pthread_main_np() == 0)
         dispatch_sync(dispatch_get_main_queue(), ^{
             juce::MessageManager::getInstance();
         });
     else
         juce::MessageManager::getInstance();
+#else
+    // No Cocoa run loop to attach to: the FFI caller thread simply becomes
+    // JUCE's message thread. Deferred callAsync work only runs while
+    // something pumps the loop, so non-macOS hosts use the synchronous
+    // cadence_engine_initialise() path until a pump is wired up.
+    juce::MessageManager::getInstance();
+#endif
 
     messageLoopRunning_ = true;
 }

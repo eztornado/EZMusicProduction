@@ -19,15 +19,15 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String appDylibError(String error) {
-    return 'libcadence_engine.dylib を読み込めませんでした: $error\nエンジンをビルドしてください: cmake --build ~/daw/build';
+    return 'エンジンライブラリを読み込めませんでした: $error\nエンジンをビルドしてください: cmake --build build（または CADENCE_ENGINE_DYLIB にパスを設定）';
   }
 
   @override
-  String get appDylibOk => 'dylib ok';
+  String get appDylibOk => 'engine ok';
 
   @override
   String appStatusLine(String tracks, String duration) {
-    return '$tracks トラック · $duration 秒 · dylib ok';
+    return '$tracks トラック · $duration 秒 · engine ok';
   }
 
   @override
