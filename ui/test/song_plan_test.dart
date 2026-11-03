@@ -149,11 +149,16 @@ void main() {
                {"pitch": 47, "start_beat": 2, "length_beats": 1}
              ]}]},
           {"name": "Bass", "role": "bass", "instrument": "piano",
-           "clips": [{"start_beat": 0, "length_beats": 4,
+           "clips": [{"start_beat": 0, "length_beats": 8,
              "notes": [
                {"pitch": 130, "start_beat": 0, "length_beats": 1},
                {"pitch": 132, "start_beat": 1, "length_beats": 1},
-               {"pitch": 135, "start_beat": 2, "length_beats": 1}
+               {"pitch": 135, "start_beat": 2, "length_beats": 1},
+               {"pitch": 137, "start_beat": 3, "length_beats": 1},
+               {"pitch": 140, "start_beat": 4, "length_beats": 1},
+               {"pitch": 142, "start_beat": 5, "length_beats": 1},
+               {"pitch": 145, "start_beat": 6, "length_beats": 1},
+               {"pitch": 147, "start_beat": 7, "length_beats": 1}
              ]}]}
         ]
       }

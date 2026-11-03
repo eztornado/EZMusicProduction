@@ -216,6 +216,23 @@ class SongPlan {
       final isPiano = instrument.contains('piano');
       final role = '${trackValue['role'] ?? ''}'.toLowerCase();
 
+      final probe = <SongPlanNote>[];
+      for (final note in notes) {
+        final pitch = note['pitch'];
+        final start = note['start_beat'];
+        final length = note['length_beats'];
+        if (pitch is! num || start is! num) continue;
+        probe.add(
+          SongPlanNote(
+            pitch: pitch.round().clamp(0, 127),
+            rawPitch: pitch.round(),
+            startBeat: start.toDouble(),
+            lengthBeats: length is num ? length.toDouble() : 0.25,
+            velocity: 0.8,
+          ),
+        );
+      }
+
       for (final note in notes) {
         final pitch = note['pitch'];
         if (pitch is! num) continue;
@@ -229,6 +246,12 @@ class SongPlan {
       final low = pitches.reduce((a, b) => a < b ? a : b);
       final high = pitches.reduce((a, b) => a > b ? a : b);
       final range = high - low;
+      final rawPitches = probe.map((note) => note.rawPitch ?? note.pitch).toList();
+      final rawRange =
+          rawPitches.isEmpty
+              ? range
+              : rawPitches.reduce((a, b) => a > b ? a : b) -
+                  rawPitches.reduce((a, b) => a < b ? a : b);
 
       int targetLow;
       int targetHigh;
@@ -256,8 +279,13 @@ class SongPlan {
 
       // If the bass is a chromatic/scale run, snap it to the root or fifth of
       // the chord written for that bar. This is the last-resort guard for the
-      // exact failure users reported ("arpeggio" from MIDI 22 to 109).
-      if (role == 'bass' && harmony.isNotEmpty && beatsPerBar > 0) {
+      // exact failure users reported ("arpeggio" from MIDI 22 to 109). A
+      // normal bass line with passing tones is left alone.
+      final isRun = _stepwiseRun(probe) != null;
+      if (role == 'bass' &&
+          (rawRange > 30 || isRun) &&
+          harmony.isNotEmpty &&
+          beatsPerBar > 0) {
         for (final note in notes) {
           final start = note['start_beat'];
           if (start is! num) continue;
