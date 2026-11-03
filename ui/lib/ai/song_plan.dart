@@ -182,12 +182,16 @@ class SongPlan {
   /// Last-resort deterministic guard. It only fixes pitch/register problems;
   /// timing, harmony and orchestration are left to the model. This keeps a
   /// plan playable when the model ignores the MIDI/register rules.
-  SongPlan normalizedForPiano() {
+  SongPlan normalizedForPiano({
+    double startBeat = 0,
+    double beatsPerBar = 4,
+  }) {
     final decoded = jsonDecode(extractJsonObject(rawJson));
     if (decoded is! Map<String, dynamic>) return this;
 
     final tracksValue = decoded['tracks'];
     if (tracksValue is! List) return this;
+    final harmony = _parseHarmony('${decoded['harmonic_plan'] ?? ''}');
 
     for (final trackValue in tracksValue) {
       if (trackValue is! Map) continue;
@@ -248,6 +252,25 @@ class SongPlan {
           targetLow,
           targetHigh,
         );
+      }
+
+      // If the bass is a chromatic/scale run, snap it to the root or fifth of
+      // the chord written for that bar. This is the last-resort guard for the
+      // exact failure users reported ("arpeggio" from MIDI 22 to 109).
+      if (role == 'bass' && harmony.isNotEmpty && beatsPerBar > 0) {
+        for (final note in notes) {
+          final start = note['start_beat'];
+          if (start is! num) continue;
+          final bar = ((start.toDouble() - startBeat) / beatsPerBar).floor() + 1;
+          final tones = _harmonyAt(harmony, bar);
+          if (tones == null) continue;
+          note['pitch'] = _nearestChordTone(
+            (note['pitch'] as num).toInt(),
+            tones.bass,
+            targetLow,
+            targetHigh,
+          );
+        }
       }
     }
     return SongPlan.parse(jsonEncode(decoded));
@@ -510,6 +533,87 @@ class _StepwiseRun {
 
   final int count;
   final int span;
+}
+
+class _HarmonySpan {
+  const _HarmonySpan(this.startBar, this.endBar, this.bass);
+
+  final int startBar;
+  final int endBar;
+  final Set<int> bass;
+}
+
+List<_HarmonySpan> _parseHarmony(String text) {
+  final spans = <_HarmonySpan>[];
+  if (text.trim().isEmpty) return spans;
+
+  for (final part in text.split('|')) {
+    final range = RegExp(r'(\d+)(?:\s*-\s*(\d+))?').firstMatch(part);
+    if (range == null) continue;
+    final start = int.tryParse(range.group(1) ?? '');
+    if (start == null) continue;
+    final end = int.tryParse(range.group(2) ?? '') ?? start;
+    var rest = part.replaceFirst(range.group(0)!, '');
+    rest = rest.replaceFirst(
+      RegExp(r'^[\s:.\-]*bars?\s*', caseSensitive: false),
+      '',
+    );
+    rest = rest.replaceFirst(RegExp(r'^[\s:.\-]+'), '').trim();
+    final tones = _bassTones(rest);
+    if (tones.isEmpty) continue;
+    spans.add(_HarmonySpan(start, end, tones));
+  }
+  return spans;
+}
+
+Set<int> _bassTones(String symbol) {
+  final match = RegExp(r'^([A-Ga-g])([#b]?)').firstMatch(symbol.trim());
+  if (match == null) return const <int>{};
+  const base = <String, int>{
+    'C': 0,
+    'D': 2,
+    'E': 4,
+    'F': 5,
+    'G': 7,
+    'A': 9,
+    'B': 11,
+  };
+  final letter = match.group(1)!.toUpperCase();
+  var root = base[letter]!;
+  final accidental = match.group(2) ?? '';
+  if (accidental == '#') root++;
+  if (accidental == 'b') root--;
+
+  final rest = symbol.substring(match.end).toLowerCase();
+  final isDiminished =
+      rest.contains('dim') ||
+      rest.contains('°') ||
+      rest.contains('ø') ||
+      rest.contains('b5');
+  final isAugmented = rest.contains('aug') || rest.startsWith('+');
+  final fifth = isDiminished ? 6 : (isAugmented ? 8 : 7);
+  return {(root % 12 + 12) % 12, (root + fifth) % 12};
+}
+
+_HarmonySpan? _harmonyAt(List<_HarmonySpan> spans, int bar) {
+  for (final span in spans) {
+    if (bar >= span.startBar && bar <= span.endBar) return span;
+  }
+  return null;
+}
+
+int _nearestChordTone(int pitch, Set<int> pitchClasses, int low, int high) {
+  var best = pitch.clamp(low, high);
+  var bestDistance = 999;
+  for (var candidate = low; candidate <= high; candidate++) {
+    if (!pitchClasses.contains(candidate % 12)) continue;
+    final distance = (candidate - pitch).abs();
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  return best;
 }
 
 _StepwiseRun? _stepwiseRun(List<SongPlanNote> notes) {

@@ -139,6 +139,7 @@ void main() {
   test('normalizes piano register and folds invalid MIDI pitches', () {
     final plan = SongPlan.parse('''
       {
+        "harmonic_plan": "bars 1-2 Bm | 3-4 G",
         "tracks": [
           {"name": "Melody", "role": "melody", "instrument": "piano",
            "clips": [{"start_beat": 0, "length_beats": 4,
@@ -158,11 +159,18 @@ void main() {
       }
     ''');
 
-    final normalized = plan.normalizedForPiano();
+    final normalized = plan.normalizedForPiano(
+      startBeat: 0,
+      beatsPerBar: 4,
+    );
     final melodyNotes = normalized.tracks.first.clips.single.notes;
     final bassNotes = normalized.tracks.last.clips.single.notes;
     expect(melodyNotes.every((n) => n.pitch >= 60 && n.pitch <= 84), isTrue);
     expect(bassNotes.every((n) => n.pitch >= 40 && n.pitch <= 60), isTrue);
+    expect(
+      bassNotes.every((n) => const {11, 6}.contains(n.pitch % 12)),
+      isTrue,
+    );
     expect(normalized.rawJson, contains('"pitch"'));
   });
 }

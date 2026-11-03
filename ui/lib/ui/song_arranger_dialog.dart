@@ -314,7 +314,10 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
           'Aplicando guardia de registro/MIDI al plan:\n'
           '${remaining.map((issue) => '- $issue').join('\n')}',
         );
-        plan = plan.normalizedForPiano();
+        plan = plan.normalizedForPiano(
+          startBeat: windowStart,
+          beatsPerBar: widget.service.beatsPerBar,
+        );
       }
 
       setState(() {
