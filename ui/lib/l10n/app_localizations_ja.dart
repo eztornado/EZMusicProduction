@@ -73,6 +73,12 @@ class AppLocalizationsJa extends AppLocalizations {
   String get appMenuRemote => 'リモートコントロール';
 
   @override
+  String get appMenuDebug => 'デバッグ';
+
+  @override
+  String get appMenuDebugTooltip => 'リアルタイムデバッグコンソールを開く';
+
+  @override
   String get transportTempoTimeSig => 'テンポと拍子';
 
   @override
@@ -466,8 +472,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get soundLibEmpty => '該当なし';
 
   @override
-  String get soundLibFooter =>
-      'Wikimedia Commons と Internet Archive の自由ライセンス（CC0 / パブリックドメイン / CC-BY / BY-SA）のサウンドです。各ダウンロードには帰属表示の .license.txt が保存されます — 作品でのライセンス遵守をお願いします。';
+  String get soundLibFooter => 'Wikimedia Commons と Internet Archive の自由ライセンス（CC0 / パブリックドメイン / CC-BY / BY-SA）のサウンドです。各ダウンロードには帰属表示の .license.txt が保存されます — 作品でのライセンス遵守をお願いします。';
 
   @override
   String soundLibSourceTooltip(String url, String license) {
@@ -670,8 +675,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get prefMidiLatency => 'MIDI 入力レイテンシー';
 
   @override
-  String get prefMidiLatencyHelp =>
-      'ms — MIDI 録音を前にずらします。ノートが遅れて聴こえる場合は値を上げてください';
+  String get prefMidiLatencyHelp => 'ms — MIDI 録音を前にずらします。ノートが遅れて聴こえる場合は値を上げてください';
 
   @override
   String prefActiveInputs(String count) {
@@ -679,8 +683,7 @@ class AppLocalizationsJa extends AppLocalizations {
   }
 
   @override
-  String get prefNoInputs =>
-      '⚠ 使用中のデバイスに入力がありません — 録音するには「入力デバイス」でマイクのあるデバイスを選んでください';
+  String get prefNoInputs => '⚠ 使用中のデバイスに入力がありません — 録音するには「入力デバイス」でマイクのあるデバイスを選んでください';
 
   @override
   String get prefRescan => 'デバイスを再スキャン';
@@ -808,12 +811,10 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerBrief => '何を作りますか？';
 
   @override
-  String get arrangerBriefHint =>
-      '例：16小節のオーガニックハウス。グルーヴのあるドラム、動くベース、温かいパッド、シンプルなリード';
+  String get arrangerBriefHint => '例：16小節のオーガニックハウス。グルーヴのあるドラム、動くベース、温かいパッド、シンプルなリード';
 
   @override
-  String get arrangerPrivacyHint =>
-      '送信されるのは要約されたコンテキスト（トラック、コード、MIDIの抜粋）のみです。音声はこのコンピューターから出ません。';
+  String get arrangerPrivacyHint => '送信されるのは要約されたコンテキスト（トラック、コード、MIDIの抜粋）のみです。音声はこのコンピューターから出ません。';
 
   @override
   String get arrangerBars => '小節';
@@ -845,7 +846,10 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerThinking => 'モデルが作曲しています…';
 
   @override
-  String get arrangerThinkingHint => '1〜2分かかることがあります。適用するまでプロジェクトは変更されません。';
+  String get arrangerAnalyzing => 'ブリーフを分析し、スタイルを調査しています…';
+
+  @override
+  String get arrangerThinkingHint => 'ブリーフの分析とアレンジには数分かかることがあります。適用するまでプロジェクトは変更されません。';
 
   @override
   String get arrangerRefining => '提案を改善しています…';
@@ -885,12 +889,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerProposal => '提案';
 
   @override
-  String arrangerSummary(
-    int newTracks,
-    int reusedTracks,
-    int clips,
-    int notes,
-  ) {
+  String arrangerSummary(int newTracks, int reusedTracks, int clips, int notes) {
     return '新規 $newTracks · 再利用 $reusedTracks · $clips クリップ · $notes ノート';
   }
 
@@ -927,8 +926,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerSettingsTitle => 'AI設定';
 
   @override
-  String get arrangerSettingsHint =>
-      'OpenAI、OpenRouter、LM Studio、Ollama などの互換サーバーに対応しています。';
+  String get arrangerSettingsHint => 'OpenAI、OpenRouter、LM Studio、Ollama などの互換サーバーに対応しています。';
 
   @override
   String get arrangerBaseUrl => 'サーバーURL';
@@ -967,8 +965,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerTimeout => 'タイムアウト';
 
   @override
-  String get arrangerTimeoutHint =>
-      'アレンジ生成時にモデルを待つ最大秒数です。遅いモデルやローカルサーバーでは増やしてください。';
+  String get arrangerTimeoutHint => 'アレンジ生成時にモデルを待つ最大秒数です。遅いモデルやローカルサーバーでは増やしてください。';
 
   @override
   String get arrangerTestConnection => '接続をテスト';
@@ -985,12 +982,10 @@ class AppLocalizationsJa extends AppLocalizations {
   }
 
   @override
-  String get arrangerKeySecurity =>
-      'キーは制限された権限の別ファイルに保存され、プロジェクトやログには書き込まれません。';
+  String get arrangerKeySecurity => 'キーは制限された権限の別ファイルに保存され、プロジェクトやログには書き込まれません。';
 
   @override
-  String get arrangerInvalidUrl =>
-      'URLは http:// または https:// で始まり、サーバーを含む必要があります。';
+  String get arrangerInvalidUrl => 'URLは http:// または https:// で始まり、サーバーを含む必要があります。';
 
   @override
   String get arrangerSave => '保存';
@@ -1107,6 +1102,39 @@ class AppLocalizationsJa extends AppLocalizations {
   String get aiNoInstrumentTrack => 'AI 生成を使うにはインストゥルメントトラックを作成または選択してください。';
 
   @override
+  String get prefSectionDebug => 'デバッグ';
+
+  @override
+  String get prefDebugMode => 'デバッグモード';
+
+  @override
+  String get prefDebugModeHelp => '上部バーにデバッグボタンを表示し、AIアレンジのプロンプトを含むアプリの活動を記録します。';
+
+  @override
+  String get debugConsoleTitle => 'デバッグコンソール';
+
+  @override
+  String get debugConsoleLive => 'ライブ';
+
+  @override
+  String get debugConsolePaused => '一時停止';
+
+  @override
+  String get debugConsolePause => '一時停止';
+
+  @override
+  String get debugConsoleResume => '再開';
+
+  @override
+  String get debugConsoleClear => 'クリア';
+
+  @override
+  String get debugConsoleCopy => 'コピー';
+
+  @override
+  String get debugConsoleEmpty => 'まだ活動がありません。AIアレンジを実行すると、送受信したプロンプトが表示されます。';
+
+  @override
   String get prefSectionRemote => 'リモートコントロール';
 
   @override
@@ -1153,45 +1181,4 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefRemoteHelp => 'リモートアプリでこのアドレスとコードを入力してください。';
-
-  @override
-  String get prefSectionDebug => 'デバッグ';
-
-  @override
-  String get prefDebugMode => 'デバッグモード';
-
-  @override
-  String get prefDebugModeHelp =>
-      '上部バーにデバッグボタンを表示し、AIアレンジのプロンプトを含むアプリの活動を記録します。';
-
-  @override
-  String get appMenuDebug => 'デバッグ';
-
-  @override
-  String get appMenuDebugTooltip => 'リアルタイムデバッグコンソールを開く';
-
-  @override
-  String get debugConsoleTitle => 'デバッグコンソール';
-
-  @override
-  String get debugConsoleLive => 'ライブ';
-
-  @override
-  String get debugConsolePaused => '一時停止';
-
-  @override
-  String get debugConsolePause => '一時停止';
-
-  @override
-  String get debugConsoleResume => '再開';
-
-  @override
-  String get debugConsoleClear => 'クリア';
-
-  @override
-  String get debugConsoleCopy => 'コピー';
-
-  @override
-  String get debugConsoleEmpty =>
-      'まだ活動がありません。AIアレンジを実行すると、送受信したプロンプトが表示されます。';
 }

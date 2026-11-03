@@ -73,6 +73,12 @@ class AppLocalizationsEs extends AppLocalizations {
   String get appMenuRemote => 'Control remoto';
 
   @override
+  String get appMenuDebug => 'Debug';
+
+  @override
+  String get appMenuDebugTooltip => 'Abrir la consola de depuración en tiempo real';
+
+  @override
   String get transportTempoTimeSig => 'Tempo y compás';
 
   @override
@@ -112,8 +118,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get transportOff => 'Off';
 
   @override
-  String get transportRestartAudio =>
-      'Reiniciar audio (recupera el sonido si se corta)';
+  String get transportRestartAudio => 'Reiniciar audio (recupera el sonido si se corta)';
 
   @override
   String get transportUndo => 'Undo';
@@ -207,8 +212,7 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get pianoRollHint =>
-      'arrastrar en vacío: seleccionar · arrastrar: mover · borde: largo · Supr: borrar';
+  String get pianoRollHint => 'arrastrar en vacío: seleccionar · arrastrar: mover · borde: largo · Supr: borrar';
 
   @override
   String get pianoRollUndock => 'Desacoplar en su propia ventana';
@@ -244,8 +248,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get pianoRollFreeze => 'Freeze';
 
   @override
-  String get automationAddPluginHint =>
-      'Añade un plugin a este canal para automatizar sus parámetros';
+  String get automationAddPluginHint => 'Añade un plugin a este canal para automatizar sus parámetros';
 
   @override
   String get automationChoosePlugin => 'Elige plugin';
@@ -279,15 +282,13 @@ class AppLocalizationsEs extends AppLocalizations {
   String get automationAddParamLane => 'Añadir lane de parámetro de plugin';
 
   @override
-  String get automationHint =>
-      'click: añadir punto · arrastrar: mover · click derecho: borrar';
+  String get automationHint => 'click: añadir punto · arrastrar: mover · click derecho: borrar';
 
   @override
   String get automationUndock => 'Desacoplar en su propia ventana';
 
   @override
-  String get automationNoSelection =>
-      'Selecciona una pista en el header para editar su automatización';
+  String get automationNoSelection => 'Selecciona una pista en el header para editar su automatización';
 
   @override
   String get automationEmpty => 'Sin automatización — click para añadir puntos';
@@ -353,8 +354,7 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get exportMp3Soon =>
-      'MP3: próximamente (requiere codificador externo)';
+  String get exportMp3Soon => 'MP3: próximamente (requiere codificador externo)';
 
   @override
   String get exportClose => 'Cerrar';
@@ -472,8 +472,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get soundLibEmpty => 'Nada por aquí';
 
   @override
-  String get soundLibFooter =>
-      'Sonidos de Wikimedia Commons e Internet Archive bajo licencias libres (CC0 / dominio público / CC-BY / BY-SA). Cada descarga guarda su fichero de atribución .license.txt — respeta la licencia en tus obras.';
+  String get soundLibFooter => 'Sonidos de Wikimedia Commons e Internet Archive bajo licencias libres (CC0 / dominio público / CC-BY / BY-SA). Cada descarga guarda su fichero de atribución .license.txt — respeta la licencia en tus obras.';
 
   @override
   String soundLibSourceTooltip(String url, String license) {
@@ -676,8 +675,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get prefMidiLatency => 'Latencia MIDI entrada';
 
   @override
-  String get prefMidiLatencyHelp =>
-      'ms — desplaza las grabaciones MIDI antes; súbela si tus notas suenan tarde';
+  String get prefMidiLatencyHelp => 'ms — desplaza las grabaciones MIDI antes; súbela si tus notas suenan tarde';
 
   @override
   String prefActiveInputs(String count) {
@@ -685,8 +683,7 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get prefNoInputs =>
-      '⚠ El dispositivo activo no tiene entradas — para grabar, elige en \"Dispositivo de entrada\" uno con micrófono';
+  String get prefNoInputs => '⚠ El dispositivo activo no tiene entradas — para grabar, elige en \"Dispositivo de entrada\" uno con micrófono';
 
   @override
   String get prefRescan => 'Re-escanear dispositivos';
@@ -729,8 +726,7 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get aiLongHint =>
-      'Los clips largos usan un candidato para que la generación sea rápida.';
+  String get aiLongHint => 'Los clips largos usan un candidato para que la generación sea rápida.';
 
   @override
   String get aiVariations => 'Variaciones';
@@ -769,8 +765,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get aiIdleHint => 'Elige el tipo y pulsa Generar.';
 
   @override
-  String get aiNoModel =>
-      'Los modelos Magenta no están instalados: se usará el generador interno.';
+  String get aiNoModel => 'Los modelos Magenta no están instalados: se usará el generador interno.';
 
   @override
   String get aiProviderLabel => 'Motor';
@@ -804,26 +799,22 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerToolbarButton => 'Arreglo';
 
   @override
-  String get arrangerToolbarTooltip =>
-      'Crear un arreglo de varias pistas con IA';
+  String get arrangerToolbarTooltip => 'Crear un arreglo de varias pistas con IA';
 
   @override
   String get arrangerTitle => 'Arreglista IA';
 
   @override
-  String get arrangerSubtitle =>
-      'Compón varias pistas a la vez con un modelo externo';
+  String get arrangerSubtitle => 'Compón varias pistas a la vez con un modelo externo';
 
   @override
   String get arrangerBrief => '¿Qué quieres crear?';
 
   @override
-  String get arrangerBriefHint =>
-      'p. ej. house orgánico de 16 compases: batería con groove, bajo con movimiento, pads cálidos y un lead sencillo';
+  String get arrangerBriefHint => 'p. ej. house orgánico de 16 compases: batería con groove, bajo con movimiento, pads cálidos y un lead sencillo';
 
   @override
-  String get arrangerPrivacyHint =>
-      'Solo se envía el contexto resumido (pistas, acordes y fragmentos MIDI) al servidor que configures; el audio no sale del equipo.';
+  String get arrangerPrivacyHint => 'Solo se envía el contexto resumido (pistas, acordes y fragmentos MIDI) al servidor que configures; el audio no sale del equipo.';
 
   @override
   String get arrangerBars => 'Compases';
@@ -846,8 +837,7 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get arrangerNoKey =>
-      'Configura una clave de API en Ajustes de IA, o usa un servidor local.';
+  String get arrangerNoKey => 'Configura una clave de API en Ajustes de IA, o usa un servidor local.';
 
   @override
   String get arrangerSettings => 'Ajustes de IA';
@@ -856,8 +846,10 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerThinking => 'El modelo está componiendo…';
 
   @override
-  String get arrangerThinkingHint =>
-      'Puede tardar uno o dos minutos. El proyecto no cambia hasta que apliques.';
+  String get arrangerAnalyzing => 'Analizando el brief e investigando el estilo…';
+
+  @override
+  String get arrangerThinkingHint => 'El análisis del brief y el arreglo pueden tardar varios minutos. El proyecto no cambia hasta que apliques.';
 
   @override
   String get arrangerRefining => 'Refinando la propuesta…';
@@ -897,25 +889,18 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerProposal => 'Propuesta';
 
   @override
-  String arrangerSummary(
-    int newTracks,
-    int reusedTracks,
-    int clips,
-    int notes,
-  ) {
+  String arrangerSummary(int newTracks, int reusedTracks, int clips, int notes) {
     return '$newTracks nuevas · $reusedTracks reutilizadas · $clips clips · $notes notas';
   }
 
   @override
-  String get arrangerPreviewHint =>
-      'Al aplicarla se crea una sola entrada de deshacer.';
+  String get arrangerPreviewHint => 'Al aplicarla se crea una sola entrada de deshacer.';
 
   @override
   String get arrangerRefineHint => 'Qué mejorar (opcional)';
 
   @override
-  String get arrangerRefineDefault =>
-      'Mejora el groove, la conducción de voces y el contraste entre secciones.';
+  String get arrangerRefineDefault => 'Mejora el groove, la conducción de voces y el contraste entre secciones.';
 
   @override
   String get arrangerRefine => 'Refinar';
@@ -941,8 +926,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerSettingsTitle => 'Ajustes de IA';
 
   @override
-  String get arrangerSettingsHint =>
-      'Compatible con OpenAI, OpenRouter, LM Studio, Ollama y servidores locales similares.';
+  String get arrangerSettingsHint => 'Compatible con OpenAI, OpenRouter, LM Studio, Ollama y servidores locales similares.';
 
   @override
   String get arrangerBaseUrl => 'URL del servidor';
@@ -957,8 +941,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerApiKeyHint => 'Se guarda solo en este equipo';
 
   @override
-  String get arrangerApiKeyKept =>
-      'Déjala vacía para conservar la clave actual';
+  String get arrangerApiKeyKept => 'Déjala vacía para conservar la clave actual';
 
   @override
   String get arrangerApiKeyPresent => 'Clave configurada';
@@ -967,8 +950,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerApiKeyMissing => 'Sin clave';
 
   @override
-  String get arrangerLocalNoKey =>
-      'Si usas un servidor local, la clave puede estar vacía.';
+  String get arrangerLocalNoKey => 'Si usas un servidor local, la clave puede estar vacía.';
 
   @override
   String get arrangerForgetKey => 'Olvidar clave guardada';
@@ -983,8 +965,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get arrangerTimeout => 'Tiempo de espera';
 
   @override
-  String get arrangerTimeoutHint =>
-      'Segundos máximos que se esperará al modelo al generar un arreglo. Súbelo para modelos lentos o servidores locales.';
+  String get arrangerTimeoutHint => 'Segundos máximos que se esperará al modelo al generar un arreglo. Súbelo para modelos lentos o servidores locales.';
 
   @override
   String get arrangerTestConnection => 'Probar conexión';
@@ -1001,12 +982,10 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get arrangerKeySecurity =>
-      'La clave se guarda en un archivo aparte con permisos restringidos y nunca se escribe en el proyecto ni en los registros.';
+  String get arrangerKeySecurity => 'La clave se guarda en un archivo aparte con permisos restringidos y nunca se escribe en el proyecto ni en los registros.';
 
   @override
-  String get arrangerInvalidUrl =>
-      'La URL debe empezar por http:// o https:// e incluir un servidor.';
+  String get arrangerInvalidUrl => 'La URL debe empezar por http:// o https:// e incluir un servidor.';
 
   @override
   String get arrangerSave => 'Guardar';
@@ -1117,12 +1096,43 @@ class AppLocalizationsEs extends AppLocalizations {
   String get aiToolbarButton => 'IA';
 
   @override
-  String get aiToolbarTooltip =>
-      'Generar un clip con IA en la pista de instrumento seleccionada';
+  String get aiToolbarTooltip => 'Generar un clip con IA en la pista de instrumento seleccionada';
 
   @override
-  String get aiNoInstrumentTrack =>
-      'Crea o selecciona una pista de instrumento para generar con IA.';
+  String get aiNoInstrumentTrack => 'Crea o selecciona una pista de instrumento para generar con IA.';
+
+  @override
+  String get prefSectionDebug => 'Depuración';
+
+  @override
+  String get prefDebugMode => 'Modo debug';
+
+  @override
+  String get prefDebugModeHelp => 'Muestra el botón Debug en la barra superior y registra la actividad de la app, incluidos los prompts de Arreglo IA.';
+
+  @override
+  String get debugConsoleTitle => 'Consola de depuración';
+
+  @override
+  String get debugConsoleLive => 'En vivo';
+
+  @override
+  String get debugConsolePaused => 'Pausada';
+
+  @override
+  String get debugConsolePause => 'Pausar';
+
+  @override
+  String get debugConsoleResume => 'Reanudar';
+
+  @override
+  String get debugConsoleClear => 'Limpiar';
+
+  @override
+  String get debugConsoleCopy => 'Copiar';
+
+  @override
+  String get debugConsoleEmpty => 'Sin actividad todavía. Ejecuta Arreglo IA para ver los prompts enviados y recibidos.';
 
   @override
   String get prefSectionRemote => 'Control remoto';
@@ -1162,8 +1172,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get prefRemoteStopped => 'Servidor detenido';
 
   @override
-  String get prefRemoteWarning =>
-      'Cualquiera en tu red local que tenga el código puede controlar esta DAW.';
+  String get prefRemoteWarning => 'Cualquiera en tu red local que tenga el código puede controlar esta DAW.';
 
   @override
   String prefRemoteError(String error) {
@@ -1171,48 +1180,5 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get prefRemoteHelp =>
-      'Abre la app remota y escribe esta dirección y el código.';
-
-  @override
-  String get prefSectionDebug => 'Depuración';
-
-  @override
-  String get prefDebugMode => 'Modo debug';
-
-  @override
-  String get prefDebugModeHelp =>
-      'Muestra el botón Debug en la barra superior y registra la actividad de la app, incluidos los prompts de Arreglo IA.';
-
-  @override
-  String get appMenuDebug => 'Debug';
-
-  @override
-  String get appMenuDebugTooltip =>
-      'Abrir la consola de depuración en tiempo real';
-
-  @override
-  String get debugConsoleTitle => 'Consola de depuración';
-
-  @override
-  String get debugConsoleLive => 'En vivo';
-
-  @override
-  String get debugConsolePaused => 'Pausada';
-
-  @override
-  String get debugConsolePause => 'Pausar';
-
-  @override
-  String get debugConsoleResume => 'Reanudar';
-
-  @override
-  String get debugConsoleClear => 'Limpiar';
-
-  @override
-  String get debugConsoleCopy => 'Copiar';
-
-  @override
-  String get debugConsoleEmpty =>
-      'Sin actividad todavía. Ejecuta Arreglo IA para ver los prompts enviados y recibidos.';
+  String get prefRemoteHelp => 'Abre la app remota y escribe esta dirección y el código.';
 }

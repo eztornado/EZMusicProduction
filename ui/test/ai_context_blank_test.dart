@@ -22,6 +22,9 @@ void main() {
     expect(context['key'], 'unspecified');
     expect(context['time_signature_numerator'], 4);
     expect(context['time_signature_denominator'], 4);
+    expect(context['window_start_beat'], 0);
+    expect(context['window_end_beat'], 32);
+    expect(context['window_beats'], 32);
     expect(context['tracks'], isEmpty);
 
     final analysis = context['analysis'] as Map<String, dynamic>;

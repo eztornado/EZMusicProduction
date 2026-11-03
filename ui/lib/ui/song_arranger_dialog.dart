@@ -4,6 +4,8 @@
 // context. The reply is a JSON plan; the engine validates the whole document
 // and applies it as a single undo entry (creating tracks and clips as needed).
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,6 +13,7 @@ import '../ai/ai_settings.dart';
 import '../ai/ai_settings_dialog.dart';
 import '../ai/llm_client.dart';
 import '../ai/song_plan.dart';
+import '../debug/debug_log.dart';
 import '../engine/engine_service.dart';
 import '../l10n/l10n.dart';
 
@@ -19,6 +22,33 @@ const Color _kPanelBg = Color(0xFF1B1D22);
 const Color _kTextDim = Color(0xFF9BA1AE);
 const Color _kAccent = Color(0xFF4D9DF7);
 const Color _kGreen = Color(0xFF4CC38A);
+
+/// Keeps the analyst's document compact and rejects truncated/non-JSON
+/// answers so the arranger can fall back to the original brief cleanly.
+String? _musicDirectionOrNull(String raw) {
+  try {
+    final decoded = jsonDecode(extractJsonObject(raw));
+    if (decoded is Map<String, dynamic> && decoded.isNotEmpty) {
+      return jsonEncode(decoded);
+    }
+  } catch (_) {
+    // Invalid or truncated analysis: ignore it.
+  }
+  return null;
+}
+
+double? _contextNumber(String contextJson, String key) {
+  try {
+    final decoded = jsonDecode(contextJson);
+    if (decoded is Map<String, dynamic>) {
+      final value = decoded[key];
+      if (value is num) return value.toDouble();
+    }
+  } catch (_) {
+    // Fall back to the values computed from the dialog.
+  }
+  return null;
+}
 
 /// Opens the song arranger. Returns true when a plan was applied.
 Future<bool?> showSongArrangerDialog(
@@ -66,6 +96,8 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
   bool _customBarsMode = false;
   bool _busy = false;
   bool _refining = false;
+  bool _analyzing = false;
+  String? _musicDirection;
   bool _cancelRequested = false;
   String? _error;
   SongPlan? _plan;
@@ -141,6 +173,8 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
     setState(() {
       _busy = true;
       _refining = false;
+      _analyzing = true;
+      _musicDirection = null;
       _error = null;
     });
 
@@ -150,15 +184,143 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
         anchorSeconds: _anchorSeconds,
         bars: _bars,
       );
+
+      String? musicDirection;
+      try {
+        final rawDirection = await client.analyzeBrief(
+          projectContextJson: projectContext,
+          brief: _brief.text,
+          bars: _bars,
+          startAt: _startDescription(l),
+        );
+        if (!mounted || client.isCancelled) return;
+        musicDirection = _musicDirectionOrNull(rawDirection);
+        if (musicDirection == null) {
+          DebugLog.write(
+            'ia',
+            'Análisis del brief descartado: la respuesta no es un objeto JSON válido.',
+          );
+        }
+      } on LlmException catch (e) {
+        if (client.isCancelled) return;
+        DebugLog.write('ia', 'Análisis del brief omitido: ${e.message}');
+      } catch (e) {
+        if (client.isCancelled) return;
+        DebugLog.write('ia', 'Análisis del brief omitido: $e');
+      } finally {
+        if (mounted) setState(() => _analyzing = false);
+      }
+
       final content = await client.createPlan(
         projectContextJson: projectContext,
         brief: _brief.text,
         bars: _bars,
         startAt: _startDescription(l),
+        musicDirectionJson: musicDirection,
       );
-      final plan = SongPlan.parse(content);
+      var plan = SongPlan.parse(content);
       if (!mounted || client.isCancelled) return;
-      setState(() => _plan = plan);
+
+      // Validate arithmetic, MIDI range and register before showing the
+      // preview. A single focused repair is much cheaper than applying a plan
+      // the engine will reject, and it fixes the common bar-vs-beat mistake.
+      final windowStart =
+          _contextNumber(projectContext, 'window_start_beat') ?? 0.0;
+      final expectedBeats =
+          _contextNumber(projectContext, 'window_beats') ??
+          _bars * widget.service.beatsPerBar;
+      final windowEnd =
+          _contextNumber(projectContext, 'window_end_beat') ??
+          windowStart + expectedBeats;
+      final actualBeats = plan.noteEndBeat;
+      final issues = plan.issuesForWindow(
+        startBeat: windowStart,
+        endBeat: windowEnd,
+      );
+      if (actualBeats + 0.01 < windowEnd) {
+        issues.add(
+          'The furthest note ends at beat ${actualBeats.toStringAsFixed(2)}, '
+          'but the requested window ends at beat '
+          '${windowEnd.toStringAsFixed(2)}. This is an arithmetic error, '
+          'usually caused by using the bar count as a beat count. Extend the '
+          'material so it reaches the end of the window.',
+        );
+      }
+
+      if (issues.isNotEmpty) {
+        DebugLog.write(
+          'ia',
+          'Plan con ${issues.length} problema(s); solicitando reparación:\n'
+          '${issues.map((issue) => '- $issue').join('\n')}',
+        );
+        setState(() => _refining = true);
+        try {
+          final repairedContent = await client.refinePlan(
+            projectContextJson: projectContext,
+            brief: _brief.text,
+            bars: _bars,
+            startAt: _startDescription(l),
+            previousPlanJson: plan.rawJson,
+            feedback:
+                'Fix every issue below and return the complete revised plan. '
+                'The requested window is beat '
+                '${windowStart.toStringAsFixed(2)} to '
+                '${windowEnd.toStringAsFixed(2)} (inclusive start, exclusive '
+                'end). Keep the same musical direction, instruments and form; '
+                'extend and develop the material instead of copying it.\n'
+                '${issues.map((issue) => '- $issue').join('\n')}\n'
+                'Do not return a plan with a pitch outside MIDI 0-127, a '
+                'chromatic/scale run instead of chord tones, a melody outside '
+                'C4-C6, or a window that ends before beat '
+                '${windowEnd.toStringAsFixed(2)}.',
+            musicDirectionJson: musicDirection,
+          );
+          final repaired = SongPlan.parse(repairedContent);
+          if (!mounted || client.isCancelled) return;
+          final repairedIssues = repaired.issuesForWindow(
+            startBeat: windowStart,
+            endBeat: windowEnd,
+          );
+          final repairedShort = repaired.noteEndBeat + 0.01 < windowEnd;
+          final oldScore = issues.length + (actualBeats + 0.01 < windowEnd ? 1 : 0);
+          final newScore =
+              repairedIssues.length + (repairedShort ? 1 : 0);
+          if (newScore < oldScore ||
+              (newScore == oldScore &&
+                  repaired.noteEndBeat > plan.noteEndBeat)) {
+            plan = repaired;
+          }
+        } catch (e) {
+          if (client.isCancelled) return;
+          DebugLog.write('ia', 'No se pudo reparar el plan: $e');
+        } finally {
+          if (mounted) setState(() => _refining = false);
+        }
+      }
+
+      final remaining = plan.issuesForWindow(
+        startBeat: windowStart,
+        endBeat: windowEnd,
+      );
+      final needsPitchGuard = remaining.any(
+        (issue) =>
+            issue.contains('outside MIDI') ||
+            issue.contains('median pitch') ||
+            issue.contains('stepwise run'),
+      );
+      if (needsPitchGuard) {
+        DebugLog.write(
+          'ia',
+          'Aplicando guardia de registro/MIDI al plan:\n'
+          '${remaining.map((issue) => '- $issue').join('\n')}',
+        );
+        plan = plan.normalizedForPiano();
+      }
+
+      setState(() {
+        _plan = plan;
+        _musicDirection = musicDirection;
+      });
     } on LlmException catch (e) {
       if (!mounted || client.isCancelled) return;
       setState(() => _error = l.arrangerGenerationFailed(e.message));
@@ -173,6 +335,7 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
       if (mounted) {
         setState(() {
           _busy = false;
+          _analyzing = false;
           _cancelRequested = false;
         });
       }
@@ -214,6 +377,7 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
         startAt: _startDescription(l),
         previousPlanJson: plan.rawJson,
         feedback: _refine.text,
+        musicDirectionJson: _musicDirection,
       );
       final refined = SongPlan.parse(content);
       if (!mounted || client.isCancelled) return;
@@ -456,7 +620,11 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _refining ? l.arrangerRefining : l.arrangerThinking,
+                            _analyzing
+                                ? l.arrangerAnalyzing
+                                : _refining
+                                ? l.arrangerRefining
+                                : l.arrangerThinking,
                             style: const TextStyle(
                               fontSize: 12,
                               color: _kAccent,

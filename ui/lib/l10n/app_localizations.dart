@@ -63,8 +63,7 @@ import 'app_localizations_ja.dart';
 /// be consistent with the languages listed in the AppLocalizations.supportedLocales
 /// property.
 abstract class AppLocalizations {
-  AppLocalizations(String locale)
-    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+  AppLocalizations(String locale) : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -72,8 +71,7 @@ abstract class AppLocalizations {
     return Localizations.of<AppLocalizations>(context, AppLocalizations)!;
   }
 
-  static const LocalizationsDelegate<AppLocalizations> delegate =
-      _AppLocalizationsDelegate();
+  static const LocalizationsDelegate<AppLocalizations> delegate = _AppLocalizationsDelegate();
 
   /// A list of this localizations delegate along with the default localizations
   /// delegates.
@@ -85,19 +83,18 @@ abstract class AppLocalizations {
   /// Additional delegates can be added by appending to this list in
   /// MaterialApp. This list does not have to be used at all if a custom list
   /// of delegates is preferred or required.
-  static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
-      <LocalizationsDelegate<dynamic>>[
-        delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-      ];
+  static const List<LocalizationsDelegate<dynamic>> localizationsDelegates = <LocalizationsDelegate<dynamic>>[
+    delegate,
+    GlobalMaterialLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+  ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('es'),
-    Locale('ja'),
+    Locale('ja')
   ];
 
   /// No description provided for @appTitle.
@@ -219,6 +216,18 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Control remoto'**
   String get appMenuRemote;
+
+  /// No description provided for @appMenuDebug.
+  ///
+  /// In es, this message translates to:
+  /// **'Debug'**
+  String get appMenuDebug;
+
+  /// No description provided for @appMenuDebugTooltip.
+  ///
+  /// In es, this message translates to:
+  /// **'Abrir la consola de depuración en tiempo real'**
+  String get appMenuDebugTooltip;
 
   /// No description provided for @transportTempoTimeSig.
   ///
@@ -1606,10 +1615,16 @@ abstract class AppLocalizations {
   /// **'El modelo está componiendo…'**
   String get arrangerThinking;
 
+  /// No description provided for @arrangerAnalyzing.
+  ///
+  /// In es, this message translates to:
+  /// **'Analizando el brief e investigando el estilo…'**
+  String get arrangerAnalyzing;
+
   /// No description provided for @arrangerThinkingHint.
   ///
   /// In es, this message translates to:
-  /// **'Puede tardar uno o dos minutos. El proyecto no cambia hasta que apliques.'**
+  /// **'El análisis del brief y el arreglo pueden tardar varios minutos. El proyecto no cambia hasta que apliques.'**
   String get arrangerThinkingHint;
 
   /// No description provided for @arrangerRefining.
@@ -2092,6 +2107,72 @@ abstract class AppLocalizations {
   /// **'Crea o selecciona una pista de instrumento para generar con IA.'**
   String get aiNoInstrumentTrack;
 
+  /// No description provided for @prefSectionDebug.
+  ///
+  /// In es, this message translates to:
+  /// **'Depuración'**
+  String get prefSectionDebug;
+
+  /// No description provided for @prefDebugMode.
+  ///
+  /// In es, this message translates to:
+  /// **'Modo debug'**
+  String get prefDebugMode;
+
+  /// No description provided for @prefDebugModeHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Muestra el botón Debug en la barra superior y registra la actividad de la app, incluidos los prompts de Arreglo IA.'**
+  String get prefDebugModeHelp;
+
+  /// No description provided for @debugConsoleTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Consola de depuración'**
+  String get debugConsoleTitle;
+
+  /// No description provided for @debugConsoleLive.
+  ///
+  /// In es, this message translates to:
+  /// **'En vivo'**
+  String get debugConsoleLive;
+
+  /// No description provided for @debugConsolePaused.
+  ///
+  /// In es, this message translates to:
+  /// **'Pausada'**
+  String get debugConsolePaused;
+
+  /// No description provided for @debugConsolePause.
+  ///
+  /// In es, this message translates to:
+  /// **'Pausar'**
+  String get debugConsolePause;
+
+  /// No description provided for @debugConsoleResume.
+  ///
+  /// In es, this message translates to:
+  /// **'Reanudar'**
+  String get debugConsoleResume;
+
+  /// No description provided for @debugConsoleClear.
+  ///
+  /// In es, this message translates to:
+  /// **'Limpiar'**
+  String get debugConsoleClear;
+
+  /// No description provided for @debugConsoleCopy.
+  ///
+  /// In es, this message translates to:
+  /// **'Copiar'**
+  String get debugConsoleCopy;
+
+  /// No description provided for @debugConsoleEmpty.
+  ///
+  /// In es, this message translates to:
+  /// **'Sin actividad todavía. Ejecuta Arreglo IA para ver los prompts enviados y recibidos.'**
+  String get debugConsoleEmpty;
+
   /// No description provided for @prefSectionRemote.
   ///
   /// In es, this message translates to:
@@ -2175,62 +2256,9 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Abre la app remota y escribe esta dirección y el código.'**
   String get prefRemoteHelp;
-
-  /// In es, this message translates to:
-  /// **'Depuración'**
-  String get prefSectionDebug;
-
-  /// In es, this message translates to:
-  /// **'Modo debug'**
-  String get prefDebugMode;
-
-  /// In es, this message translates to:
-  /// **'Muestra el botón Debug en la barra superior y registra la actividad de la app, incluidos los prompts de Arreglo IA.'**
-  String get prefDebugModeHelp;
-
-  /// In es, this message translates to:
-  /// **'Debug'**
-  String get appMenuDebug;
-
-  /// In es, this message translates to:
-  /// **'Abrir la consola de depuración en tiempo real'**
-  String get appMenuDebugTooltip;
-
-  /// In es, this message translates to:
-  /// **'Consola de depuración'**
-  String get debugConsoleTitle;
-
-  /// In es, this message translates to:
-  /// **'En vivo'**
-  String get debugConsoleLive;
-
-  /// In es, this message translates to:
-  /// **'Pausada'**
-  String get debugConsolePaused;
-
-  /// In es, this message translates to:
-  /// **'Pausar'**
-  String get debugConsolePause;
-
-  /// In es, this message translates to:
-  /// **'Reanudar'**
-  String get debugConsoleResume;
-
-  /// In es, this message translates to:
-  /// **'Limpiar'**
-  String get debugConsoleClear;
-
-  /// In es, this message translates to:
-  /// **'Copiar'**
-  String get debugConsoleCopy;
-
-  /// In es, this message translates to:
-  /// **'Sin actividad todavía. Ejecuta Arreglo IA para ver los prompts enviados y recibidos.'**
-  String get debugConsoleEmpty;
 }
 
-class _AppLocalizationsDelegate
-    extends LocalizationsDelegate<AppLocalizations> {
+class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
   const _AppLocalizationsDelegate();
 
   @override
@@ -2239,28 +2267,26 @@ class _AppLocalizationsDelegate
   }
 
   @override
-  bool isSupported(Locale locale) =>
-      <String>['en', 'es', 'ja'].contains(locale.languageCode);
+  bool isSupported(Locale locale) => <String>['en', 'es', 'ja'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
 }
 
 AppLocalizations lookupAppLocalizations(Locale locale) {
+
+
   // Lookup logic when only language code is specified.
   switch (locale.languageCode) {
-    case 'en':
-      return AppLocalizationsEn();
-    case 'es':
-      return AppLocalizationsEs();
-    case 'ja':
-      return AppLocalizationsJa();
+    case 'en': return AppLocalizationsEn();
+    case 'es': return AppLocalizationsEs();
+    case 'ja': return AppLocalizationsJa();
   }
 
   throw FlutterError(
     'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
     'an issue with the localizations generation tool. Please file an issue '
     'on GitHub with a reproducible sample app and the gen-l10n configuration '
-    'that was used.',
+    'that was used.'
   );
 }

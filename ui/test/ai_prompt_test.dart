@@ -24,4 +24,18 @@ void main() {
     expect(systemPrompt, isNot(contains('1600 notes total')));
     expect(systemPrompt, contains('safety limits, not targets'));
   });
+
+  test('brief analyst respects scope and translates references', () {
+    for (final phrase in const [
+      'music director',
+      'copyrighted melody',
+      'piano intro stays',
+      'arrangement_scope',
+      'register_plan',
+      'arranger_brief',
+      'project tempo is authoritative',
+    ]) {
+      expect(briefAnalysisPrompt, contains(phrase), reason: phrase);
+    }
+  });
 }

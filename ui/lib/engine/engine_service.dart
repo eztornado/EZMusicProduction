@@ -1398,6 +1398,10 @@ class EngineService extends ChangeNotifier {
   int get timeSigNumerator => _engine.timeSigNumerator;
   int get timeSigDenominator => _engine.timeSigDenominator;
 
+  /// Quarter-note beats in one bar (4/4 = 4, 6/8 = 3).
+  double get beatsPerBar =>
+      timeSigDenominator > 0 ? timeSigNumerator * 4.0 / timeSigDenominator : 4.0;
+
   /// Sets the project tempo (one undo entry). Returns an error or null.
   String? setTempo(double bpm) {
     final result = _engine.setTempoBpm(bpm);

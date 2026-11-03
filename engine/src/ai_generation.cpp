@@ -1590,9 +1590,18 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
     root->setProperty("bar_seconds", a.barSeconds);
     root->setProperty("beat_seconds", a.beatSeconds);
     root->setProperty("anchor_seconds", a.anchor);
-    root->setProperty("anchor_beat", a.anchor / juce::jmax(1.0e-9, a.beatSeconds));
+    const double beatSeconds = juce::jmax(1.0e-9, a.beatSeconds);
+    const double beatsPerBar = a.barSeconds / beatSeconds;
+    const double startBeat = a.anchor / beatSeconds;
+    const double windowBeats = (double) a.bars * beatsPerBar;
+    root->setProperty("anchor_beat", startBeat);
     root->setProperty("anchor_bar", a.anchor / juce::jmax(1.0e-9, a.barSeconds));
     root->setProperty("requested_bars", a.bars);
+    // Make the bar-to-beat conversion impossible to miss. Models routinely
+    // write `length_beats: 32` for a 32-bar request and cover only 8 bars.
+    root->setProperty("window_start_beat", startBeat);
+    root->setProperty("window_end_beat", startBeat + windowBeats);
+    root->setProperty("window_beats", windowBeats);
     root->setProperty("selected_track_id", (juce::int64) selectedTrack);
 
     // A brand-new session has no document yet. Be explicit about the blank
