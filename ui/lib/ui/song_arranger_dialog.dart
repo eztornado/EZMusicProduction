@@ -168,15 +168,30 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
     }
 
     final client = LlmClient();
+    final analyzeBrief = AiSettings.analyzeBrief;
+    final autoRepair = AiSettings.autoRepair;
+    final generationClock = Stopwatch()..start();
+    var analysisMs = 0;
+    var arrangerMs = 0;
+    var repairMs = 0;
+    var calls = 0;
+    var outcome = 'cancelado';
     _client = client;
     _cancelRequested = false;
     setState(() {
       _busy = true;
       _refining = false;
-      _analyzing = true;
+      _analyzing = analyzeBrief;
       _musicDirection = null;
       _error = null;
     });
+    DebugLog.write(
+      'ia',
+      'telemetría · generación · inicio · barras=$_bars · '
+          'inicio=${_startDescription(l)} · análisis=${analyzeBrief ? 'on' : 'off'} · '
+          'auto_reparación=${autoRepair ? 'on' : 'off'} · '
+          'timeout=${AiSettings.timeoutSeconds}s · max_tokens=${AiSettings.maxTokens}',
+    );
 
     try {
       final projectContext = widget.service.aiContextJson(
@@ -186,38 +201,56 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
       );
 
       String? musicDirection;
+      if (analyzeBrief) {
+        calls++;
+        final analysisClock = Stopwatch()..start();
+        try {
+          final rawDirection = await client.analyzeBrief(
+            projectContextJson: projectContext,
+            brief: _brief.text,
+            bars: _bars,
+            startAt: _startDescription(l),
+          );
+          if (!mounted || client.isCancelled) return;
+          musicDirection = _musicDirectionOrNull(rawDirection);
+          if (musicDirection == null) {
+            DebugLog.write(
+              'ia',
+              'Análisis del brief descartado: la respuesta no es un objeto JSON válido.',
+            );
+          }
+        } on LlmException catch (e) {
+          if (client.isCancelled) return;
+          DebugLog.write('ia', 'Análisis del brief omitido: ${e.message}');
+        } catch (e) {
+          if (client.isCancelled) return;
+          DebugLog.write('ia', 'Análisis del brief omitido: $e');
+        } finally {
+          analysisMs = analysisClock.elapsedMilliseconds;
+          if (mounted) setState(() => _analyzing = false);
+        }
+      } else {
+        DebugLog.write(
+          'ia',
+          'telemetría · generación · análisis omitido por ajuste; se envía '
+              'el brief original directamente al arreglador.',
+        );
+      }
+
+      calls++;
+      final arrangerClock = Stopwatch()..start();
+      late final String content;
       try {
-        final rawDirection = await client.analyzeBrief(
+        content = await client.createPlan(
           projectContextJson: projectContext,
           brief: _brief.text,
           bars: _bars,
           startAt: _startDescription(l),
+          musicDirectionJson: musicDirection,
         );
-        if (!mounted || client.isCancelled) return;
-        musicDirection = _musicDirectionOrNull(rawDirection);
-        if (musicDirection == null) {
-          DebugLog.write(
-            'ia',
-            'Análisis del brief descartado: la respuesta no es un objeto JSON válido.',
-          );
-        }
-      } on LlmException catch (e) {
-        if (client.isCancelled) return;
-        DebugLog.write('ia', 'Análisis del brief omitido: ${e.message}');
-      } catch (e) {
-        if (client.isCancelled) return;
-        DebugLog.write('ia', 'Análisis del brief omitido: $e');
       } finally {
-        if (mounted) setState(() => _analyzing = false);
+        arrangerMs = arrangerClock.elapsedMilliseconds;
       }
-
-      final content = await client.createPlan(
-        projectContextJson: projectContext,
-        brief: _brief.text,
-        bars: _bars,
-        startAt: _startDescription(l),
-        musicDirectionJson: musicDirection,
-      );
       var plan = SongPlan.parse(content);
       if (!mounted || client.isCancelled) return;
 
@@ -247,11 +280,13 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
         );
       }
 
-      if (issues.isNotEmpty) {
+      if (issues.isNotEmpty && autoRepair) {
+        calls++;
+        final repairClock = Stopwatch()..start();
         DebugLog.write(
           'ia',
           'Plan con ${issues.length} problema(s); solicitando reparación:\n'
-          '${issues.map((issue) => '- $issue').join('\n')}',
+              '${issues.map((issue) => '- $issue').join('\n')}',
         );
         setState(() => _refining = true);
         try {
@@ -282,9 +317,9 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
             endBeat: windowEnd,
           );
           final repairedShort = repaired.noteEndBeat + 0.01 < windowEnd;
-          final oldScore = issues.length + (actualBeats + 0.01 < windowEnd ? 1 : 0);
-          final newScore =
-              repairedIssues.length + (repairedShort ? 1 : 0);
+          final oldScore =
+              issues.length + (actualBeats + 0.01 < windowEnd ? 1 : 0);
+          final newScore = repairedIssues.length + (repairedShort ? 1 : 0);
           if (newScore < oldScore ||
               (newScore == oldScore &&
                   repaired.noteEndBeat > plan.noteEndBeat)) {
@@ -294,8 +329,17 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
           if (client.isCancelled) return;
           DebugLog.write('ia', 'No se pudo reparar el plan: $e');
         } finally {
+          repairMs = repairClock.elapsedMilliseconds;
           if (mounted) setState(() => _refining = false);
         }
+      } else if (issues.isNotEmpty) {
+        DebugLog.write(
+          'ia',
+          'telemetría · generación · reparación automática desactivada; '
+              'se muestra el plan con ${issues.length} problema(s) para revisarlo '
+              'o refinarlo manualmente:\n'
+              '${issues.map((issue) => '- $issue').join('\n')}',
+        );
       }
 
       final remaining = plan.issuesForWindow(
@@ -312,7 +356,7 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
         DebugLog.write(
           'ia',
           'Aplicando guardia de registro/MIDI al plan:\n'
-          '${remaining.map((issue) => '- $issue').join('\n')}',
+              '${remaining.map((issue) => '- $issue').join('\n')}',
         );
         plan = plan.normalizedForPiano(
           startBeat: windowStart,
@@ -324,16 +368,27 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
         _plan = plan;
         _musicDirection = musicDirection;
       });
+      outcome = 'ok';
     } on LlmException catch (e) {
       if (!mounted || client.isCancelled) return;
+      outcome = 'error';
       setState(() => _error = l.arrangerGenerationFailed(e.message));
     } on FormatException catch (e) {
       if (!mounted || client.isCancelled) return;
+      outcome = 'error';
       setState(() => _error = l.arrangerGenerationFailed(e.message));
     } catch (e) {
       if (!mounted || client.isCancelled) return;
+      outcome = 'error';
       setState(() => _error = l.arrangerGenerationFailed('$e'));
     } finally {
+      DebugLog.write(
+        'ia',
+        'telemetría · generación · fin=$outcome · llamadas=$calls · '
+            'análisis_ms=$analysisMs · arreglo_ms=$arrangerMs · '
+            'reparación_ms=$repairMs · total_ms='
+            '${generationClock.elapsedMilliseconds}',
+      );
       if (identical(_client, client)) _client = null;
       if (mounted) {
         setState(() {
@@ -359,6 +414,8 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
     }
 
     final client = LlmClient();
+    final refineClock = Stopwatch()..start();
+    var outcome = 'cancelado';
     _client = client;
     _cancelRequested = false;
     setState(() {
@@ -366,6 +423,10 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
       _refining = true;
       _error = null;
     });
+    DebugLog.write(
+      'ia',
+      'telemetría · refinamiento manual · inicio · barras=$_bars',
+    );
 
     try {
       final projectContext = widget.service.aiContextJson(
@@ -385,16 +446,25 @@ class _SongArrangerBodyState extends State<_SongArrangerBody> {
       final refined = SongPlan.parse(content);
       if (!mounted || client.isCancelled) return;
       setState(() => _plan = refined);
+      outcome = 'ok';
     } on LlmException catch (e) {
       if (!mounted || client.isCancelled) return;
+      outcome = 'error';
       setState(() => _error = l.arrangerGenerationFailed(e.message));
     } on FormatException catch (e) {
       if (!mounted || client.isCancelled) return;
+      outcome = 'error';
       setState(() => _error = l.arrangerGenerationFailed(e.message));
     } catch (e) {
       if (!mounted || client.isCancelled) return;
+      outcome = 'error';
       setState(() => _error = l.arrangerGenerationFailed('$e'));
     } finally {
+      DebugLog.write(
+        'ia',
+        'telemetría · refinamiento manual · fin=$outcome · '
+            'total_ms=${refineClock.elapsedMilliseconds}',
+      );
       if (identical(_client, client)) _client = null;
       if (mounted) {
         setState(() {

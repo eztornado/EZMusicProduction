@@ -63,6 +63,10 @@ void main() {
           request.headers.value(HttpHeaders.authorizationHeader),
           'Bearer test-secret',
         );
+        expect(
+          request.headers.value(HttpHeaders.connectionHeader)?.toLowerCase(),
+          'close',
+        );
         bodies.add(
           jsonDecode(await utf8.decoder.bind(request).join())
               as Map<String, dynamic>,
@@ -201,12 +205,13 @@ void main() {
       });
       addTearDown(server.close);
 
-      final result = await LlmClient(
-        baseUrl: 'http://127.0.0.1:${server.port}/v1',
-        model: 'probe-model',
-        apiKey: 'probe-secret',
-        timeoutSeconds: 45,
-      ).testConnection();
+      final result =
+          await LlmClient(
+            baseUrl: 'http://127.0.0.1:${server.port}/v1',
+            model: 'probe-model',
+            apiKey: 'probe-secret',
+            timeoutSeconds: 45,
+          ).testConnection();
 
       expect(result, 'OK');
       final body = bodies.single;

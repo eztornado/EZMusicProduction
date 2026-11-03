@@ -56,6 +56,10 @@ void main() {
         request.headers.value(HttpHeaders.authorizationHeader),
         'Bearer test-secret',
       );
+      expect(
+        request.headers.value(HttpHeaders.connectionHeader)?.toLowerCase(),
+        'close',
+      );
       request.response.headers.contentType = ContentType.json;
       request.response.write(
         jsonEncode({
@@ -93,6 +97,15 @@ void main() {
     expect(log, contains('← HTTP 200'));
     expect(log, contains('← assistant'));
     expect(log, contains('{"title":"ok","tracks":[]}'));
+    expect(log, contains('telemetría · id='));
+    expect(log, contains('etapa=arranger'));
+    expect(log, contains('prompt_chars='));
+    expect(log, contains('prompt_tokens≈'));
+    expect(log, contains('cabeceras_http=200'));
+    expect(log, contains('primer_byte_ms='));
+    expect(log, contains('respuesta_chars='));
+    expect(log, contains('fin=ok'));
+    expect(log, contains('total_ms='));
     expect(log, isNot(contains('test-secret')));
   });
 }

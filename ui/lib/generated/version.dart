@@ -1,2 +1,2 @@
 // GENERADO por build_app.sh — no editar a mano.
-const String kAppVersion = '26.11.03.1';
+const String kAppVersion = '26.11.03.2';

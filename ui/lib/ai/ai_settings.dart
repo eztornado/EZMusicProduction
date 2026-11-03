@@ -16,6 +16,8 @@ const int kDefaultAiMaxTokens = 8192;
 const int kDefaultAiTimeoutSeconds = 180;
 const int kMinAiTimeoutSeconds = 30;
 const int kMaxAiTimeoutSeconds = 1800;
+const bool kDefaultAnalyzeBrief = true;
+const bool kDefaultAutoRepair = true;
 
 class AiSettings {
   AiSettings._();
@@ -53,6 +55,8 @@ class AiSettings {
   static double temperature = kDefaultAiTemperature;
   static int maxTokens = kDefaultAiMaxTokens;
   static int timeoutSeconds = kDefaultAiTimeoutSeconds;
+  static bool analyzeBrief = kDefaultAnalyzeBrief;
+  static bool autoRepair = kDefaultAutoRepair;
 
   static bool get hasKey => apiKey.trim().isNotEmpty;
 
@@ -65,6 +69,8 @@ class AiSettings {
     temperature = kDefaultAiTemperature;
     maxTokens = kDefaultAiMaxTokens;
     timeoutSeconds = kDefaultAiTimeoutSeconds;
+    analyzeBrief = kDefaultAnalyzeBrief;
+    autoRepair = kDefaultAutoRepair;
 
     try {
       final f = file;
@@ -97,6 +103,10 @@ class AiSettings {
                 kMaxAiTimeoutSeconds,
               );
             }
+            final storedAnalyze = ai['analyze_brief'];
+            if (storedAnalyze is bool) analyzeBrief = storedAnalyze;
+            final storedRepair = ai['auto_repair'];
+            if (storedRepair is bool) autoRepair = storedRepair;
           }
         }
       }
@@ -136,6 +146,8 @@ class AiSettings {
     double? temperature,
     int? maxTokens,
     int? timeoutSeconds,
+    bool? analyzeBrief,
+    bool? autoRepair,
   }) {
     if (baseUrl != null) AiSettings.baseUrl = baseUrl.trim();
     if (model != null) AiSettings.model = model.trim();
@@ -152,6 +164,8 @@ class AiSettings {
         kMaxAiTimeoutSeconds,
       );
     }
+    if (analyzeBrief != null) AiSettings.analyzeBrief = analyzeBrief;
+    if (autoRepair != null) AiSettings.autoRepair = autoRepair;
 
     try {
       final f = file;
@@ -171,6 +185,8 @@ class AiSettings {
         'temperature': AiSettings.temperature,
         'max_tokens': AiSettings.maxTokens,
         'timeout_seconds': AiSettings.timeoutSeconds,
+        'analyze_brief': AiSettings.analyzeBrief,
+        'auto_repair': AiSettings.autoRepair,
       };
       const encoder = JsonEncoder.withIndent('  ');
       f.writeAsStringSync('${encoder.convert(data)}\n');

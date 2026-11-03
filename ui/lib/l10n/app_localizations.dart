@@ -1843,6 +1843,30 @@ abstract class AppLocalizations {
   /// **'Segundos máximos que se esperará al modelo al generar un arreglo. Súbelo para modelos lentos o servidores locales.'**
   String get arrangerTimeoutHint;
 
+  /// No description provided for @arrangerAnalyzeBrief.
+  ///
+  /// In es, this message translates to:
+  /// **'Analizar el brief antes de arreglar'**
+  String get arrangerAnalyzeBrief;
+
+  /// No description provided for @arrangerAnalyzeBriefHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Hace una primera llamada para investigar estilo, escalas, patrones e instrumentación. Desactívalo en modelos locales lentos para ahorrar una llamada.'**
+  String get arrangerAnalyzeBriefHelp;
+
+  /// No description provided for @arrangerAutoRepair.
+  ///
+  /// In es, this message translates to:
+  /// **'Reparar el plan automáticamente'**
+  String get arrangerAutoRepair;
+
+  /// No description provided for @arrangerAutoRepairHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Si el plan no cubre la ventana o tiene notas inválidas, hace una llamada extra para corregirlo. Desactívalo para decidir tú cuándo usar Refinar.'**
+  String get arrangerAutoRepairHelp;
+
   /// No description provided for @arrangerTestConnection.
   ///
   /// In es, this message translates to:

@@ -968,6 +968,18 @@ class AppLocalizationsJa extends AppLocalizations {
   String get arrangerTimeoutHint => 'アレンジ生成時にモデルを待つ最大秒数です。遅いモデルやローカルサーバーでは増やしてください。';
 
   @override
+  String get arrangerAnalyzeBrief => 'アレンジ前にブリーフを分析';
+
+  @override
+  String get arrangerAnalyzeBriefHelp => 'スタイル、スケール、パターン、楽器編成を調べるために最初の呼び出しを行います。遅いローカルモデルではオフにすると呼び出しを節約できます。';
+
+  @override
+  String get arrangerAutoRepair => 'プランを自動修復';
+
+  @override
+  String get arrangerAutoRepairHelp => 'プランが指定範囲を満たさない、または無効な音がある場合に追加の呼び出しで修正します。オフにすると「洗練」を押したときだけ実行します。';
+
+  @override
   String get arrangerTestConnection => '接続をテスト';
 
   @override

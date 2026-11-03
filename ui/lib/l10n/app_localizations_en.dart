@@ -968,6 +968,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get arrangerTimeoutHint => 'Maximum seconds to wait for the model while generating an arrangement. Increase it for slow models or local servers.';
 
   @override
+  String get arrangerAnalyzeBrief => 'Analyze the brief before arranging';
+
+  @override
+  String get arrangerAnalyzeBriefHelp => 'Makes a first call to research style, scales, patterns and instrumentation. Turn it off on slow local models to save a call.';
+
+  @override
+  String get arrangerAutoRepair => 'Repair the plan automatically';
+
+  @override
+  String get arrangerAutoRepairHelp => 'If the plan misses the window or has invalid notes, makes an extra call to fix it. Turn it off to decide yourself when to use Refine.';
+
+  @override
   String get arrangerTestConnection => 'Test connection';
 
   @override

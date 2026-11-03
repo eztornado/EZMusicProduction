@@ -17,6 +17,11 @@ const int kBriefAnalysisTimeoutSeconds = 180;
 const int kBriefAnalysisMaxTokens = 1400;
 const double kBriefAnalysisTemperature = 0.55;
 
+/// Rough budget used only for the debug warning. A real model context depends
+/// on the server's n_ctx/num_ctx setting; this is the common local default.
+const int kTelemetryContextWarningTokens = 8192;
+const double kTelemetryCharsPerToken = 4.0;
+
 class LlmException implements Exception {
   const LlmException(this.message);
   final String message;
@@ -231,6 +236,7 @@ class LlmClient {
       maxTokens: maxTokens,
       temperature: kBriefAnalysisTemperature,
       timeoutSeconds: timeout,
+      operation: 'analysis',
     );
   }
 
@@ -309,7 +315,7 @@ class LlmClient {
     return _send([
       {'role': 'system', 'content': systemPrompt},
       {'role': 'user', 'content': user.toString()},
-    ]);
+    ], operation: 'arranger');
   }
 
   /// Second pass: sends the previous plan back with feedback and asks for a
@@ -396,7 +402,7 @@ class LlmClient {
     return _send([
       {'role': 'system', 'content': systemPrompt},
       {'role': 'user', 'content': user.toString()},
-    ]);
+    ], operation: 'repair');
   }
 
   /// Minimal request used by the settings dialog to verify the endpoint, the
@@ -414,8 +420,14 @@ class LlmClient {
       jsonMode: false,
       maxTokens: 16,
       temperature: 0,
+      operation: 'test',
     );
   }
+
+  static int _requestSequence = 0;
+
+  String _estimateTokens(int chars) =>
+      (chars / kTelemetryCharsPerToken).ceil().toString();
 
   Future<String> _send(
     List<Map<String, dynamic>> messages, {
@@ -423,6 +435,7 @@ class LlmClient {
     int? maxTokens,
     double? temperature,
     int? timeoutSeconds,
+    String? operation,
   }) async {
     if (_cancelled) throw const LlmException('Solicitud cancelada.');
     if (_baseUrl.isEmpty) {
@@ -434,13 +447,27 @@ class LlmClient {
 
     final waitSeconds = timeoutSeconds ?? _timeoutSeconds;
     final uri = _chatUri(_baseUrl);
+    final requestId = ++_requestSequence;
+    final stage = operation ?? 'request';
+    final clock = Stopwatch()..start();
+    final deadline = Duration(seconds: waitSeconds);
     final client =
         HttpClient()
           ..connectionTimeout = const Duration(seconds: 20)
           ..idleTimeout = const Duration(seconds: 30);
     _client = client;
+    var outcome = 'error';
+
+    DebugLog.write(
+      'ia',
+      'telemetría · id=$requestId · etapa=$stage · inicio · modelo=$_model · '
+          'endpoint=$uri · timeout=${waitSeconds}s · json=${jsonMode ? 'on' : 'off'}',
+    );
 
     try {
+      // The deadline is for the whole request, not per HTTP phase. Without
+      // this a header wait plus a body wait (and a JSON-mode retry) could take
+      // 4x the configured timeout and look like a hang.
       var content = await _post(
         client,
         uri,
@@ -448,11 +475,24 @@ class LlmClient {
         includeJsonMode: jsonMode,
         maxTokens: maxTokens,
         temperature: temperature,
-        timeoutSeconds: waitSeconds,
-      );
+        requestId: requestId,
+        stage: stage,
+      ).timeout(deadline);
       // Some OpenAI-compatible servers reject response_format. Retry once
       // without it; the plan parser still recovers a fenced JSON object.
       if (content == null && jsonMode) {
+        final remaining = deadline.inMilliseconds - clock.elapsedMilliseconds;
+        if (remaining <= 0) {
+          throw TimeoutException(
+            'Sin tiempo para reintentar sin JSON mode.',
+            deadline,
+          );
+        }
+        DebugLog.write(
+          'ia',
+          'telemetría · id=$requestId · etapa=$stage · reintento sin JSON '
+              'mode · restante≈${(remaining / 1000).toStringAsFixed(1)}s',
+        );
         content = await _post(
           client,
           uri,
@@ -460,30 +500,44 @@ class LlmClient {
           includeJsonMode: false,
           maxTokens: maxTokens,
           temperature: temperature,
-          timeoutSeconds: waitSeconds,
-        );
+          requestId: requestId,
+          stage: stage,
+        ).timeout(Duration(milliseconds: remaining));
       }
       if (content == null || content.trim().isEmpty) {
         DebugLog.write('ia', '✗ respuesta vacía');
         throw const LlmException('El modelo devolvió una respuesta vacía.');
       }
+      outcome = 'ok';
       DebugLog.write('ia', '← assistant\n$content');
       return content;
     } on TimeoutException {
-      DebugLog.write(
-        'ia',
-        '✗ timeout tras $waitSeconds s esperando a $uri',
-      );
+      outcome = 'timeout';
+      DebugLog.write('ia', '✗ timeout tras $waitSeconds s esperando a $uri');
       throw LlmException(
         'El servidor de IA no respondió en $waitSeconds s. '
         'Revisa la conexión o prueba otro modelo.',
       );
     } on SocketException catch (e) {
+      outcome = 'socket_error';
       DebugLog.write('ia', '✗ conexión fallida con $uri: ${e.message}');
       throw LlmException(
         'No se pudo conectar con el servidor de IA: ${e.message}',
       );
+    } catch (e) {
+      outcome = e is LlmException ? 'error' : 'unexpected_error';
+      DebugLog.write(
+        'ia',
+        'telemetría · id=$requestId · etapa=$stage · error=${e.runtimeType} · '
+            '$e',
+      );
+      rethrow;
     } finally {
+      DebugLog.write(
+        'ia',
+        'telemetría · id=$requestId · etapa=$stage · fin=$outcome · '
+            'total_ms=${clock.elapsedMilliseconds}',
+      );
       if (identical(_client, client)) _client = null;
       client.close(force: true);
     }
@@ -496,12 +550,18 @@ class LlmClient {
     Uri uri,
     List<Map<String, dynamic>> messages, {
     required bool includeJsonMode,
-    required int timeoutSeconds,
+    required int requestId,
+    required String stage,
     int? maxTokens,
     double? temperature,
   }) async {
+    final connectClock = Stopwatch()..start();
     final request = await client.postUrl(uri);
     request.headers.contentType = ContentType.json;
+    // Local servers (especially llama.cpp) can leave a keep-alive connection
+    // half-busy after a long non-streaming completion. Force a fresh socket
+    // for every attempt so the second stage never inherits a stale one.
+    request.headers.set(HttpHeaders.connectionHeader, 'close');
     final key = _apiKey;
     if (key.isNotEmpty) {
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $key');
@@ -510,25 +570,78 @@ class LlmClient {
     request.headers.set('X-Title', 'EZMusicProduction');
     request.headers.set('HTTP-Referer', 'https://ezmusicproduction.local');
 
+    final maxOutputTokens = maxTokens ?? _maxTokens;
+    final effectiveTemperature = temperature ?? _temperature;
     final body = <String, dynamic>{
       'model': _model,
       'messages': messages,
-      'temperature': temperature ?? _temperature,
-      'max_tokens': maxTokens ?? _maxTokens,
+      'temperature': effectiveTemperature,
+      'max_tokens': maxOutputTokens,
       'stream': false,
       if (includeJsonMode) 'response_format': {'type': 'json_object'},
     };
+    final bodyJson = jsonEncode(body);
+    var promptChars = 0;
+    for (final message in messages) {
+      final content = message['content'];
+      if (content is String) promptChars += content.length;
+    }
+    final promptTokens = (promptChars / kTelemetryCharsPerToken).ceil();
+    DebugLog.write(
+      'ia',
+      'telemetría · id=$requestId · etapa=$stage · conexión_ms='
+          '${connectClock.elapsedMilliseconds} · prompt_chars=$promptChars · '
+          'prompt_tokens≈$promptTokens · max_tokens=$maxOutputTokens · '
+          'temperatura=${effectiveTemperature.toStringAsFixed(2)} · '
+          'cuerpo_chars=${bodyJson.length}',
+    );
+    if (promptTokens + maxOutputTokens > kTelemetryContextWarningTokens) {
+      DebugLog.write(
+        'ia',
+        '⚠ telemetría · id=$requestId · etapa=$stage · presupuesto≈'
+            '${promptTokens + maxOutputTokens} tokens (prompt≈$promptTokens + '
+            'salida=$maxOutputTokens). Si n_ctx=8192, no cabe: reduce el contexto '
+            'o max_tokens, o sube n_ctx en el servidor.',
+      );
+    }
     // El modo debug registra el prompt completo (sin cabeceras ni API key).
     DebugLog.write(
       'ia',
       '→ $_model · $uri · JSON ${includeJsonMode ? 'on' : 'off'}\n'
           '${const JsonEncoder.withIndent('  ').convert(body)}',
     );
-    request.write(jsonEncode(body));
+    request.write(bodyJson);
 
-    final wait = Duration(seconds: timeoutSeconds);
-    final response = await request.close().timeout(wait);
-    final text = await response.transform(utf8.decoder).join().timeout(wait);
+    final headersClock = Stopwatch()..start();
+    final response = await request.close();
+    DebugLog.write(
+      'ia',
+      'telemetría · id=$requestId · etapa=$stage · cabeceras_http='
+          '${response.statusCode} · cabeceras_ms=${headersClock.elapsedMilliseconds}',
+    );
+
+    final textBuffer = StringBuffer();
+    var firstByteMs = -1;
+    final bodyClock = Stopwatch()..start();
+    await for (final chunk in response.transform(utf8.decoder)) {
+      if (firstByteMs < 0) {
+        firstByteMs = bodyClock.elapsedMilliseconds;
+        DebugLog.write(
+          'ia',
+          'telemetría · id=$requestId · etapa=$stage · primer_byte_ms='
+              '$firstByteMs',
+        );
+      }
+      textBuffer.write(chunk);
+    }
+    final text = textBuffer.toString();
+    DebugLog.write(
+      'ia',
+      'telemetría · id=$requestId · etapa=$stage · cuerpo_ms='
+          '${bodyClock.elapsedMilliseconds} · primer_byte_ms=$firstByteMs · '
+          'respuesta_chars=${text.length} · respuesta_tokens≈'
+          '${_estimateTokens(text.length)}',
+    );
     DebugLog.write('ia', '← HTTP ${response.statusCode} · $uri\n$text');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -565,6 +678,14 @@ class LlmClient {
     if (first is! Map) {
       throw const LlmException('La respuesta del modelo está mal formada.');
     }
+    final usage = decoded['usage'];
+    final finishReason = first['finish_reason'];
+    DebugLog.write(
+      'ia',
+      'telemetría · id=$requestId · etapa=$stage · finish='
+          '${finishReason ?? 'n/a'} · '
+          'usage=${usage is Map ? jsonEncode(usage) : 'n/a'}',
+    );
     final message = first['message'];
     if (message is! Map) {
       throw const LlmException('La respuesta no contiene ningún mensaje.');
