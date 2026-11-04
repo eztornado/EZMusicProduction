@@ -63,6 +63,10 @@ void main() {
           request.headers.value(HttpHeaders.authorizationHeader),
           'Bearer test-secret',
         );
+        expect(
+          request.headers.value(HttpHeaders.connectionHeader)?.toLowerCase(),
+          'close',
+        );
         bodies.add(
           jsonDecode(await utf8.decoder.bind(request).join())
               as Map<String, dynamic>,
@@ -75,10 +79,13 @@ void main() {
 
       configure(server.port);
       final result = await LlmClient().createPlan(
-        projectContextJson: '{"tempo_bpm":120}',
+        projectContextJson:
+            '{"tempo_bpm":120,"beats_per_bar":4.0,"anchor_beat":0,'
+            '"window_beats":32,"window_end_beat":32}',
         brief: 'house',
         bars: 8,
         startAt: 'bar 1',
+        musicDirectionJson: '{"genre":"house","arrangement_scope":"club"}',
       );
 
       expect(result, '{"title":"ok","tracks":[]}');
@@ -88,9 +95,96 @@ void main() {
       expect(body['temperature'], 0.7);
       expect(body['response_format'], {'type': 'json_object'});
       expect(body['messages'], hasLength(2));
-      expect((body['messages'] as List).last['content'], contains('house'));
+      final userMessage = (body['messages'] as List).last['content'] as String;
+      expect(userMessage, contains('house'));
+      expect(userMessage, contains('MUSICAL PRIORITIES'));
+      expect(userMessage, contains('primary motif'));
+      expect(userMessage, contains('voice leading'));
+      expect(userMessage, contains('MUSIC DIRECTION'));
+      expect(userMessage, contains('"genre":"house"'));
+      expect(userMessage, contains('32 quarter-note beats'));
+      expect(userMessage, contains('beat 32'));
     },
   );
+
+  test('brief analysis is a separate, shorter request', () async {
+    final bodies = <Map<String, dynamic>>[];
+    final server = await serve((request, index) async {
+      bodies.add(
+        jsonDecode(await utf8.decoder.bind(request).join())
+            as Map<String, dynamic>,
+      );
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        successBody('{"genre":"cinematic piano","instrumentation":["piano"]}'),
+      );
+      await request.response.close();
+    });
+    addTearDown(server.close);
+
+    configure(server.port);
+    final analysis = await LlmClient().analyzeBrief(
+      projectContextJson:
+          '{"tempo_bpm":120,"beats_per_bar":4.0,"anchor_beat":0,'
+          '"window_beats":64,"window_end_beat":64,"has_material":false}',
+      brief: 'intro a piano',
+      bars: 16,
+      startAt: 'inicio',
+    );
+
+    expect(analysis, contains('cinematic piano'));
+    final body = bodies.single;
+    expect(body['max_tokens'], kBriefAnalysisMaxTokens);
+    expect(body['temperature'], kBriefAnalysisTemperature);
+    final messages = body['messages'] as List;
+    expect(messages.first['content'], briefAnalysisPrompt);
+    final userMessage = messages.last['content'] as String;
+    expect(userMessage, contains('intro a piano'));
+    expect(userMessage, contains('64 quarter-note beats'));
+    expect(userMessage, contains('Do not write'));
+  });
+
+  test('analysis is carried into the arranger request', () async {
+    final bodies = <Map<String, dynamic>>[];
+    final server = await serve((request, index) async {
+      bodies.add(
+        jsonDecode(await utf8.decoder.bind(request).join())
+            as Map<String, dynamic>,
+      );
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        successBody(
+          index == 0
+              ? '{"genre":"cinematic piano","arrangement_scope":"solo piano"}'
+              : '{"title":"piano","tracks":[]}',
+        ),
+      );
+      await request.response.close();
+    });
+    addTearDown(server.close);
+
+    configure(server.port);
+    final client = LlmClient();
+    final direction = await client.analyzeBrief(
+      projectContextJson: '{"beats_per_bar":4.0}',
+      brief: 'intro a piano',
+      bars: 8,
+      startAt: 'inicio',
+    );
+    await client.createPlan(
+      projectContextJson: '{"beats_per_bar":4.0}',
+      brief: 'intro a piano',
+      bars: 8,
+      startAt: 'inicio',
+      musicDirectionJson: direction,
+    );
+
+    expect(bodies, hasLength(2));
+    final arrangerMessage =
+        (bodies.last['messages'] as List).last['content'] as String;
+    expect(arrangerMessage, contains('cinematic piano'));
+    expect(arrangerMessage, contains('solo piano'));
+  });
 
   test(
     'connection test sends a minimal request without project data',
@@ -111,12 +205,13 @@ void main() {
       });
       addTearDown(server.close);
 
-      final result = await LlmClient(
-        baseUrl: 'http://127.0.0.1:${server.port}/v1',
-        model: 'probe-model',
-        apiKey: 'probe-secret',
-        timeoutSeconds: 45,
-      ).testConnection();
+      final result =
+          await LlmClient(
+            baseUrl: 'http://127.0.0.1:${server.port}/v1',
+            model: 'probe-model',
+            apiKey: 'probe-secret',
+            timeoutSeconds: 45,
+          ).testConnection();
 
       expect(result, 'OK');
       final body = bodies.single;

@@ -5,6 +5,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../debug/debug_log.dart';
+import '../debug/debug_settings.dart';
 import '../engine/engine_service.dart';
 import '../l10n/l10n.dart';
 import '../l10n/locale_store.dart';
@@ -126,6 +128,30 @@ class _PreferencesBodyState extends State<_PreferencesBody> {
               _languageChip(context, 'English', const Locale('en')),
               _languageChip(context, '日本語', const Locale('ja')),
             ],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Divider(height: 1, color: Color(0xFF32363F)),
+          ),
+          // ---- modo debug ----
+          Text(l10n.prefSectionDebug,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
+          const SizedBox(height: 4),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            value: DebugSettings.enabled,
+            onChanged: (value) {
+              DebugSettings.save(enabled: value);
+              DebugLog.configure();
+              setState(() {});
+            },
+            title: Text(l10n.prefDebugMode,
+                style: const TextStyle(fontSize: 12, color: Color(0xFFE9EBF0))),
+            subtitle: Text(
+              l10n.prefDebugModeHelp,
+              style: const TextStyle(fontSize: 10, color: Color(0xFF9BA1AE)),
+            ),
           ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),

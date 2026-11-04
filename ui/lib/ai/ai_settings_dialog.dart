@@ -38,6 +38,8 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
   late double _temperature = AiSettings.temperature;
   late int _maxTokens = AiSettings.maxTokens;
   late int _timeoutSeconds = AiSettings.timeoutSeconds;
+  late bool _analyzeBrief = AiSettings.analyzeBrief;
+  late bool _autoRepair = AiSettings.autoRepair;
   bool _showKey = false;
   bool _testing = false;
   bool _testOk = false;
@@ -82,6 +84,8 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
       temperature: _temperature,
       maxTokens: _maxTokens,
       timeoutSeconds: _timeoutSeconds,
+      analyzeBrief: _analyzeBrief,
+      autoRepair: _autoRepair,
     );
   }
 
@@ -309,6 +313,45 @@ class _AiSettingsBodyState extends State<_AiSettingsBody> {
               Text(
                 l.arrangerTimeoutHint,
                 style: const TextStyle(fontSize: 10, color: _kTextDim),
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                value: _analyzeBrief,
+                onChanged:
+                    (v) => setState(() {
+                      _analyzeBrief = v;
+                      _testMessage = null;
+                    }),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                activeColor: _kAccent,
+                title: Text(
+                  l.arrangerAnalyzeBrief,
+                  style: const TextStyle(fontSize: 11),
+                ),
+                subtitle: Text(
+                  l.arrangerAnalyzeBriefHelp,
+                  style: const TextStyle(fontSize: 10, color: _kTextDim),
+                ),
+              ),
+              SwitchListTile(
+                value: _autoRepair,
+                onChanged:
+                    (v) => setState(() {
+                      _autoRepair = v;
+                      _testMessage = null;
+                    }),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                activeColor: _kAccent,
+                title: Text(
+                  l.arrangerAutoRepair,
+                  style: const TextStyle(fontSize: 11),
+                ),
+                subtitle: Text(
+                  l.arrangerAutoRepairHelp,
+                  style: const TextStyle(fontSize: 10, color: _kTextDim),
+                ),
               ),
               if (_testMessage != null)
                 Container(

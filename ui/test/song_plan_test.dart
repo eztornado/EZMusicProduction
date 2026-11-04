@@ -95,4 +95,87 @@ void main() {
     );
     expect(() => SongPlan.parse('not json'), throwsA(isA<FormatException>()));
   });
+
+  test('reports invalid MIDI, low melody and stepwise runs', () {
+    final plan = SongPlan.parse('''
+      {
+        "tracks": [
+          {"name": "Melody", "role": "melody", "instrument": "piano",
+           "clips": [{"start_beat": 0, "length_beats": 8,
+             "notes": [
+               {"pitch": 40, "start_beat": 0, "length_beats": 1},
+               {"pitch": 43, "start_beat": 1, "length_beats": 1},
+               {"pitch": 45, "start_beat": 2, "length_beats": 1},
+               {"pitch": 47, "start_beat": 3, "length_beats": 1},
+               {"pitch": 48, "start_beat": 4, "length_beats": 1},
+               {"pitch": 47, "start_beat": 5, "length_beats": 1},
+               {"pitch": 45, "start_beat": 6, "length_beats": 1},
+               {"pitch": 43, "start_beat": 7, "length_beats": 1}
+             ]}]},
+          {"name": "Bass", "role": "bass", "instrument": "piano",
+           "clips": [{"start_beat": 0, "length_beats": 8,
+             "notes": [
+               {"pitch": 130, "start_beat": 0, "length_beats": 1},
+               {"pitch": 132, "start_beat": 1, "length_beats": 1},
+               {"pitch": 135, "start_beat": 2, "length_beats": 1},
+               {"pitch": 137, "start_beat": 3, "length_beats": 1},
+               {"pitch": 140, "start_beat": 4, "length_beats": 1},
+               {"pitch": 142, "start_beat": 5, "length_beats": 1},
+               {"pitch": 145, "start_beat": 6, "length_beats": 1},
+               {"pitch": 147, "start_beat": 7, "length_beats": 1}
+             ]}]}
+        ]
+      }
+    ''');
+
+    final issues = plan.issuesForWindow(startBeat: 0, endBeat: 8);
+    expect(issues.any((issue) => issue.contains('outside MIDI')), isTrue);
+    expect(issues.any((issue) => issue.contains('median pitch')), isTrue);
+    expect(issues.any((issue) => issue.contains('stepwise run')), isTrue);
+    expect(plan.tracks.last.clips.single.notes.first.pitch, 127);
+    expect(plan.tracks.last.clips.single.notes.first.rawPitch, 130);
+  });
+
+  test('normalizes piano register and folds invalid MIDI pitches', () {
+    final plan = SongPlan.parse('''
+      {
+        "harmonic_plan": "bars 1-2 Bm | 3-4 G",
+        "tracks": [
+          {"name": "Melody", "role": "melody", "instrument": "piano",
+           "clips": [{"start_beat": 0, "length_beats": 4,
+             "notes": [
+               {"pitch": 40, "start_beat": 0, "length_beats": 1},
+               {"pitch": 43, "start_beat": 1, "length_beats": 1},
+               {"pitch": 47, "start_beat": 2, "length_beats": 1}
+             ]}]},
+          {"name": "Bass", "role": "bass", "instrument": "piano",
+           "clips": [{"start_beat": 0, "length_beats": 8,
+             "notes": [
+               {"pitch": 130, "start_beat": 0, "length_beats": 1},
+               {"pitch": 132, "start_beat": 1, "length_beats": 1},
+               {"pitch": 135, "start_beat": 2, "length_beats": 1},
+               {"pitch": 137, "start_beat": 3, "length_beats": 1},
+               {"pitch": 140, "start_beat": 4, "length_beats": 1},
+               {"pitch": 142, "start_beat": 5, "length_beats": 1},
+               {"pitch": 145, "start_beat": 6, "length_beats": 1},
+               {"pitch": 147, "start_beat": 7, "length_beats": 1}
+             ]}]}
+        ]
+      }
+    ''');
+
+    final normalized = plan.normalizedForPiano(
+      startBeat: 0,
+      beatsPerBar: 4,
+    );
+    final melodyNotes = normalized.tracks.first.clips.single.notes;
+    final bassNotes = normalized.tracks.last.clips.single.notes;
+    expect(melodyNotes.every((n) => n.pitch >= 60 && n.pitch <= 84), isTrue);
+    expect(bassNotes.every((n) => n.pitch >= 40 && n.pitch <= 60), isTrue);
+    expect(
+      bassNotes.every((n) => const {11, 6}.contains(n.pitch % 12)),
+      isTrue,
+    );
+    expect(normalized.rawJson, contains('"pitch"'));
+  });
 }

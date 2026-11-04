@@ -19,10 +19,13 @@ import 'l10n/l10n.dart';
 import 'l10n/locale_store.dart';
 import 'remote/remote_settings.dart';
 import 'ai/ai_settings.dart';
+import 'debug/debug_log.dart';
+import 'debug/debug_settings.dart';
 import 'ui/song_arranger_dialog.dart' show showSongArrangerDialog;
 import 'ui/mix_assistant_dialog.dart' show showMixAssistantDialog;
 import 'ui/app_alert.dart';
 import 'ui/automation_lane.dart';
+import 'ui/debug_console_window.dart';
 import 'ui/design.dart';
 import 'ui/export_dialog.dart';
 import 'ui/sound_library_dialog.dart';
@@ -42,6 +45,9 @@ Future<void> main(List<String> args) async {
   // ventana principal arranca el servidor; las sub-ventanas comparten motor.
   RemoteSettings.load();
   AiSettings.load();
+  DebugSettings.load();
+  // Captura debugPrint y deja el log listo en todas las ventanas/procesos.
+  DebugLog.configure();
   // Sub-window engines relaunch main with ['multi_window', windowId, json].
   if (args.isNotEmpty && args[0] == 'multi_window') {
     final conf =
@@ -126,6 +132,8 @@ class SubWindowApp extends StatelessWidget {
           frameTick: frameTick,
           height: null,
         );
+      case 'debug_console':
+        return const DebugConsoleWindow();
       default:
         return MixerZone(service: service, frameTick: frameTick, height: null);
     }
@@ -483,6 +491,13 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  /// Abre la consola de depuración en su propia ventana. Solo existe mientras
+  /// el modo debug está activo, así que no se ofrece en el arranque normal.
+  Future<void> _openDebugConsole() async {
+    if (_undocked.containsKey('debug_console')) return;
+    await _undock('debug_console', context.l10n.debugConsoleTitle);
+  }
+
   @override
   void dispose() {
     _lifecycle.dispose();
@@ -721,6 +736,20 @@ class _HomePageState extends State<HomePage>
                                         context,
                                         service,
                                       ),
+                                );
+                              },
+                            ),
+                            ValueListenableBuilder<bool>(
+                              valueListenable: DebugSettings.notifier,
+                              builder: (context, debugEnabled, _) {
+                                if (!debugEnabled) {
+                                  return const SizedBox.shrink();
+                                }
+                                return _ToolbarButton(
+                                  icon: Icons.terminal_rounded,
+                                  label: context.l10n.appMenuDebug,
+                                  tooltip: context.l10n.appMenuDebugTooltip,
+                                  onTap: _openDebugConsole,
                                 );
                               },
                             ),

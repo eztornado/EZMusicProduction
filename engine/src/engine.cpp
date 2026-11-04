@@ -4835,11 +4835,6 @@ const char* Engine::aiContextJson(TrackId selectedTrack, double anchorSeconds,
                                  int bars) const
 {
     auto project = std::atomic_load(&project_);
-    if (project == nullptr)
-    {
-        aiStringOut_ = "{}";
-        return aiStringOut_.c_str();
-    }
 
     ai::InstrumentCatalog catalog;
     catalog.ezsynthPresets = ezsynth::presetNamesForCatalog();
@@ -4862,9 +4857,25 @@ const char* Engine::aiContextJson(TrackId selectedTrack, double anchorSeconds,
             catalog.vstInstruments.push_back(std::move(plugin));
     }
 
+    // The app can be used before the first document is created. Do not send
+    // an empty object to the model: give it the session defaults and, above
+    // all, the instrument catalog, so a blank-slate brief can still choose
+    // real sounds. The analysis will mark the key/chords as unspecified.
+    std::shared_ptr<const Project> effective = project;
+    if (effective == nullptr)
+    {
+        auto empty = std::make_shared<Project>();
+        empty->sampleRate = defaultRate();
+        empty->name = "Untitled";
+        empty->tempoBpm = 120.0;
+        empty->timeSigNumerator = 4;
+        empty->timeSigDenominator = 4;
+        effective = std::move(empty);
+    }
+
     ai::Service service;
     aiStringOut_ = service
-                       .contextJson(*project, selectedTrack, anchorSeconds,
+                       .contextJson(*effective, selectedTrack, anchorSeconds,
                                     bars, catalog)
                        .toStdString();
     return aiStringOut_.c_str();
@@ -4899,6 +4910,24 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
         auto normalise = [] (juce::String text)
         {
             text = text.trim().toLowerCase();
+            // Instrument names reach us in English and Spanish, with or
+            // without accents (flautin / flautín, trombon / trombón).
+            static const juce::juce_wchar accents[] = {
+                0x00e1, 0x00e9, 0x00ed, 0x00f3, 0x00fa, 0x00fc, 0x00f1,
+                0x00e0, 0x00e8, 0x00ec, 0x00f2, 0x00f9,
+                0x00e2, 0x00ea, 0x00ee, 0x00f4, 0x00fb,
+                0x00e4, 0x00eb, 0x00ef, 0x00f6, 0x00df,
+            };
+            static const juce::juce_wchar plain[] = {
+                'a', 'e', 'i', 'o', 'u', 'u', 'n',
+                'a', 'e', 'i', 'o', 'u',
+                'a', 'e', 'i', 'o', 'u',
+                'a', 'e', 'i', 'o', 's',
+            };
+            for (size_t i = 0; i < juce::numElementsInArray(accents); ++i)
+                text = text.replaceCharacter(accents[i], plain[i]);
+            text = text.retainCharacters(
+                "abcdefghijklmnopqrstuvwxyz0123456789 _-");
             text = text.replaceCharacter(' ', '_')
                        .replaceCharacter('-', '_');
             while (text.contains("__"))
@@ -4997,6 +5026,155 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
             return -1;
         };
 
+        // Common English/Spanish names the model may use instead of the exact
+        // EZOrquestra stem. `program` is a substring of the installed stem;
+        // `gm` is the fallback when no such program is installed.
+        struct OrchestraAlias
+        {
+            const char* name;
+            const char* program;
+            int gm;
+        };
+        static const OrchestraAlias orchestraAliases[] = {
+            { "violin", "", 40 },
+            { "violin_1", "", 40 },
+            { "violin_2", "", 40 },
+            { "violin_i", "", 40 },
+            { "violin_ii", "", 40 },
+            { "violines", "", 40 },
+            { "viola", "violas_longs", 41 },
+            { "violas", "violas_longs", 41 },
+            { "cello", "cellos_vibrato", 42 },
+            { "cellos", "cellos_vibrato", 42 },
+            { "violonchelo", "cellos_vibrato", 42 },
+            { "violonchelos", "cellos_vibrato", 42 },
+            { "basses", "basses_vibrato", 43 },
+            { "double_bass", "basses_vibrato", 43 },
+            { "double_basses", "basses_vibrato", 43 },
+            { "contrabass", "basses_vibrato", 43 },
+            { "contrabajo", "basses_vibrato", 43 },
+            { "contrabajos", "basses_vibrato", 43 },
+            { "flute", "flute_longs", 73 },
+            { "flauta", "flute_longs", 73 },
+            { "flautas", "flute_longs", 73 },
+            { "piccolo", "piccolo_sustain", 72 },
+            { "flautin", "piccolo_sustain", 72 },
+            { "oboe", "oboe_vibrato", 68 },
+            { "oboes", "oboe_vibrato", 68 },
+            { "clarinet", "bb_clarinet_longs", 71 },
+            { "clarinete", "bb_clarinet_longs", 71 },
+            { "clarinets", "bb_clarinet_longs", 71 },
+            { "bass_clarinet", "bass_clarinet_longs", 71 },
+            { "bassoon", "bassoon_longs", 70 },
+            { "fagot", "bassoon_longs", 70 },
+            { "horn", "horn_longs", 60 },
+            { "horns", "horn_longs", 60 },
+            { "french_horn", "horn_longs", 60 },
+            { "trompa", "horn_longs", 60 },
+            { "trompas", "horn_longs", 60 },
+            { "trumpet", "trumpet_vibrato", 56 },
+            { "trumpets", "trumpet_vibrato", 56 },
+            { "trompeta", "trumpet_vibrato", 56 },
+            { "trompetas", "trumpet_vibrato", 56 },
+            { "trombone", "t_bone_sustain", 57 },
+            { "trombones", "t_bone_sustain", 57 },
+            { "trombon", "t_bone_sustain", 57 },
+            { "tuba", "tuba_longs", 58 },
+            { "tubas", "tuba_longs", 58 },
+            { "sax", "sax_vibrato", 65 },
+            { "saxophone", "sax_vibrato", 65 },
+            { "saxofon", "sax_vibrato", 65 },
+            { "saxofones", "sax_vibrato", 65 },
+            { "strings", "", 48 },
+            { "string", "", 48 },
+            { "string_ensemble", "", 48 },
+            { "ensemble_strings", "", 48 },
+            { "cuerdas", "", 48 },
+            { "brass", "", 61 },
+            { "brass_section", "", 61 },
+            { "metales", "", 61 },
+            { "woodwind", "", 71 },
+            { "woodwinds", "", 71 },
+            { "maderas", "", 71 },
+            { "choir", "", 52 },
+            { "voices", "", 52 },
+            { "vox", "", 52 },
+            { "coro", "", 52 },
+            { "harp", "", 46 },
+            { "arpa", "", 46 },
+            { "timpani", "", 47 },
+            { "timbales", "", 47 },
+            { "pizzicato", "violas_pizzicato", 45 },
+            { "pizzicato_strings", "violas_pizzicato", 45 },
+            { "tremolo", "violas_tremolo", 44 },
+            { "tremolo_strings", "violas_tremolo", 44 },
+        };
+
+        auto applyOrchestraName = [&] (const juce::String& name) -> bool
+        {
+            const auto want = normalise(name);
+            if (want.isEmpty())
+                return false;
+
+            // Exact or partial catalog name first: this is the preferred path
+            // and the one the model is instructed to use.
+            const int exact = findOrq(want);
+            if (exact >= 0 && setOrq(exact))
+                return true;
+
+            for (const auto& alias : orchestraAliases)
+            {
+                if (want != alias.name)
+                    continue;
+                if (alias.program[0] != '\0')
+                {
+                    const int index = findOrq(alias.program);
+                    if (index >= 0 && setOrq(index))
+                        return true;
+                }
+                setGm(alias.gm);
+                return true;
+            }
+
+            // The model may decorate a name ("solo_flute", "Viento_Flute_St").
+            // Match the longest known instrument word so a missing catalog or
+            // a truncated stem still lands on a usable GM sound.
+            const OrchestraAlias* best = nullptr;
+            size_t bestLength = 0;
+            for (const auto& alias : orchestraAliases)
+            {
+                const auto aliasName = normalise(alias.name);
+                if (aliasName.length() > bestLength && want.contains(aliasName))
+                {
+                    best = &alias;
+                    bestLength = aliasName.length();
+                }
+            }
+            if (best != nullptr)
+            {
+                if (best->program[0] != '\0')
+                {
+                    const int index = findOrq(best->program);
+                    if (index >= 0 && setOrq(index))
+                        return true;
+                }
+                setGm(best->gm);
+                return true;
+            }
+
+            if (want == "orchestra" || want == "orquesta" || want == "orq")
+            {
+                int index = findOrq("cellos_vibrato");
+                if (index < 0 && ! orqPrograms.isEmpty())
+                    index = 0;
+                if (index >= 0 && setOrq(index))
+                    return true;
+                setGm(48);
+                return true;
+            }
+            return false;
+        };
+
         auto setVst = [&] (juce::String wanted) -> bool
         {
             wanted = wanted.trim();
@@ -5041,11 +5219,11 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
         if (lower.startsWith("ezorq:"))
         {
             const auto program = raw.substring(6).trim();
-            const int index = findOrq(program);
-            if (index < 0)
-                error = "EZOrquestra has no program named " + program;
-            else if (! setOrq(index))
-                error = "EZOrquestra could not load " + program;
+            if (! applyOrchestraName(program))
+                error = "EZOrquestra has no program named " + program
+                        + (orqPrograms.isEmpty()
+                               ? " (no programs are installed)"
+                               : "");
             return slot;
         }
 
@@ -5061,47 +5239,11 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
             return slot;
         }
 
-        struct OrqAlias
-        {
-            const char* token;
-            const char* program;
-            int gm;
-        };
-        static const OrqAlias aliases[] = {
-            { "violin", "violins_longs", 40 },
-            { "violins", "violins_longs", 40 },
-            { "viola", "violas_longs", 41 },
-            { "violas", "violas_longs", 41 },
-            { "cello", "cellos_vibrato", 42 },
-            { "cellos", "cellos_vibrato", 42 },
-            { "basses", "basses_vibrato", 43 },
-            { "contrabass", "basses_vibrato", 43 },
-            { "double_bass", "basses_vibrato", 43 },
-            { "flute", "flute_longs", 73 },
-            { "piccolo", "piccolo_sustain", 72 },
-            { "oboe", "oboe_vibrato", 68 },
-            { "clarinet", "bb_clarinet_longs", 71 },
-            { "bass_clarinet", "bass_clarinet_longs", 71 },
-            { "bassoon", "bassoon_longs", 70 },
-            { "horn", "metal_horn_longs", 60 },
-            { "french_horn", "metal_horn_longs", 60 },
-            { "trumpet", "trumpet_vibrato", 56 },
-            { "trombone", "t_bone_sustain", 57 },
-            { "tuba", "tuba_longs", 58 },
-            { "sax", "sax_vibrato", 65 },
-            { "saxophone", "sax_vibrato", 65 },
-        };
-
-        for (const auto& alias : aliases)
-        {
-            if (token != alias.token)
-                continue;
-            const int index = findOrq(alias.program);
-            if (index >= 0 && setOrq(index))
-                return slot;
-            setGm(alias.gm);
+        // Bare instrument names (flute, viola, trompa...) get the same
+        // orchestral resolution as ezorq: so a model that omits the prefix
+        // still lands on a real sound instead of EZSynth's Init preset.
+        if (applyOrchestraName(token))
             return slot;
-        }
 
         if (token == "drums" || token == "drum" || token == "drum_kit"
             || token == "percussion")
@@ -5113,53 +5255,6 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
                  || token == "internal" || token == "none")
         {
             // Empty slot = the engine's internal piano voice.
-        }
-        else if (token == "orchestra" || token == "orq")
-        {
-            int index = findOrq("violas_longs");
-            if (index < 0)
-                index = findOrq("cellos_vibrato");
-            if (index < 0 && ! orqPrograms.isEmpty())
-                index = 0;
-            if (index >= 0)
-                setOrq(index);
-            else
-                setGm(48);
-        }
-        else if (token == "strings" || token == "string"
-                 || token == "string_ensemble"
-                 || token == "ensemble_strings")
-        {
-            // A section, not a solo instrument: GM 48 is the closest full
-            // string ensemble. Specific orchestral instruments above use
-            // the sampled EZOrquestra programs instead.
-            setGm(48);
-        }
-        else if (token == "brass" || token == "brass_section")
-            setGm(61);
-        else if (token == "woodwind" || token == "woodwinds")
-            setGm(71);
-        else if (token == "choir" || token == "voices" || token == "vox")
-            setGm(52);
-        else if (token == "harp")
-            setGm(46);
-        else if (token == "timpani")
-            setGm(47);
-        else if (token == "pizzicato" || token == "pizzicato_strings")
-        {
-            const int index = findOrq("violas_pizzicato");
-            if (index >= 0)
-                setOrq(index);
-            else
-                setGm(45);
-        }
-        else if (token == "tremolo" || token == "tremolo_strings")
-        {
-            const int index = findOrq("violas_tremolo");
-            if (index >= 0)
-                setOrq(index);
-            else
-                setGm(44);
         }
         else if (token == "bass" || token == "bass_guitar"
                  || token == "electric_bass")

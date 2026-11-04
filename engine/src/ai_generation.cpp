@@ -1590,18 +1590,38 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
     root->setProperty("bar_seconds", a.barSeconds);
     root->setProperty("beat_seconds", a.beatSeconds);
     root->setProperty("anchor_seconds", a.anchor);
-    root->setProperty("anchor_beat", a.anchor / juce::jmax(1.0e-9, a.beatSeconds));
+    const double beatSeconds = juce::jmax(1.0e-9, a.beatSeconds);
+    const double beatsPerBar = a.barSeconds / beatSeconds;
+    const double startBeat = a.anchor / beatSeconds;
+    const double windowBeats = (double) a.bars * beatsPerBar;
+    root->setProperty("anchor_beat", startBeat);
     root->setProperty("anchor_bar", a.anchor / juce::jmax(1.0e-9, a.barSeconds));
     root->setProperty("requested_bars", a.bars);
+    // Make the bar-to-beat conversion impossible to miss. Models routinely
+    // write `length_beats: 32` for a 32-bar request and cover only 8 bars.
+    root->setProperty("window_start_beat", startBeat);
+    root->setProperty("window_end_beat", startBeat + windowBeats);
+    root->setProperty("window_beats", windowBeats);
     root->setProperty("selected_track_id", (juce::int64) selectedTrack);
-    root->setProperty("key", keyName(a.root, a.minor));
-    root->setProperty("minor", a.minor);
+
+    // A brand-new session has no document yet. Be explicit about the blank
+    // canvas instead of pretending the default C-major fallback was analysed
+    // from the user's material: the model is allowed to choose a key and a
+    // progression when the brief calls for it.
+    const bool hasMaterial = ! a.context.empty() || ! a.window.empty()
+                             || a.audioUsed;
+    const auto key = hasMaterial ? keyName(a.root, a.minor)
+                                 : juce::String("unspecified");
+    root->setProperty("has_material", hasMaterial);
+    root->setProperty("key", key);
+    root->setProperty("minor", hasMaterial ? a.minor : false);
 
     auto* analysis = new juce::DynamicObject();
-    analysis->setProperty("key", keyName(a.root, a.minor));
-    analysis->setProperty("root", a.root);
-    analysis->setProperty("minor", a.minor);
-    analysis->setProperty("confidence", (double) a.confidence);
+    analysis->setProperty("has_material", hasMaterial);
+    analysis->setProperty("key", key);
+    analysis->setProperty("root", hasMaterial ? a.root : -1);
+    analysis->setProperty("minor", hasMaterial ? a.minor : false);
+    analysis->setProperty("confidence", hasMaterial ? (double) a.confidence : 0.0);
     analysis->setProperty("role", roleName(a.role));
     analysis->setProperty("density_per_beat", (double) a.density);
     analysis->setProperty("median_pitch", a.medianPitch);
@@ -1617,35 +1637,47 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
     juce::Array<juce::var> chords;
     juce::String chordLine;
     const bool flats = keyUsesFlats(a.root, a.minor);
-    for (int b = 0; b < a.bars; ++b)
+    if (hasMaterial)
     {
-        auto* chord = new juce::DynamicObject();
-        const int r = a.chordRoot[(size_t) b];
-        const int q = a.chordQuality[(size_t) b];
-        const auto symbol = chordName(r, q, flats);
-        chord->setProperty("bar", b);
-        chord->setProperty("start_beat", (double) b * a.barSeconds
-                                             / juce::jmax(1.0e-9, a.beatSeconds));
-        chord->setProperty("symbol", symbol);
-        chord->setProperty("root", r);
-        chord->setProperty("quality", q);
-        chords.add(juce::var(chord));
-        if (b > 0)
-            chordLine << " | ";
-        chordLine << symbol;
+        for (int b = 0; b < a.bars; ++b)
+        {
+            auto* chord = new juce::DynamicObject();
+            const int r = a.chordRoot[(size_t) b];
+            const int q = a.chordQuality[(size_t) b];
+            const auto symbol = chordName(r, q, flats);
+            chord->setProperty("bar", b);
+            chord->setProperty("start_beat", (double) b * a.barSeconds
+                                                 / juce::jmax(1.0e-9, a.beatSeconds));
+            chord->setProperty("symbol", symbol);
+            chord->setProperty("root", r);
+            chord->setProperty("quality", q);
+            chords.add(juce::var(chord));
+            if (b > 0)
+                chordLine << " | ";
+            chordLine << symbol;
+        }
     }
     analysis->setProperty("chords", chords);
     analysis->setProperty("chord_line", chordLine);
     root->setProperty("chord_line", chordLine);
 
     juce::String heard;
-    heard << a.context.size() << " MIDI notes in the previous 4 bars and "
-          << a.window.size() << " in the target window";
-    if (a.audioUsed)
-        heard << "; audio listened for " << juce::String(a.audioSeconds, 1)
-              << " s";
-    if (a.audioKeyUsed)
-        heard << "; the key came from the audio";
+    if (hasMaterial)
+    {
+        heard << a.context.size() << " MIDI notes in the previous 4 bars and "
+              << a.window.size() << " in the target window";
+        if (a.audioUsed)
+            heard << "; audio listened for " << juce::String(a.audioSeconds, 1)
+                  << " s";
+        if (a.audioKeyUsed)
+            heard << "; the key came from the audio";
+    }
+    else
+    {
+        heard = "No project material was found in the previous 4 bars or the "
+                "target window. Treat this as a blank canvas: choose the key, "
+                "mode, progression and instrumentation from the brief.";
+    }
     analysis->setProperty("heard", heard);
     root->setProperty("analysis", juce::var(analysis));
 
@@ -1760,6 +1792,12 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
         namesAsArray(catalog.ezinstPrograms));
     available->setProperty("ezorq_programs",
                            namesAsArray(catalog.ezorqPrograms));
+    available->setProperty(
+        "ezorq_hint",
+        "Prefer an exact ezorq_programs entry. Short names are also accepted "
+        "(flute, oboe, clarinet, bassoon, horn, trumpet, trombone, tuba, sax, "
+        "piccolo, viola, cello, basses, pizzicato, tremolo, strings) and map "
+        "to the closest installed program or General MIDI fallback.");
     available->setProperty("ezdrums_kits",
                            namesAsArray(catalog.ezdrumsKits));
 
@@ -1781,12 +1819,14 @@ juce::String Service::contextJson(const Project& project, TrackId selectedTrack,
         "Positions and lengths are quarter-note beats. Reuse an existing "
         "instrument track by passing its track_id; omit track_id to create a "
         "new instrument track. Add clips without deleting existing material. "
-        "Keep the project key/chords unless the brief asks to change them. "
-        "Use GM drum notes (36 kick, 38 snare, 42 closed hat, 46 open hat) on "
-        "drum tracks. Leave room for the other parts. The "
-        "available_instruments object is the authoritative list of sounds "
-        "installed on this computer: use its exact tokens and do not invent "
-        "plugin names. The index of ezinst_programs is its gm: program "
+        "Keep the project key/chords unless the brief asks to change them. If "
+        "has_material is false or key is 'unspecified', this is a blank canvas: "
+        "choose a key/mode and a coherent harmonic plan from the brief and "
+        "state them in the output. Use GM drum notes (36 kick, 38 snare, 42 "
+        "closed hat, 46 open hat) on drum tracks. Leave room for the other "
+        "parts. The available_instruments object is the authoritative list of "
+        "sounds installed on this computer: use its exact tokens and do not "
+        "invent plugin names. The index of ezinst_programs is its gm: program "
         "number. For orchestral music prefer ezorq:<program> for the "
         "instruments it provides, and gm: for the rest (for example gm:40 "
         "violin, gm:48 string ensemble); do not substitute EZSynth pads or "

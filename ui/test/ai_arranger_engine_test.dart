@@ -26,7 +26,10 @@ void main() {
     engine.newProject(48000);
     engine.setTempoBpm(96);
     final existing = engine.addTrack('Existing Keys', 5, type: 1);
-    engine.addMidiClip(existing, 0, 8);
+    final existingClip = engine.addMidiClip(existing, 0, 8);
+    engine.midiClipAddNote(existingClip, 60, 0.8, 0.0, 1.0);
+    engine.midiClipAddNote(existingClip, 64, 0.8, 0.0, 1.0);
+    engine.midiClipAddNote(existingClip, 67, 0.8, 0.0, 1.0);
 
     final context = engine.aiContextJson(
       selectedTrackId: existing,
@@ -34,9 +37,15 @@ void main() {
       bars: 8,
     );
     final contextJson = jsonDecode(context) as Map<String, dynamic>;
+    expect(contextJson['has_material'], isTrue);
+    expect(contextJson['key'], isNot('unspecified'));
     expect(contextJson['key'], isA<String>());
     expect(contextJson['tracks'], isA<List>());
-    expect((contextJson['analysis'] as Map)['chord_line'], isA<String>());
+    expect((contextJson['analysis'] as Map)['has_material'], isTrue);
+    expect(
+      (contextJson['analysis'] as Map)['chord_line'],
+      isNotEmpty,
+    );
 
     final available =
         contextJson['available_instruments'] as Map<String, dynamic>;
@@ -203,6 +212,83 @@ void main() {
       engine.trackInstrumentName(tracks.single['track_id'] as int),
       'EZOrquestra',
     );
+  });
+
+  test('orchestral short names resolve instead of failing the save', () {
+    engine.newProject(48000);
+    final plan = jsonEncode({
+      'title': 'Short orchestral names',
+      'tracks': [
+        {
+          'name': 'Flute',
+          'role': 'melody',
+          'instrument': 'ezorq:flute',
+          'clips': [
+            {
+              'start_beat': 0,
+              'length_beats': 4,
+              'notes': [
+                {
+                  'pitch': 72,
+                  'start_beat': 0,
+                  'length_beats': 4,
+                  'velocity': 0.7,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          'name': 'Violin',
+          'role': 'melody',
+          'instrument': 'ezorq:violin',
+          'clips': [
+            {
+              'start_beat': 0,
+              'length_beats': 4,
+              'notes': [
+                {
+                  'pitch': 76,
+                  'start_beat': 0,
+                  'length_beats': 4,
+                  'velocity': 0.7,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(engine.applyAiArrangement(plan), isTrue, reason: engine.lastError);
+    final summary =
+        jsonDecode(engine.aiArrangementResultJson) as Map<String, dynamic>;
+    final tracks = (summary['tracks'] as List).cast<Map<String, dynamic>>();
+    final flute = tracks.firstWhere((track) => track['name'] == 'Flute');
+    final violin = tracks.firstWhere((track) => track['name'] == 'Violin');
+    expect(
+      engine.trackInstrumentName(flute['track_id'] as int),
+      anyOf('EZOrquestra', 'EZInstruments'),
+    );
+    // There is no violin program in the shipped EZOrquestra library, so the
+    // resolver must fall back to GM 40 rather than reject the whole plan.
+    expect(
+      engine.trackInstrumentName(violin['track_id'] as int),
+      'EZInstruments',
+    );
+  });
+
+  test('unknown EZOrquestra names still fail atomically', () {
+    engine.newProject(48000);
+    expect(
+      engine.applyAiArrangement(
+        '{"tracks":[{"name":"Ghost","instrument":"ezorq:not_a_program",'
+        '"clips":[{"start_beat":0,"length_beats":4,"notes":[]}]}]}',
+      ),
+      isFalse,
+    );
+    expect(engine.lastError, contains('EZOrquestra'));
+    expect(engine.trackCount, 0);
   });
 
   test('invalid plans leave the project untouched', () {
