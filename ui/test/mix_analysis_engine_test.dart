@@ -3,9 +3,15 @@
 // Loads the demo project, pushes the master hot, runs the offline analysis,
 // checks the JSON report and applies the plan as one undo entry.
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cadence_ui/engine/engine_service.dart';
+
+// ponytail: flutter test runs from ui/, so build/test-assets is the gitignored fixture dir.
+final testAssetsDir =
+    Platform.environment['CADENCE_ASSETS_DIR'] ?? 'build/test-assets';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -14,7 +20,7 @@ void main() {
     final service = EngineService();
     addTearDown(service.dispose);
 
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     // A deliberately hot master produces loudness / true-peak fixes.

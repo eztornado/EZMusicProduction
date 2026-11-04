@@ -13,26 +13,33 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
-const String defaultDylibName = 'libcadence_engine.dylib';
+/// Engine library file name for the current platform: the shared target is
+/// `cadence_engine` everywhere, but Windows drops the `lib` prefix and uses
+/// `.dll`; macOS uses `lib<name>.dylib` and Linux `lib<name>.so`.
+String engineLibraryName() => Platform.isWindows
+    ? 'cadence_engine.dll'
+    : Platform.isLinux ? 'libcadence_engine.so' : 'libcadence_engine.dylib';
 
-/// Resolves the engine dylib: explicit arg > CADENCE_ENGINE_DYLIB env >
-/// next to the app bundle executable / in Frameworks > the dev build output >
-/// system lookup.
+/// Resolves the engine library: explicit arg > CADENCE_ENGINE_DYLIB env >
+/// next to the app executable (bundle Frameworks on macOS) > the repo dev
+/// build output > system lookup.
 String resolveEngineDylib(String? explicitPath) {
   if (explicitPath != null && explicitPath.isNotEmpty) return explicitPath;
   final env = Platform.environment['CADENCE_ENGINE_DYLIB'];
   if (env != null && env.isNotEmpty) return env;
 
+  final name = engineLibraryName();
   final exeDir = File(Platform.resolvedExecutable).parent;
   final candidates = [
-    '${exeDir.path}/libcadence_engine.dylib',
-    '${exeDir.parent.path}/Frameworks/libcadence_engine.dylib',
-    '/Users/ivan/daw/build/engine/libcadence_engine.dylib',
+    '${exeDir.path}/$name',
+    '${exeDir.parent.path}/Frameworks/$name',
+    // Dev fallback: `flutter run` from ui/ against the repo's CMake build dir.
+    '../build/engine/$name',
   ];
   for (final candidate in candidates) {
     if (File(candidate).existsSync()) return candidate;
   }
-  return defaultDylibName;
+  return name;
 }
 
 /// Mirrors the CadenceResult enum in cadence_engine.h.

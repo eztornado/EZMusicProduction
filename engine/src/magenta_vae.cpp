@@ -1,6 +1,12 @@
 #include "magenta_vae.h"
 
+// macOS: Accelerate framework. Linux/Windows: netlib-compatible cblas.h
+// (both expose the same cblas_sgemv the LSTM mat-vecs need).
+#ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
+#else
+#include <cblas.h>
+#endif
 
 #include <algorithm>
 #include <cmath>

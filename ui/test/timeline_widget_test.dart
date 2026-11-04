@@ -1,6 +1,8 @@
 // Widget test: tapping the timeline selects/deselects clips through the
 // EngineService, against the real engine dylib and the real demo assets.
 
+import 'dart:io';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +11,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cadence_ui/engine/engine_service.dart';
 import 'package:cadence_ui/l10n/l10n.dart';
 import 'package:cadence_ui/ui/timeline_view.dart';
+
+// ponytail: flutter test runs from ui/, so build/test-assets is the gitignored fixture dir.
+final testAssetsDir =
+    Platform.environment['CADENCE_ASSETS_DIR'] ?? 'build/test-assets';
 
 double _vPixels(WidgetTester tester) =>
     tester
@@ -44,7 +50,7 @@ void main() {
     addTearDown(service.dispose);
 
     // Demo project: 3 tracks, clips at 0 / 2 / 4 s (generated test assets).
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await tester.pumpWidget(MaterialApp(
@@ -88,7 +94,7 @@ void main() {
   testWidgets('mouse drag moves a clip horizontally', (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await tester.pumpWidget(MaterialApp(
@@ -158,7 +164,7 @@ void main() {
   testWidgets('nav strip click scrolls the view', (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await tester.pumpWidget(MaterialApp(
@@ -195,7 +201,7 @@ void main() {
   testWidgets('mouse drag from the right edge trims the clip inward', (tester) async {
   final service = EngineService();
   addTearDown(service.dispose);
-  final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+  final error = service.loadDemoProject(testAssetsDir);
   expect(error, isNull, reason: error ?? '');
 
   await tester.pumpWidget(MaterialApp(
@@ -263,7 +269,7 @@ void main() {
   testWidgets('snap toggle OFF: moves land free, ON: snapped', (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await tester.pumpWidget(MaterialApp(
@@ -319,7 +325,7 @@ void main() {
       (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
     service.snapToGrid = false; // fine-trim mechanics test
 
@@ -517,7 +523,7 @@ void main() {
   testWidgets('12 tracks: wheel scrolls the lanes vertically', (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
     for (var i = 0; i < 9; i++) {
       service.addTrack('Extra $i', i % 16, type: 1);
@@ -560,7 +566,7 @@ void main() {
       (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
     for (var i = 0; i < 9; i++) {
       service.addTrack('Extra $i', i % 16, type: 1);
@@ -610,7 +616,7 @@ void main() {
       (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await _pumpTimeline(tester, service);
@@ -679,7 +685,7 @@ void main() {
       (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await _pumpTimeline(tester, service);
@@ -713,7 +719,7 @@ void main() {
       (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await _pumpTimeline(tester, service, width: 700);
@@ -748,7 +754,7 @@ void main() {
       (tester) async {
     final service = EngineService();
     addTearDown(service.dispose);
-    final error = service.loadDemoProject('/Users/ivan/daw/assets/test');
+    final error = service.loadDemoProject(testAssetsDir);
     expect(error, isNull, reason: error ?? '');
 
     await _pumpTimeline(tester, service, height: 500);

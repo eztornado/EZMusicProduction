@@ -1835,7 +1835,7 @@ int cmdEzInstTest()
     // Locate EZInstruments in the merged plugin list (builtins + scanned).
     int idx = -1;
     for (int i = 0; i < engine.pluginCount(); ++i)
-        if (engine.pluginNameAt(i) == juce::String("EZInstruments"))
+        if (juce::String(engine.pluginNameAt(i)) == "EZInstruments")
         {
             idx = i;
             break;
@@ -2034,7 +2034,7 @@ int cmdEzSynthTest()
 
     int idx = -1;
     for (int i = 0; i < engine.pluginCount(); ++i)
-        if (engine.pluginNameAt(i) == juce::String("EZSynth"))
+        if (juce::String(engine.pluginNameAt(i)) == "EZSynth")
         {
             idx = i;
             break;
@@ -2336,7 +2336,7 @@ int cmdEzorqTest()
                                        cadence::Track::Type::Instrument);
     int idx = -1;
     for (int i = 0; i < engine.pluginCount(); ++i)
-        if (engine.pluginNameAt(i) == juce::String("EZOrquestra"))
+        if (juce::String(engine.pluginNameAt(i)) == "EZOrquestra")
         {
             idx = i;
             break;
@@ -2662,7 +2662,7 @@ int cmdChromaticAudit(int argc = 0, char** argv = nullptr)
                                        cadence::Track::Type::Instrument);
     int idx = -1;
     for (int i = 0; i < engine.pluginCount(); ++i)
-        if (engine.pluginNameAt(i) == juce::String("EZOrquestra"))
+        if (juce::String(engine.pluginNameAt(i)) == "EZOrquestra")
         {
             idx = i;
             break;
@@ -2718,7 +2718,7 @@ int cmdChromaticAll(int from = 0, int to = -1)
                                        cadence::Track::Type::Instrument);
     int idx = -1;
     for (int i = 0; i < engine.pluginCount(); ++i)
-        if (engine.pluginNameAt(i) == juce::String("EZOrquestra"))
+        if (juce::String(engine.pluginNameAt(i)) == "EZOrquestra")
         {
             idx = i;
             break;
@@ -2977,7 +2977,7 @@ int cmdEzDrumsTest()
                                        cadence::Track::Type::Instrument);
     int idx = -1;
     for (int i = 0; i < engine.pluginCount(); ++i)
-        if (engine.pluginNameAt(i) == juce::String("EZDrums"))
+        if (juce::String(engine.pluginNameAt(i)) == "EZDrums")
         {
             idx = i;
             break;

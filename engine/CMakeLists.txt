@@ -32,9 +32,7 @@ FetchContent_MakeAvailable(fluidsynth)
 
 # Core library. In phase 1 it is linked statically into the CLI; a SHARED
 # target with the same sources will back the Dart/Flutter FFI binding.
-enable_language(OBJCXX)
-add_library(cadence_engine STATIC
-    src/native_dialogs.mm
+set(CADENCE_ENGINE_SOURCES
     src/model.cpp
     src/engine.cpp
     src/magenta_vae.cpp
@@ -52,19 +50,45 @@ add_library(cadence_engine STATIC
     src/remote_server.cpp
     src/c_api.cpp)
 
+# macOS: ObjC open-panel bridge. Elsewhere: no native picker (the stub
+# behaves like a cancelled dialog).
+if(APPLE)
+    list(INSERT CADENCE_ENGINE_SOURCES 0 src/native_dialogs.mm)
+else()
+    list(APPEND CADENCE_ENGINE_SOURCES src/native_dialogs_stub.cpp)
+endif()
+
+add_library(cadence_engine STATIC ${CADENCE_ENGINE_SOURCES})
+
 target_include_directories(cadence_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(cadence_engine PUBLIC cxx_std_20)
 
-# Plugin hosting: VST3 + AU. VST2 is intentionally not hosted.
-# CoreAudioKit provides AUGenericView, referenced by the AU host path.
+# Plugin hosting: VST3 everywhere; AU (AudioUnits) is macOS-only.
+# VST2 is intentionally not hosted.
 target_compile_definitions(cadence_engine PUBLIC
     JUCE_PLUGINHOST_VST3=1
-    JUCE_PLUGINHOST_AU=1
-    JUCE_USE_MP3AUDIOFORMAT=1)
-target_link_libraries(cadence_engine PUBLIC "-framework CoreAudioKit")
-target_link_libraries(cadence_engine PUBLIC "-framework UniformTypeIdentifiers")
-# BLAS for the Magenta MusicVAE LSTM layers (AI clip generation).
-target_link_libraries(cadence_engine PUBLIC "-framework Accelerate")
+    JUCE_USE_MP3AUDIOFORMAT=1
+    # The engine never opens a WebBrowserComponent nor does HTTP itself
+    # (the Dart/Flutter side does): disabling them keeps Linux off
+    # webkit2gtk/gtk headers and libcurl entirely.
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+if(APPLE)
+    target_compile_definitions(cadence_engine PUBLIC JUCE_PLUGINHOST_AU=1)
+    # CoreAudioKit provides AUGenericView, referenced by the AU host path.
+    target_link_libraries(cadence_engine PUBLIC "-framework CoreAudioKit")
+    target_link_libraries(cadence_engine PUBLIC "-framework UniformTypeIdentifiers")
+    # BLAS for the Magenta MusicVAE LSTM layers (AI clip generation).
+    target_link_libraries(cadence_engine PUBLIC "-framework Accelerate")
+else()
+    # MusicVAE makes a single BLAS call (cblas_sgemv); system CBLAS covers it
+    # on Linux (pacman: cblas / blas-openblas, apt: libopenblas-dev).
+    find_library(CADENCE_CBLAS NAMES cblas)
+    if(NOT CADENCE_CBLAS)
+        message(FATAL_ERROR "CBLAS library not found — install openblas (pacman -S blas-openblas, apt install libopenblas-dev)")
+    endif()
+    target_link_libraries(cadence_engine PUBLIC ${CADENCE_CBLAS})
+endif()
 
 target_link_libraries(cadence_engine
     PUBLIC
@@ -82,36 +106,27 @@ juce_add_console_app(cadence_cli PRODUCT_NAME "cadence-cli")
 target_sources(cadence_cli PRIVATE apps/cli/main.cpp)
 target_link_libraries(cadence_cli PRIVATE cadence_engine)
 
-# Shared engine for the Dart/Flutter FFI binding (libcadence_engine.dylib).
-add_library(cadence_engine_shared SHARED
-    src/native_dialogs.mm
-    src/model.cpp
-    src/engine.cpp
-    src/magenta_vae.cpp
-    src/ai_generation.cpp
-    src/ai_arranger.cpp
-    src/mix_ai.cpp
-    src/ezq4.cpp
-    src/ezcomp.cpp
-    src/ezlim.cpp
-    src/ezinst.cpp
-    src/ezsynth.cpp
-    src/ezorq.cpp
-    src/ezdrums.cpp
-    src/ezarp.cpp
-    src/remote_server.cpp
-    src/c_api.cpp)
+# Shared engine for the Dart/Flutter FFI binding
+# (libcadence_engine.dylib / .so / cadence_engine.dll).
+add_library(cadence_engine_shared SHARED ${CADENCE_ENGINE_SOURCES})
 target_include_directories(cadence_engine_shared PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(cadence_engine_shared PRIVATE cxx_std_20)
 
-# Keep hosting flags in sync with the static engine (see above).
+# Keep hosting flags and platform libs in sync with the static engine (see above).
 target_compile_definitions(cadence_engine_shared PRIVATE
     JUCE_PLUGINHOST_VST3=1
-    JUCE_PLUGINHOST_AU=1
-    JUCE_USE_MP3AUDIOFORMAT=1)
-target_link_libraries(cadence_engine_shared PRIVATE "-framework CoreAudioKit")
-target_link_libraries(cadence_engine_shared PRIVATE "-framework UniformTypeIdentifiers")
-target_link_libraries(cadence_engine_shared PRIVATE "-framework Accelerate")
+    JUCE_USE_MP3AUDIOFORMAT=1
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0)
+if(APPLE)
+    target_compile_definitions(cadence_engine_shared PRIVATE JUCE_PLUGINHOST_AU=1)
+    target_link_libraries(cadence_engine_shared PRIVATE
+        "-framework CoreAudioKit"
+        "-framework UniformTypeIdentifiers"
+        "-framework Accelerate")
+else()
+    target_link_libraries(cadence_engine_shared PRIVATE ${CADENCE_CBLAS})
+endif()
 target_link_libraries(cadence_engine_shared
     PRIVATE
         juce::juce_core

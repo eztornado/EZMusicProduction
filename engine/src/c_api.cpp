@@ -1634,7 +1634,10 @@ CadenceResult cadence_engine_open_instrument_editor(CadenceEngine* engine,
 }
 
 CadenceResult cadence_engine_open_instrument_editor_with_clip(
-    CadenceEngine* engine, CadenceTrackId track_id, std::int64_t clip_id)
+    // long long must match the header declaration: std::int64_t is `long` on
+    // Linux LP64 (vs `long long` on macOS), which would create a C++-mangled
+    // overload instead of defining the extern "C" symbol.
+    CadenceEngine* engine, CadenceTrackId track_id, long long clip_id)
 {
     if (engine == nullptr)
         return kCadenceErrorNullArgument;

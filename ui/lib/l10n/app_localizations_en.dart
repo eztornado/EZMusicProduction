@@ -19,15 +19,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String appDylibError(String error) {
-    return 'Could not load libcadence_engine.dylib: $error\nBuild the engine: cmake --build ~/daw/build';
+    return 'Could not load the engine library: $error\nBuild the engine: cmake --build build (or set CADENCE_ENGINE_DYLIB to its full path)';
   }
 
   @override
-  String get appDylibOk => 'dylib ok';
+  String get appDylibOk => 'engine ok';
 
   @override
   String appStatusLine(String tracks, String duration) {
-    return '$tracks tracks · $duration s · dylib ok';
+    return '$tracks tracks · $duration s · engine ok';
   }
 
   @override
@@ -1024,7 +1024,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mixPromptLabel => 'What should the mix sound like?';
 
   @override
-  String get mixPromptHint => 'e.g. -14 LUFS, -1 dBTP, pop, gentle, master only';
+  String get mixPromptHint =>
+      'e.g. -14 LUFS, -1 dBTP, pop, gentle, master only';
 
   @override
   String get mixMasterOnly => 'Master bus only';
