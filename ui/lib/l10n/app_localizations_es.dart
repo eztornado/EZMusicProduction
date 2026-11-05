@@ -646,7 +646,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get alertTechnicalDetail => 'Detalles técnicos';
 
   @override
-  String get prefTitle => 'Preferencias — Audio, MIDI y control remoto';
+  String get prefTitle => 'Preferencias';
 
   @override
   String get prefSectionLanguage => 'Idioma';
@@ -1024,8 +1024,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get mixPromptLabel => '¿Cómo debería sonar la mezcla?';
 
   @override
-  String get mixPromptHint =>
-      'p. ej. -14 LUFS, -1 dBTP, pop, suave, solo máster';
+  String get mixPromptHint => 'p. ej. -14 LUFS, -1 dBTP, pop, suave, solo máster';
 
   @override
   String get mixMasterOnly => 'Solo bus máster';
@@ -1194,4 +1193,84 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get prefRemoteHelp => 'Abre la app remota y escribe esta dirección y el código.';
+
+  @override
+  String get prefNavAudio => 'Audio';
+
+  @override
+  String get prefNavPlugins => 'Plugins';
+
+  @override
+  String get prefNavMidi => 'MIDI';
+
+  @override
+  String get prefNavRemote => 'Control remoto';
+
+  @override
+  String get prefNavInterface => 'Interfaz';
+
+  @override
+  String get prefNavVersion => 'Versión';
+
+  @override
+  String get prefAudioIntro => 'Salida, entrada y rendimiento del motor de audio.';
+
+  @override
+  String get prefPluginsIntro => 'Biblioteca de plugins y carpetas que indexa el motor.';
+
+  @override
+  String get prefMidiIntro => 'Dispositivo de entrada y compensación de latencia.';
+
+  @override
+  String get prefRemoteIntro => 'Controla la DAW desde otro dispositivo de tu red local.';
+
+  @override
+  String get prefInterfaceIntro => 'Idioma de la interfaz y opciones de desarrollo.';
+
+  @override
+  String get prefVersionIntro => 'Información de la versión instalada.';
+
+  @override
+  String get prefSectionAudio => 'Dispositivo de audio';
+
+  @override
+  String prefPluginsStatus(int count) {
+    return '$count plugins indexados';
+  }
+
+  @override
+  String get prefPluginsScanning => 'Escaneando la biblioteca…';
+
+  @override
+  String get prefPluginsRescan => 'Re-escanear plugins';
+
+  @override
+  String get prefPluginsScanHint => 'El escaneo se ejecuta en segundo plano; la lista se actualiza al terminar.';
+
+  @override
+  String get prefPluginsIndexedDirs => 'Directorios indexados';
+
+  @override
+  String get prefPluginsDirsHelp => 'Copia aquí los plugins VST3 (.vst3). El motor recorre estas carpetas y registra lo que encuentra.';
+
+  @override
+  String get prefPluginsDirExists => 'Disponible';
+
+  @override
+  String get prefPluginsDirMissing => 'No existe';
+
+  @override
+  String get prefPluginsNoDirectories => 'No se han encontrado rutas de búsqueda para este sistema.';
+
+  @override
+  String get prefPluginsAuNote => 'En macOS los AudioUnit se detectan desde el registro del sistema, no por carpeta.';
+
+  @override
+  String get prefPluginsEmpty => 'Todavía no hay plugins indexados. Pulsa Re-escanear para buscar en las carpetas.';
+
+  @override
+  String get prefMidiScanHint => 'Los dispositivos MIDI se detectan automáticamente al conectarlos.';
+
+  @override
+  String get prefLanguageHelp => 'El cambio se aplica al instante a todas las ventanas.';
 }

@@ -1246,7 +1246,7 @@ abstract class AppLocalizations {
   /// No description provided for @prefTitle.
   ///
   /// In es, this message translates to:
-  /// **'Preferencias — Audio, MIDI y control remoto'**
+  /// **'Preferencias'**
   String get prefTitle;
 
   /// No description provided for @prefSectionLanguage.
@@ -2280,6 +2280,162 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Abre la app remota y escribe esta dirección y el código.'**
   String get prefRemoteHelp;
+
+  /// No description provided for @prefNavAudio.
+  ///
+  /// In es, this message translates to:
+  /// **'Audio'**
+  String get prefNavAudio;
+
+  /// No description provided for @prefNavPlugins.
+  ///
+  /// In es, this message translates to:
+  /// **'Plugins'**
+  String get prefNavPlugins;
+
+  /// No description provided for @prefNavMidi.
+  ///
+  /// In es, this message translates to:
+  /// **'MIDI'**
+  String get prefNavMidi;
+
+  /// No description provided for @prefNavRemote.
+  ///
+  /// In es, this message translates to:
+  /// **'Control remoto'**
+  String get prefNavRemote;
+
+  /// No description provided for @prefNavInterface.
+  ///
+  /// In es, this message translates to:
+  /// **'Interfaz'**
+  String get prefNavInterface;
+
+  /// No description provided for @prefNavVersion.
+  ///
+  /// In es, this message translates to:
+  /// **'Versión'**
+  String get prefNavVersion;
+
+  /// No description provided for @prefAudioIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Salida, entrada y rendimiento del motor de audio.'**
+  String get prefAudioIntro;
+
+  /// No description provided for @prefPluginsIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Biblioteca de plugins y carpetas que indexa el motor.'**
+  String get prefPluginsIntro;
+
+  /// No description provided for @prefMidiIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Dispositivo de entrada y compensación de latencia.'**
+  String get prefMidiIntro;
+
+  /// No description provided for @prefRemoteIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Controla la DAW desde otro dispositivo de tu red local.'**
+  String get prefRemoteIntro;
+
+  /// No description provided for @prefInterfaceIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Idioma de la interfaz y opciones de desarrollo.'**
+  String get prefInterfaceIntro;
+
+  /// No description provided for @prefVersionIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Información de la versión instalada.'**
+  String get prefVersionIntro;
+
+  /// No description provided for @prefSectionAudio.
+  ///
+  /// In es, this message translates to:
+  /// **'Dispositivo de audio'**
+  String get prefSectionAudio;
+
+  /// No description provided for @prefPluginsStatus.
+  ///
+  /// In es, this message translates to:
+  /// **'{count} plugins indexados'**
+  String prefPluginsStatus(int count);
+
+  /// No description provided for @prefPluginsScanning.
+  ///
+  /// In es, this message translates to:
+  /// **'Escaneando la biblioteca…'**
+  String get prefPluginsScanning;
+
+  /// No description provided for @prefPluginsRescan.
+  ///
+  /// In es, this message translates to:
+  /// **'Re-escanear plugins'**
+  String get prefPluginsRescan;
+
+  /// No description provided for @prefPluginsScanHint.
+  ///
+  /// In es, this message translates to:
+  /// **'El escaneo se ejecuta en segundo plano; la lista se actualiza al terminar.'**
+  String get prefPluginsScanHint;
+
+  /// No description provided for @prefPluginsIndexedDirs.
+  ///
+  /// In es, this message translates to:
+  /// **'Directorios indexados'**
+  String get prefPluginsIndexedDirs;
+
+  /// No description provided for @prefPluginsDirsHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Copia aquí los plugins VST3 (.vst3). El motor recorre estas carpetas y registra lo que encuentra.'**
+  String get prefPluginsDirsHelp;
+
+  /// No description provided for @prefPluginsDirExists.
+  ///
+  /// In es, this message translates to:
+  /// **'Disponible'**
+  String get prefPluginsDirExists;
+
+  /// No description provided for @prefPluginsDirMissing.
+  ///
+  /// In es, this message translates to:
+  /// **'No existe'**
+  String get prefPluginsDirMissing;
+
+  /// No description provided for @prefPluginsNoDirectories.
+  ///
+  /// In es, this message translates to:
+  /// **'No se han encontrado rutas de búsqueda para este sistema.'**
+  String get prefPluginsNoDirectories;
+
+  /// No description provided for @prefPluginsAuNote.
+  ///
+  /// In es, this message translates to:
+  /// **'En macOS los AudioUnit se detectan desde el registro del sistema, no por carpeta.'**
+  String get prefPluginsAuNote;
+
+  /// No description provided for @prefPluginsEmpty.
+  ///
+  /// In es, this message translates to:
+  /// **'Todavía no hay plugins indexados. Pulsa Re-escanear para buscar en las carpetas.'**
+  String get prefPluginsEmpty;
+
+  /// No description provided for @prefMidiScanHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Los dispositivos MIDI se detectan automáticamente al conectarlos.'**
+  String get prefMidiScanHint;
+
+  /// No description provided for @prefLanguageHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'El cambio se aplica al instante a todas las ventanas.'**
+  String get prefLanguageHelp;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
