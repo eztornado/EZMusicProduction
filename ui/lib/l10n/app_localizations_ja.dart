@@ -177,6 +177,12 @@ class AppLocalizationsJa extends AppLocalizations {
   String get timelineInputRight => '入力: 右';
 
   @override
+  String get timelineCreateMidiClipHere => 'ここにMIDIクリップを作成';
+
+  @override
+  String get timelineCreateMidiClipAtPlayhead => 'プレイヘッドにMIDIクリップを作成';
+
+  @override
   String get timelineMute => 'ミュート';
 
   @override
@@ -1210,6 +1216,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get prefNavInterface => 'インターフェース';
 
   @override
+  String get prefNavShortcuts => 'ショートカット';
+
+  @override
   String get prefNavVersion => 'バージョン';
 
   @override
@@ -1226,6 +1235,9 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefInterfaceIntro => 'インターフェースの言語と開発向けオプション。';
+
+  @override
+  String get prefShortcutsIntro => 'アプリのキーボードショートカットを確認・変更します。';
 
   @override
   String get prefVersionIntro => 'インストールされているバージョンの情報。';
@@ -1273,4 +1285,69 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefLanguageHelp => '変更はすべてのウィンドウにすぐ反映されます。';
+
+  @override
+  String get prefShortcutsTitle => 'キーボードショートカット';
+
+  @override
+  String get prefShortcutsHint => '組み合わせをクリックすると変更できます。マウス修飾キー（スナップを無効にするキーなど）はここでは編集できません。';
+
+  @override
+  String get prefShortcutEdit => 'ショートカットを変更';
+
+  @override
+  String get prefShortcutReset => 'ショートカットをリセット';
+
+  @override
+  String get prefShortcutResetAll => 'すべてリセット';
+
+  @override
+  String get prefShortcutDialogTitle => '新しいショートカット';
+
+  @override
+  String get prefShortcutPressKeys => 'キーの組み合わせを押してください…';
+
+  @override
+  String prefShortcutConflict(String action) {
+    return 'その組み合わせは「$action」に割り当てられています。';
+  }
+
+  @override
+  String get prefShortcutSaveProject => 'プロジェクトを保存';
+
+  @override
+  String get prefShortcutOpenProject => 'プロジェクトを開く';
+
+  @override
+  String get prefShortcutNewProject => '新規プロジェクト';
+
+  @override
+  String get prefShortcutCopyClip => 'クリップをコピー';
+
+  @override
+  String get prefShortcutPasteClip => 'クリップを貼り付け';
+
+  @override
+  String get prefShortcutPlayPause => '再生 / 一時停止';
+
+  @override
+  String get prefShortcutRecord => '録音';
+
+  @override
+  String get prefShortcutSelectAllClips => 'すべてのクリップを選択';
+
+  @override
+  String get prefShortcutClearSelection => '選択を解除';
+
+  @override
+  String get prefShortcutDeleteSelection => '選択範囲を削除';
+
+  @override
+  String get prefShortcutSplitClip => '再生ヘッドでクリップを分割';
+
+  @override
+  String get prefShortcutKeySpace => 'スペース';
+
+  @override
+  String get prefShortcutKeyDelete => 'Delete';
 }

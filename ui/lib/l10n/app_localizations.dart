@@ -421,6 +421,18 @@ abstract class AppLocalizations {
   /// **'Input: Right'**
   String get timelineInputRight;
 
+  /// No description provided for @timelineCreateMidiClipHere.
+  ///
+  /// In es, this message translates to:
+  /// **'Crear clip MIDI aquí'**
+  String get timelineCreateMidiClipHere;
+
+  /// No description provided for @timelineCreateMidiClipAtPlayhead.
+  ///
+  /// In es, this message translates to:
+  /// **'Crear clip MIDI en el playhead'**
+  String get timelineCreateMidiClipAtPlayhead;
+
   /// No description provided for @timelineMute.
   ///
   /// In es, this message translates to:
@@ -2311,6 +2323,12 @@ abstract class AppLocalizations {
   /// **'Interfaz'**
   String get prefNavInterface;
 
+  /// No description provided for @prefNavShortcuts.
+  ///
+  /// In es, this message translates to:
+  /// **'Atajos'**
+  String get prefNavShortcuts;
+
   /// No description provided for @prefNavVersion.
   ///
   /// In es, this message translates to:
@@ -2346,6 +2364,12 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Idioma de la interfaz y opciones de desarrollo.'**
   String get prefInterfaceIntro;
+
+  /// No description provided for @prefShortcutsIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Consulta y cambia las combinaciones de teclado de la app.'**
+  String get prefShortcutsIntro;
 
   /// No description provided for @prefVersionIntro.
   ///
@@ -2436,6 +2460,132 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'El cambio se aplica al instante a todas las ventanas.'**
   String get prefLanguageHelp;
+
+  /// No description provided for @prefShortcutsTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Atajos de teclado'**
+  String get prefShortcutsTitle;
+
+  /// No description provided for @prefShortcutsHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Haz clic en una combinación para cambiarla. Los modificadores del ratón (como el que desactiva el snap) no se editan aquí.'**
+  String get prefShortcutsHint;
+
+  /// No description provided for @prefShortcutEdit.
+  ///
+  /// In es, this message translates to:
+  /// **'Cambiar atajo'**
+  String get prefShortcutEdit;
+
+  /// No description provided for @prefShortcutReset.
+  ///
+  /// In es, this message translates to:
+  /// **'Restablecer atajo'**
+  String get prefShortcutReset;
+
+  /// No description provided for @prefShortcutResetAll.
+  ///
+  /// In es, this message translates to:
+  /// **'Restablecer todos'**
+  String get prefShortcutResetAll;
+
+  /// No description provided for @prefShortcutDialogTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Nuevo atajo'**
+  String get prefShortcutDialogTitle;
+
+  /// No description provided for @prefShortcutPressKeys.
+  ///
+  /// In es, this message translates to:
+  /// **'Pulsa la combinación de teclas…'**
+  String get prefShortcutPressKeys;
+
+  /// No description provided for @prefShortcutConflict.
+  ///
+  /// In es, this message translates to:
+  /// **'Esa combinación ya está asignada a «{action}».'**
+  String prefShortcutConflict(String action);
+
+  /// No description provided for @prefShortcutSaveProject.
+  ///
+  /// In es, this message translates to:
+  /// **'Guardar proyecto'**
+  String get prefShortcutSaveProject;
+
+  /// No description provided for @prefShortcutOpenProject.
+  ///
+  /// In es, this message translates to:
+  /// **'Abrir proyecto'**
+  String get prefShortcutOpenProject;
+
+  /// No description provided for @prefShortcutNewProject.
+  ///
+  /// In es, this message translates to:
+  /// **'Nuevo proyecto'**
+  String get prefShortcutNewProject;
+
+  /// No description provided for @prefShortcutCopyClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Copiar clip'**
+  String get prefShortcutCopyClip;
+
+  /// No description provided for @prefShortcutPasteClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Pegar clip'**
+  String get prefShortcutPasteClip;
+
+  /// No description provided for @prefShortcutPlayPause.
+  ///
+  /// In es, this message translates to:
+  /// **'Reproducir / pausar'**
+  String get prefShortcutPlayPause;
+
+  /// No description provided for @prefShortcutRecord.
+  ///
+  /// In es, this message translates to:
+  /// **'Grabar'**
+  String get prefShortcutRecord;
+
+  /// No description provided for @prefShortcutSelectAllClips.
+  ///
+  /// In es, this message translates to:
+  /// **'Seleccionar todos los clips'**
+  String get prefShortcutSelectAllClips;
+
+  /// No description provided for @prefShortcutClearSelection.
+  ///
+  /// In es, this message translates to:
+  /// **'Quitar selección'**
+  String get prefShortcutClearSelection;
+
+  /// No description provided for @prefShortcutDeleteSelection.
+  ///
+  /// In es, this message translates to:
+  /// **'Borrar selección'**
+  String get prefShortcutDeleteSelection;
+
+  /// No description provided for @prefShortcutSplitClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Dividir clip en el playhead'**
+  String get prefShortcutSplitClip;
+
+  /// No description provided for @prefShortcutKeySpace.
+  ///
+  /// In es, this message translates to:
+  /// **'Espacio'**
+  String get prefShortcutKeySpace;
+
+  /// No description provided for @prefShortcutKeyDelete.
+  ///
+  /// In es, this message translates to:
+  /// **'Supr'**
+  String get prefShortcutKeyDelete;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

@@ -63,6 +63,13 @@ void main() {
     expect(find.text('Modo debug'), findsOneWidget);
     expect(find.text('Seguir al sistema'), findsOneWidget);
 
+    await tester.tap(find.text('Atajos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Atajos de teclado'), findsOneWidget);
+    expect(find.text('Guardar proyecto'), findsOneWidget);
+    expect(find.text('Dividir clip en el playhead'), findsOneWidget);
+    expect(find.text('Restablecer todos'), findsOneWidget);
+
     await tester.tap(find.text('Versión'));
     await tester.pumpAndSettle();
     expect(find.text('Versión $kAppVersion'), findsOneWidget);

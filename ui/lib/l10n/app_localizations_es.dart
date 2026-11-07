@@ -177,6 +177,12 @@ class AppLocalizationsEs extends AppLocalizations {
   String get timelineInputRight => 'Input: Right';
 
   @override
+  String get timelineCreateMidiClipHere => 'Crear clip MIDI aquí';
+
+  @override
+  String get timelineCreateMidiClipAtPlayhead => 'Crear clip MIDI en el playhead';
+
+  @override
   String get timelineMute => 'Mute';
 
   @override
@@ -1210,6 +1216,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get prefNavInterface => 'Interfaz';
 
   @override
+  String get prefNavShortcuts => 'Atajos';
+
+  @override
   String get prefNavVersion => 'Versión';
 
   @override
@@ -1226,6 +1235,9 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get prefInterfaceIntro => 'Idioma de la interfaz y opciones de desarrollo.';
+
+  @override
+  String get prefShortcutsIntro => 'Consulta y cambia las combinaciones de teclado de la app.';
 
   @override
   String get prefVersionIntro => 'Información de la versión instalada.';
@@ -1273,4 +1285,69 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get prefLanguageHelp => 'El cambio se aplica al instante a todas las ventanas.';
+
+  @override
+  String get prefShortcutsTitle => 'Atajos de teclado';
+
+  @override
+  String get prefShortcutsHint => 'Haz clic en una combinación para cambiarla. Los modificadores del ratón (como el que desactiva el snap) no se editan aquí.';
+
+  @override
+  String get prefShortcutEdit => 'Cambiar atajo';
+
+  @override
+  String get prefShortcutReset => 'Restablecer atajo';
+
+  @override
+  String get prefShortcutResetAll => 'Restablecer todos';
+
+  @override
+  String get prefShortcutDialogTitle => 'Nuevo atajo';
+
+  @override
+  String get prefShortcutPressKeys => 'Pulsa la combinación de teclas…';
+
+  @override
+  String prefShortcutConflict(String action) {
+    return 'Esa combinación ya está asignada a «$action».';
+  }
+
+  @override
+  String get prefShortcutSaveProject => 'Guardar proyecto';
+
+  @override
+  String get prefShortcutOpenProject => 'Abrir proyecto';
+
+  @override
+  String get prefShortcutNewProject => 'Nuevo proyecto';
+
+  @override
+  String get prefShortcutCopyClip => 'Copiar clip';
+
+  @override
+  String get prefShortcutPasteClip => 'Pegar clip';
+
+  @override
+  String get prefShortcutPlayPause => 'Reproducir / pausar';
+
+  @override
+  String get prefShortcutRecord => 'Grabar';
+
+  @override
+  String get prefShortcutSelectAllClips => 'Seleccionar todos los clips';
+
+  @override
+  String get prefShortcutClearSelection => 'Quitar selección';
+
+  @override
+  String get prefShortcutDeleteSelection => 'Borrar selección';
+
+  @override
+  String get prefShortcutSplitClip => 'Dividir clip en el playhead';
+
+  @override
+  String get prefShortcutKeySpace => 'Espacio';
+
+  @override
+  String get prefShortcutKeyDelete => 'Supr';
 }

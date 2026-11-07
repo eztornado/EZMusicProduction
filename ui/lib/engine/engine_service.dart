@@ -874,9 +874,11 @@ class EngineService extends ChangeNotifier {
 
   // ---- MIDI clips ----
 
-  void addMidiClip(int trackId, double startSeconds, double lengthSeconds) {
-    _engine.addMidiClip(trackId, startSeconds, lengthSeconds);
+  /// Creates an empty MIDI clip and returns its id (-1 on failure).
+  int addMidiClip(int trackId, double startSeconds, double lengthSeconds) {
+    final clipId = _engine.addMidiClip(trackId, startSeconds, lengthSeconds);
     refresh();
+    return clipId;
   }
 
   void midiClipAddNote(int clipId, int pitch, double velocity,

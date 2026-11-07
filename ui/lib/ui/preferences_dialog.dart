@@ -17,6 +17,7 @@ import '../engine/engine_service.dart';
 import '../engine/plugin_directories.dart';
 import '../l10n/l10n.dart';
 import '../l10n/locale_store.dart';
+import '../shortcuts/shortcut_settings.dart';
 import 'app_alert.dart';
 import 'project_dialogs.dart';
 import 'remote_control_panel.dart';
@@ -58,7 +59,15 @@ Future<void> showPreferencesDialog(
   );
 }
 
-enum _PrefSection { audio, plugins, midi, remote, interface, version }
+enum _PrefSection {
+  audio,
+  plugins,
+  midi,
+  remote,
+  interface,
+  shortcuts,
+  version,
+}
 
 class _PreferencesBody extends StatefulWidget {
   const _PreferencesBody({required this.service});
@@ -142,6 +151,7 @@ class _PreferencesBodyState extends State<_PreferencesBody> {
     _PrefSection.midi => l10n.prefNavMidi,
     _PrefSection.remote => l10n.prefNavRemote,
     _PrefSection.interface => l10n.prefNavInterface,
+    _PrefSection.shortcuts => l10n.prefNavShortcuts,
     _PrefSection.version => l10n.prefNavVersion,
   };
 
@@ -151,6 +161,7 @@ class _PreferencesBodyState extends State<_PreferencesBody> {
     _PrefSection.midi => l10n.prefMidiIntro,
     _PrefSection.remote => l10n.prefRemoteIntro,
     _PrefSection.interface => l10n.prefInterfaceIntro,
+    _PrefSection.shortcuts => l10n.prefShortcutsIntro,
     _PrefSection.version => l10n.prefVersionIntro,
   };
 
@@ -259,6 +270,8 @@ class _PreferencesBodyState extends State<_PreferencesBody> {
         );
       case _PrefSection.interface:
         return _InterfaceSection(onChanged: () => setState(() {}));
+      case _PrefSection.shortcuts:
+        return const _ShortcutsSection();
       case _PrefSection.version:
         return const _SettingsCard(child: AppAboutContent(showName: true));
     }
@@ -287,11 +300,15 @@ class _SectionRail extends StatelessWidget {
               children: [
                 const Icon(Icons.settings_outlined, size: 17, color: _accent),
                 const SizedBox(width: 8),
-                Text(
-                  l10n.prefTitle,
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Text(
+                    l10n.prefTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -326,6 +343,12 @@ class _SectionRail extends StatelessWidget {
             label: l10n.prefNavInterface,
             selected: selected == _PrefSection.interface,
             onTap: () => onSelected(_PrefSection.interface),
+          ),
+          _RailItem(
+            icon: Icons.keyboard_outlined,
+            label: l10n.prefNavShortcuts,
+            selected: selected == _PrefSection.shortcuts,
+            onTap: () => onSelected(_PrefSection.shortcuts),
           ),
           const Spacer(),
           const Divider(height: 1, color: _border),
@@ -372,12 +395,16 @@ class _RailItem extends StatelessWidget {
               children: [
                 Icon(icon, size: 16, color: selected ? _accent : _muted),
                 const SizedBox(width: 10),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                    color: selected ? _text : _muted,
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                      color: selected ? _text : _muted,
+                    ),
                   ),
                 ),
               ],
@@ -933,6 +960,337 @@ class _DirectoryRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Editable app-wide keyboard shortcuts. The list is generated from
+/// [ShortcutAction] so a newly added action cannot be forgotten here.
+class _ShortcutsSection extends StatefulWidget {
+  const _ShortcutsSection();
+
+  @override
+  State<_ShortcutsSection> createState() => _ShortcutsSectionState();
+}
+
+class _ShortcutsSectionState extends State<_ShortcutsSection> {
+  Future<void> _edit(ShortcutAction action) async {
+    final binding = await showDialog<ShortcutBinding>(
+      context: context,
+      builder:
+          (_) => _ShortcutCaptureDialog(
+            action: action,
+            current: ShortcutSettings.bindingFor(action),
+          ),
+    );
+    if (binding == null || !mounted) return;
+    if (!ShortcutSettings.setBinding(action, binding) && mounted) {
+      final conflict = ShortcutSettings.conflictFor(
+        binding,
+        excluding: action,
+      );
+      if (conflict != null) {
+        showAppError(
+          context,
+          context.l10n.prefShortcutConflict(
+            _shortcutLabel(context.l10n, conflict),
+          ),
+        );
+      }
+      return;
+    }
+    setState(() {});
+  }
+
+  void _reset(ShortcutAction action) {
+    final conflict = ShortcutSettings.reset(action);
+    if (!mounted) return;
+    if (conflict != null) {
+      showAppError(
+        context,
+        context.l10n.prefShortcutConflict(
+          _shortcutLabel(context.l10n, conflict),
+        ),
+      );
+      return;
+    }
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final actions = ShortcutAction.values;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SettingsCard(
+          title: l10n.prefShortcutsTitle,
+          child: Column(
+            children: [
+              for (var i = 0; i < actions.length; i++) ...[
+                _ShortcutRow(
+                  label: _shortcutLabel(l10n, actions[i]),
+                  binding: ShortcutSettings.bindingFor(actions[i]),
+                  isDefault: ShortcutSettings.isDefault(actions[i]),
+                  onEdit: () => _edit(actions[i]),
+                  onReset: () => _reset(actions[i]),
+                ),
+                if (i != actions.length - 1)
+                  const Divider(height: 1, color: _border),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                l10n.prefShortcutsHint,
+                style: const TextStyle(fontSize: 10, color: _faint),
+              ),
+            ),
+            const SizedBox(width: 12),
+            TextButton.icon(
+              onPressed: () {
+                ShortcutSettings.resetAll();
+                setState(() {});
+              },
+              icon: const Icon(Icons.restart_alt, size: 15),
+              label: Text(l10n.prefShortcutResetAll),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ShortcutRow extends StatelessWidget {
+  const _ShortcutRow({
+    required this.label,
+    required this.binding,
+    required this.isDefault,
+    required this.onEdit,
+    required this.onReset,
+  });
+
+  final String label;
+  final ShortcutBinding binding;
+  final bool isDefault;
+  final VoidCallback onEdit;
+  final VoidCallback onReset;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return InkWell(
+      onTap: onEdit,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: _text),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Tooltip(
+              message: l10n.prefShortcutEdit,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: _rail,
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(color: _border),
+                ),
+                child: Text(
+                  _bindingLabel(l10n, binding),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: _text,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: l10n.prefShortcutReset,
+              onPressed: isDefault ? null : onReset,
+              icon: const Icon(Icons.restart_alt, size: 16),
+              visualDensity: VisualDensity.compact,
+              color: _muted,
+              disabledColor: _faint.withValues(alpha: 0.45),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ShortcutCaptureDialog extends StatefulWidget {
+  const _ShortcutCaptureDialog({
+    required this.action,
+    required this.current,
+  });
+
+  final ShortcutAction action;
+  final ShortcutBinding current;
+
+  @override
+  State<_ShortcutCaptureDialog> createState() => _ShortcutCaptureDialogState();
+}
+
+class _ShortcutCaptureDialogState extends State<_ShortcutCaptureDialog> {
+  String? _error;
+  ShortcutBinding? _preview;
+
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyRepeatEvent) return KeyEventResult.handled;
+    if (event is! KeyDownEvent) return KeyEventResult.handled;
+    if (isShortcutModifierKey(event.logicalKey)) {
+      return KeyEventResult.handled;
+    }
+
+    final binding = ShortcutBinding.fromKeyboard(event.logicalKey);
+    final conflict = ShortcutSettings.conflictFor(
+      binding,
+      excluding: widget.action,
+    );
+    if (conflict != null) {
+      final l10n = context.l10n;
+      setState(() {
+        _preview = binding;
+        _error = l10n.prefShortcutConflict(
+          _shortcutLabel(l10n, conflict),
+        );
+      });
+      return KeyEventResult.handled;
+    }
+
+    Navigator.of(context).pop(binding);
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final shown = _preview ?? widget.current;
+    return AlertDialog(
+      backgroundColor: _panel,
+      title: Text(l10n.prefShortcutDialogTitle),
+      content: Focus(
+        autofocus: true,
+        onKeyEvent: _onKeyEvent,
+        child: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _shortcutLabel(l10n, widget.action),
+                style: const TextStyle(fontSize: 12, color: _muted),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 18,
+                ),
+                decoration: BoxDecoration(
+                  color: _card,
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: _border),
+                ),
+                child: Text(
+                  _preview == null
+                      ? l10n.prefShortcutPressKeys
+                      : _bindingLabel(l10n, shown),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: _preview == null ? 12 : 16,
+                    fontWeight:
+                        _preview == null ? FontWeight.w400 : FontWeight.w600,
+                    color: _preview == null ? _muted : _accent,
+                  ),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _error!,
+                  style: const TextStyle(fontSize: 10, color: Color(0xFFE5484D)),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(l10n.projectCancel),
+        ),
+      ],
+    );
+  }
+}
+
+String _shortcutLabel(AppLocalizations l10n, ShortcutAction action) =>
+    switch (action) {
+      ShortcutAction.saveProject => l10n.prefShortcutSaveProject,
+      ShortcutAction.openProject => l10n.prefShortcutOpenProject,
+      ShortcutAction.newProject => l10n.prefShortcutNewProject,
+      ShortcutAction.copyClip => l10n.prefShortcutCopyClip,
+      ShortcutAction.pasteClip => l10n.prefShortcutPasteClip,
+      ShortcutAction.playPause => l10n.prefShortcutPlayPause,
+      ShortcutAction.record => l10n.prefShortcutRecord,
+      ShortcutAction.selectAllClips => l10n.prefShortcutSelectAllClips,
+      ShortcutAction.clearSelection => l10n.prefShortcutClearSelection,
+      ShortcutAction.deleteSelection => l10n.prefShortcutDeleteSelection,
+      ShortcutAction.splitClip => l10n.prefShortcutSplitClip,
+    };
+
+String _bindingLabel(AppLocalizations l10n, ShortcutBinding binding) {
+  final isMac = Platform.isMacOS;
+  final parts = <String>[];
+  if (isMac) {
+    if (binding.control) parts.add('⌃');
+    if (binding.alt) parts.add('⌥');
+    if (binding.shift) parts.add('⇧');
+    if (binding.primary) parts.add('⌘');
+  } else {
+    if (binding.primary || binding.control) parts.add('Ctrl');
+    if (binding.alt) parts.add('Alt');
+    if (binding.shift) parts.add('Shift');
+  }
+  parts.add(_keyLabel(l10n, binding.key));
+  return isMac ? parts.join() : parts.join('+');
+}
+
+String _keyLabel(AppLocalizations l10n, LogicalKeyboardKey key) {
+  if (key == LogicalKeyboardKey.space) return l10n.prefShortcutKeySpace;
+  if (key == LogicalKeyboardKey.delete ||
+      key == LogicalKeyboardKey.backspace) {
+    return l10n.prefShortcutKeyDelete;
+  }
+  if (key == LogicalKeyboardKey.escape) return 'Esc';
+  if (key == LogicalKeyboardKey.enter ||
+      key == LogicalKeyboardKey.numpadEnter) {
+    return '⏎';
+  }
+  final label = key.keyLabel;
+  if (label.isEmpty) return '?';
+  return label.length == 1 ? label.toUpperCase() : label;
 }
 
 class _InterfaceSection extends StatelessWidget {

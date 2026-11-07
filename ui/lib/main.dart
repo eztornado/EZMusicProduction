@@ -12,7 +12,6 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 
 import 'engine/engine_service.dart';
 import 'l10n/l10n.dart';
@@ -21,6 +20,7 @@ import 'remote/remote_settings.dart';
 import 'ai/ai_settings.dart';
 import 'debug/debug_log.dart';
 import 'debug/debug_settings.dart';
+import 'shortcuts/shortcut_settings.dart';
 import 'ui/song_arranger_dialog.dart' show showSongArrangerDialog;
 import 'ui/mix_assistant_dialog.dart' show showMixAssistantDialog;
 import 'ui/app_alert.dart';
@@ -46,6 +46,7 @@ Future<void> main(List<String> args) async {
   RemoteSettings.load();
   AiSettings.load();
   DebugSettings.load();
+  ShortcutSettings.load();
   // Captura debugPrint y deja el log listo en todas las ventanas/procesos.
   DebugLog.configure();
   // Sub-window engines relaunch main with ['multi_window', windowId, json].
@@ -395,6 +396,7 @@ class _HomePageState extends State<HomePage>
         _service = null;
       },
     );
+    ShortcutSettings.revision.addListener(_onShortcutsChanged);
     var frameCount = 0;
     _ticker = createTicker((_) {
       frameCount++;
@@ -498,8 +500,13 @@ class _HomePageState extends State<HomePage>
     await _undock('debug_console', context.l10n.debugConsoleTitle);
   }
 
+  void _onShortcutsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    ShortcutSettings.revision.removeListener(_onShortcutsChanged);
     _lifecycle.dispose();
     _ticker.dispose();
     _frameTick.dispose();
@@ -540,23 +547,23 @@ class _HomePageState extends State<HomePage>
     return Scaffold(
       body: CallbackShortcuts(
         bindings: {
-          const SingleActivator(LogicalKeyboardKey.keyS, meta: true):
+          ShortcutSettings.activatorFor(ShortcutAction.saveProject):
               () => _saveProject(context),
-          const SingleActivator(LogicalKeyboardKey.keyO, meta: true):
+          ShortcutSettings.activatorFor(ShortcutAction.openProject):
               () => showOpenDialog(context, service),
-          const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () {
+          ShortcutSettings.activatorFor(ShortcutAction.newProject): () {
             final error = service.newEmptyProject();
             if (error != null) showAppError(context, error);
           },
-          const SingleActivator(LogicalKeyboardKey.keyC, meta: true): () {
+          ShortcutSettings.activatorFor(ShortcutAction.copyClip): () {
             service.copySelectedClip();
           },
-          const SingleActivator(LogicalKeyboardKey.keyV, meta: true): () {
+          ShortcutSettings.activatorFor(ShortcutAction.pasteClip): () {
             final error = service.pasteClipboard();
             if (error != null) showAppError(context, error);
           },
           // Cubase-style transport keys.
-          const SingleActivator(LogicalKeyboardKey.space): () {
+          ShortcutSettings.activatorFor(ShortcutAction.playPause): () {
             // Play/pausa también cierra la toma: no debería hacer falta
             // volver a pulsar R para ver lo que se acaba de tocar.
             if (service.isRecording) {
@@ -568,7 +575,7 @@ class _HomePageState extends State<HomePage>
               if (error != null) showAppError(context, error);
             }
           },
-          const SingleActivator(LogicalKeyboardKey.keyR): () {
+          ShortcutSettings.activatorFor(ShortcutAction.record): () {
             if (service.isRecording) {
               service.stopRecord();
             } else {
