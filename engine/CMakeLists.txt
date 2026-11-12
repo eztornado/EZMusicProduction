@@ -121,6 +121,8 @@ target_compile_definitions(cadence_engine_shared PRIVATE
     JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0)
+# Export C API symbols from the shared DLL on Windows.
+target_compile_definitions(cadence_engine_shared PUBLIC CADENCE_EXPORTS)
 if(APPLE)
     target_compile_definitions(cadence_engine_shared PRIVATE JUCE_PLUGINHOST_AU=1)
     target_link_libraries(cadence_engine_shared PRIVATE
