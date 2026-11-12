@@ -143,18 +143,13 @@ jobs:
           git clone --depth 1 --branch 3.29.3 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
 
-      - name: Install CMake and Ninja
-        shell: bash
-        run: |
-          choco install cmake ninja -y
-
       - name: Build engine
         shell: bash
         run: |
-          cmake -S . -B build -G "Ninja" \
+          cmake -S . -B build -G "Visual Studio 17 2022" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCADENCE_SF3=OFF
-          cmake --build build --target cadence_engine_shared -j "$(nproc)"
+          cmake --build build --config Release --target cadence_engine_shared -j "$(nproc)"
 
       - name: Build Flutter app
         shell: bash
