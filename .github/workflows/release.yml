@@ -18,21 +18,19 @@ jobs:
   # macOS
   # ------------------------------------------------------------------
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install CMake and Ninja
+      - name: Install CMake, Ninja and libsndfile
         run: |
           brew install cmake ninja libsndfile
 
-      - name: Install Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.29.3"
-          cache: true
-          cache-path: "${{ github.workspace }}/ui/.flutter_cache"
+      - name: Download Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.29.3 https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
 
       - name: Build engine
         run: |
@@ -68,7 +66,7 @@ jobs:
 
       - name: Release macOS
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: EZMusicProduction-macos.tar.gz
 
@@ -79,7 +77,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -92,12 +90,10 @@ jobs:
             libxi-dev libxcursor-dev libxcomposite-dev libxdamage-dev \
             libxss-dev libxtst-dev
 
-      - name: Install Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.29.3"
-          cache: true
-          cache-path: "${{ github.workspace }}/ui/.flutter_cache"
+      - name: Download Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.29.3 https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
 
       - name: Build engine
         run: |
@@ -128,7 +124,7 @@ jobs:
 
       - name: Release Linux
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: EZMusicProduction-linux.tar.gz
 
@@ -139,20 +135,25 @@ jobs:
     runs-on: windows-2025
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.29.3"
-          cache: true
-          cache-path: "${{ github.workspace }}\\.flutter_cache"
+      - name: Download Flutter SDK
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 3.29.3 https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+
+      - name: Install CMake and Ninja
+        shell: bash
+        run: |
+          choco install cmake ninja -y
 
       - name: Build engine
         shell: bash
         run: |
           cmake -S . -B build -G "Ninja" \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCADENCE_SF3=OFF
           cmake --build build --target cadence_engine_shared -j "$(nproc)"
 
       - name: Build Flutter app
@@ -168,10 +169,6 @@ jobs:
           BUNDLE="ui/build/windows/x64/runner/Release"
           # Copy the engine .dll next to the executable (FFI lookup path)
           cp "build/engine/cadence_engine.dll" "$BUNDLE/"
-          # Also copy VCRuntime redistributable if available
-          if [ -f "$BUNDLE/vcruntime140.dll" ]; then
-            echo "VCRuntime already bundled by Flutter"
-          fi
           # Compress the bundle
           cd "ui/build/windows/x64/runner"
           7z a "$GITHUB_WORKSPACE/EZMusicProduction-windows.zip" Release/
@@ -184,6 +181,6 @@ jobs:
 
       - name: Release Windows
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: EZMusicProduction-windows.zip
