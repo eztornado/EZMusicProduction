@@ -5,7 +5,7 @@
 <h3 align="center">音楽制作のすべてを、ひとつのアプリで。</h3>
 
 <p align="center">
-  macOS向けオープンソースDAW · Apple Silicon / Intel
+  macOS、Linux、Windows向けのオープンソースDAW
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <img alt="対応OS" src="https://img.shields.io/badge/OS-macOS%2012%2B-0a0a0b?logo=apple&logoColor=white">
+  <img alt="対応OS" src="https://img.shields.io/badge/OS-macOS%20%7C%20Linux%20%7C%20Windows-0a0a0b?logo=apple&logoColor=white">
   <img alt="UI" src="https://img.shields.io/badge/UI-Flutter-02569B?logo=flutter&logoColor=white">
   <img alt="エンジン" src="https://img.shields.io/badge/engine-C%2B%2B20%20%2F%20JUCE-ff2d20">
   <img alt="状態" src="https://img.shields.io/badge/status-0.1%20pre--release-ff2d20">
@@ -30,7 +30,7 @@
 
 ---
 
-**EZMusicProduction**は、スタジオのすべてをひとつのウィンドウにまとめたmacOS用のDAWです。録音・編集・ミックス・オートメーションに加え、4つの内蔵楽器、21,000以上のフリー音源、本格的なノートエディターを最初から使えます。
+**EZMusicProduction**は、スタジオのすべてをひとつのウィンドウにまとめたクロスプラットフォームのDAWです。録音・編集・ミックス・オートメーションに加え、4つの内蔵楽器、21,000以上のフリー音源、本格的なノートエディター、そしてAIパワードのツールを最初から使えます。
 
 プラグインを探し回る必要も、追加の音源パックを買う必要も、サブスクリプションもありません。インストールして開けば、すぐに音楽づくりを始められます。
 
@@ -41,6 +41,9 @@
 | **タイムラインと録音** | オーディオ／MIDIのマルチトラック編集、ビートスナップ、分割・コピー・貼り付け、メトロノーム、テンポと拍子、フレーム単位のプレイヘッド。 |
 | **サウンドライブラリ** | 21,000以上のフリーなループとワンショット。カテゴリーと種類で検索でき、その場で試聴して選択中のトラックへ直接配置できます。 |
 | **内蔵楽器** | EZInstruments（General MIDI 128音色＋ドラムキット）、EZSynth、EZDrums、EZOrquestra。 |
+| **内蔵エフェクト** | EZQ4（8バンドパラメトリックEQ）、EZコンプレッサー、EZリミッター、EZアルペジエーター。 |
+| **AIツール** | AIミックスアシスタント（レベル、パン、EQ、コンプレッションの自動バランス）、AIソングアレンジ（楽曲構造の生成）、AI音楽生成（MusicVAE/LSTM）。 |
+| **リモートコントロール** | LAN WebSocketサーバーによる外部コントロールとモニタリング。 |
 | **ピアノロール** | ノートの描画・長さ変更・ベロシティ編集に加え、グリッド、スウィング、キャッチレンジ、iQ、フリーズを備えた非破壊クオンタイズ。 |
 | **ミキサーとエフェクト** | インサート、センド、パン、ミュート／ソロ、メーター付きのチャンネルストリップ、マスターストリップ、チャンネル設定。AU／VST3プラグインに対応。 |
 | **オートメーション** | 音量、パン、サステイン、プラグインパラメーターのレーン。ポイントを編集でき、線形補間でつながります。 |
@@ -71,6 +74,25 @@
 - **EZSynth** — 3オシレーター、ユニゾン、サブ、ノイズ、マルチモードラダーフィルター、2基のLFO、グライド、プリセットバンクを備えたサブトラクティブシンセ。**LINES**機能では、ピアノロール上にポリフォニックなピッチディストーション領域を描けます。和音の各音がそれぞれの経路をたどります。
 - **EZDrums** — 808／909系のシンセドラムキット、多彩なスタイルのパターン、テンポに同期するループ、設定可能な拍子。実際のMIDIクリップとして録音し、ほかのトラックと同じようにノート単位で編集できます。
 - **EZOrquestra** — Alpine Project形式のライブラリに対応したオーケストラサンプラー。音ごとのサンプル、奏法、ベロシティレイヤー、ラウンドロビンに対応します。
+
+### 内蔵エフェクト
+
+4つのプロセッサーがアプリに同梱されており、どのチャンネルやマスターバスにもすぐに追加できます：
+
+- **EZQ4** — Pro-Qスタイルのワークフローを持つ8バンドパラメトリックEQ：バンドごとの有効化/タイプ/周波数/ゲイン/Q、24 dB/octのカット、RBJクックブックバイクアッドに基づく自然位相IIRフィルタリング。
+- **EZコンプレッサー** — ソフトニー、アタック/リリース、パラレルミックス機能を備えたステレオリンクダイナミクスプロセッサー。
+- **EZリミッター** — マスターバス用のルックアヘッドブリックウォールリミッター、ステレオリンクピーク検出とハードクランプセーフティシーリング。
+- **EZアルペジエーター** — 楽器トラックのMIDIインサートスロットに配置されるMIDI-FXアルペジエーター。ノートを消費してアルペジオ化して再出力し、ホストトランスポートにサンプルロック。
+
+### AIパワードのツール
+
+- **AIミックスアシスタント** — プロジェクトを分析し、すべてのトラックのレベル、パン、EQ、コンプレッションを自動バランス。ワンクリックでプロフェッショナルな初期ミックスを取得。
+- **AIソングアレンジ** — シードアイデアから完全な楽曲構造を生成し、セクション（イントロ、バーズ、コーラス、ブリッジ、アウトロ）を適切な楽器編成とトランジションで作成。
+- **AI音楽生成** — MusicVAEとLSTMモデルを使用してメロディックな素材を生成し、MIDIクリップに直接録音可能。
+
+### リモートコントロール
+
+内蔵LANサーバーは外部コントロールとモニタリング用のWebSocket + JSONプロトコルを提供します。コンパニオンアプリはネットワーク経由で接続し、トランスポート状態、プロジェクトメタデータ、メーターレベルの読み取り、コマンド送信が可能です — ペアリングトークンで保護されています。
 
 ### ピアノロールと非破壊クオンタイズ
 
@@ -111,8 +133,9 @@ Cubaseの`.cpr`プロジェクトを直接開くと、トラック、テンポ�
 
 ## 動作環境
 
-- macOS 12以降
-- Apple Silicon または Intel Mac
+- **macOS** 12以降（Apple Silicon または Intel）
+- **Linux**（GTK3、ALSA/PulseAudio対応）
+- **Windows** 10以降（x64）
 
 ## ダウンロード
 
@@ -120,7 +143,11 @@ Cubaseの`.cpr`プロジェクトを直接開くと、トラック、テンポ�
 
 ## ソースからビルドする
 
-**必要なもの：** Xcode（コマンドラインツールを含む）、CMake 3.22以降、Ninja、Flutter 3.35.x、Homebrewの`libsndfile`。JUCEとFluidSynthは初回のCMake実行時に自動で取得されます。
+**必要なもの：** CMake 3.22以降、Ninja、Flutter 3.29.x、プラットフォーム固有の依存関係。JUCEとFluidSynthは初回のCMake実行時に自動で取得されます。
+
+### macOS
+
+**必要なもの：** Xcode（コマンドラインツールを含む）、Homebrewの`libsndfile`。
 
 ```bash
 brew install cmake ninja libsndfile
@@ -150,6 +177,51 @@ UNIVERSAL=1 ./build_app.sh
 
 このモードではFluidSynthを静的リンクし、SF3を無効にします（SF2は利用可能）。エンジンはHomebrewのライブラリに依存しません。
 
+### Linux
+
+**必要なもの：** GTK3、ALSA、openblas、libsndfile、開発用ヘッダー。
+
+```bash
+# Ubuntu/Debian
+sudo apt install cmake ninja-build libgtk-3-dev libasound2-dev \
+  libopenblas-dev libsndfile1-dev
+
+# Arch
+sudo pacman -S cmake ninja gtk3 alsa-lib openblas libsndfile
+
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j "$(nproc)"
+
+cd ui
+flutter pub get
+flutter build linux --release
+```
+
+エンジンの共有ライブラリをFlutterバンドルへコピー：
+
+```bash
+cp build/engine/libcadence_engine.so ui/build/linux/x64/release/bundle/lib/
+```
+
+### Windows
+
+**必要なもの：** Visual Studio 2022（Desktop C++ワークロード）、CMake、Ninja。
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022"
+cmake --build build --config Release
+
+cd ui
+flutter pub get
+flutter build windows --release
+```
+
+エンジンのDLLを実行ファイルの隣へコピー：
+
+```powershell
+copy build\engine\Release\cadence_engine.dll ui\build\windows\x64\runner\Release\
+```
+
 ### テストとCLI
 
 ```bash
@@ -170,7 +242,7 @@ engine/          C++20オーディオエンジン、C ABI、開発用CLI
   include/       公開ヘッダーと安定したC API
   src/           エンジン、モデル、ミキサー、内蔵楽器
   apps/cli/      ヘッドレステストハーネス
-ui/              Flutter製macOSアプリ
+ui/              Flutter製クロスプラットフォームアプリ（macOS、Linux、Windows）
   lib/engine/    Dart FFIバインディング、スナップショット、プロジェクトサービス
   lib/ui/        タイムライン、ミキサー、ピアノロール、オートメーション、ダイアログ
   lib/l10n/      英語・スペイン語・日本語の翻訳
@@ -193,7 +265,7 @@ build_app.sh     macOSアプリのビルド、パッケージング、署名
 
 バグ報告、機能のアイデア、プルリクエストを歓迎します。参加するには：
 
-- 不具合を再現し、macOSのバージョン、Macのモデル、再現手順を添えて[Issueを開く](https://github.com/eztornado/EZMusicProduction/issues)。
+- 不具合を再現し、OSのバージョン、ハードウェア、再現手順を添えて[Issueを開く](https://github.com/eztornado/EZMusicProduction/issues)。
 - [`ui/lib/l10n/`](ui/lib/l10n/)の翻訳を改善する（英語・スペイン語・日本語のキーを揃えてください）。
 - サウンドライブラリのカタログのメタデータを追加・修正する。
 - 設計ドキュメントやテストカバレッジを改善する。

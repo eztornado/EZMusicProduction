@@ -5,7 +5,7 @@
 <h3 align="center">Your whole music studio, in one app.</h3>
 
 <p align="center">
-  An open-source DAW for macOS · Apple Silicon and Intel
+  An open-source DAW for macOS, Linux and Windows
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2012%2B-0a0a0b?logo=apple&logoColor=white">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-0a0a0b?logo=apple&logoColor=white">
   <img alt="UI" src="https://img.shields.io/badge/UI-Flutter-02569B?logo=flutter&logoColor=white">
   <img alt="Engine" src="https://img.shields.io/badge/engine-C%2B%2B20%20%2F%20JUCE-ff2d20">
   <img alt="Status" src="https://img.shields.io/badge/status-0.1%20pre--release-ff2d20">
@@ -30,7 +30,7 @@
 
 ---
 
-**EZMusicProduction** is a digital audio workstation for macOS that brings the whole studio into a single window: recording, editing, mixing and automation, with four instruments, a library of more than 21,000 free sounds and a complete note editor included from the first launch.
+**EZMusicProduction** is a cross-platform digital audio workstation that brings the whole studio into a single window: recording, editing, mixing and automation, with four instruments, a library of more than 21,000 free sounds, a complete note editor and AI-powered tools included from the first launch.
 
 No plugin hunting, no add-on packs to buy, no subscriptions. Install it, open it and start making music.
 
@@ -41,6 +41,9 @@ No plugin hunting, no add-on packs to buy, no subscriptions. Install it, open it
 | **Timeline and recording** | Multitrack arrangement for audio and MIDI, beat snapping, split/copy/paste, metronome, tempo and time signature, frame-accurate playhead. |
 | **Sound library** | More than 21,000 free loops and one-shots, searchable by category and type, with in-place audition and direct placement on the selected track. |
 | **Built-in instruments** | EZInstruments (128 General MIDI sounds + drum kit), EZSynth, EZDrums and EZOrquestra. |
+| **Built-in effects** | EZQ4 (8-band parametric EQ), EZCompressor, EZLimiter and EZArpeggiator. |
+| **AI tools** | AI Mix Assistant (auto-balance levels, pan, EQ, compression), AI Song Arranger (generate full song structures), AI Music Generation (MusicVAE/LSTM melody generation). |
+| **Remote control** | LAN WebSocket server for external control and monitoring from companion apps. |
 | **Piano Roll** | Note drawing, resizing and velocity editing, plus non-destructive quantize with grid, swing, catch range, iQ and freeze. |
 | **Mixer and effects** | Channel strips with inserts, sends, pan, mute/solo and meters, a master strip and Channel Settings. Hosts AU and VST3 plugins. |
 | **Automation** | Volume, pan, sustain and plugin-parameter lanes with editable points and linear segments. |
@@ -71,6 +74,25 @@ The library indexes **more than 21,000 free sounds** — loops, drums, percussio
 - **EZSynth** — a subtractive synth with three oscillators, unison, sub, noise, a multimode ladder filter, two LFOs, glide and a preset bank. Its **LINES** feature lets you draw polyphonic pitch-distortion areas over the piano roll: each note in a chord follows its own path.
 - **EZDrums** — synthesized 808/909-style kits, patterns across styles, tempo-locked looping and configurable time signature. Record it to a real MIDI clip and edit it note by note like any other track.
 - **EZOrquestra** — an orchestral sampler for Alpine Project-style libraries, with per-note samples, articulations, velocity layers and round-robin variation.
+
+### Built-in effects
+
+Four processors ship with the app, ready to drop on any channel or the master bus:
+
+- **EZQ4** — an 8-band parametric EQ with Pro-Q-style workflow: per-band enable/type/frequency/gain/Q, plus 24 dB/oct cuts and natural-phase IIR filtering based on RBJ-cookbook biquads.
+- **EZCompressor** — a stereo-linked dynamics processor with soft knee, attack/release and parallel mix.
+- **EZLimiter** — a look-ahead brick-wall limiter for the master bus, with stereo-linked peak detection and a hard-clamp safety ceiling.
+- **EZArpeggiator** — a MIDI-FX arpeggiator that sits in the instrument track's MIDI insert slot, consuming notes and re-emitting them arpeggiated, sample-locked to the host transport.
+
+### AI-powered tools
+
+- **AI Mix Assistant** — analyses the project and auto-balances levels, pan, EQ and compression across all tracks. One click to get a professional-sounding starting mix.
+- **AI Song Arranger** — generates full song structures from a seed idea, creating sections (intro, verse, chorus, bridge, outro) with appropriate instrumentation and transitions.
+- **AI Music Generation** — uses MusicVAE and LSTM models to generate melodic material that you can record directly into MIDI clips.
+
+### Remote control
+
+A built-in LAN server exposes a WebSocket + JSON protocol for external control and monitoring. Companion apps can connect over the network to read transport state, project metadata, meter levels and send commands — all protected by a pairing token.
 
 ### Piano Roll and non-destructive quantize
 
@@ -111,8 +133,9 @@ Projects are saved as `.ezmpp` files and can be opened, saved and undone like an
 
 ## Requirements
 
-- macOS 12 or later
-- Apple Silicon or Intel Mac
+- **macOS** 12 or later (Apple Silicon or Intel)
+- **Linux** with GTK3 and ALSA/PulseAudio
+- **Windows** 10 or later (x64)
 
 ## Download
 
@@ -120,7 +143,11 @@ Grab the latest build from the [releases page](https://github.com/eztornado/EZMu
 
 ## Build from source
 
-**Prerequisites:** Xcode (with command-line tools), CMake 3.22+, Ninja, Flutter 3.35.x and Homebrew's `libsndfile`. JUCE and FluidSynth are downloaded automatically by CMake the first time.
+**Prerequisites:** CMake 3.22+, Ninja, Flutter 3.29.x and platform-specific dependencies. JUCE and FluidSynth are downloaded automatically by CMake the first time.
+
+### macOS
+
+**Prerequisites:** Xcode (with command-line tools), Homebrew's `libsndfile`.
 
 ```bash
 brew install cmake ninja libsndfile
@@ -150,6 +177,51 @@ UNIVERSAL=1 ./build_app.sh
 
 That variant links FluidSynth statically and disables SF3 support (SF2 still works), so the engine does not depend on Homebrew libraries.
 
+### Linux
+
+**Prerequisites:** GTK3, ALSA, openblas, libsndfile and development headers.
+
+```bash
+# Ubuntu/Debian
+sudo apt install cmake ninja-build libgtk-3-dev libasound2-dev \
+  libopenblas-dev libsndfile1-dev
+
+# Arch
+sudo pacman -S cmake ninja gtk3 alsa-lib openblas libsndfile
+
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j "$(nproc)"
+
+cd ui
+flutter pub get
+flutter build linux --release
+```
+
+Copy the engine shared library into the Flutter bundle:
+
+```bash
+cp build/engine/libcadence_engine.so ui/build/linux/x64/release/bundle/lib/
+```
+
+### Windows
+
+**Prerequisites:** Visual Studio 2022 (Desktop C++ workload), CMake and Ninja.
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022"
+cmake --build build --config Release
+
+cd ui
+flutter pub get
+flutter build windows --release
+```
+
+Copy the engine DLL next to the executable:
+
+```powershell
+copy build\engine\Release\cadence_engine.dll ui\build\windows\x64\runner\Release\
+```
+
 ### Tests and CLI
 
 ```bash
@@ -170,7 +242,7 @@ engine/          C++20 audio engine, C ABI and development CLI
   include/       public headers and the stable C API
   src/           engine, model, mixer and built-in instruments
   apps/cli/      headless test harness
-ui/              Flutter macOS app
+ui/              Flutter cross-platform app (macOS, Linux, Windows)
   lib/engine/    Dart FFI bindings, snapshots and project service
   lib/ui/        timeline, mixer, piano roll, automation, dialogs
   lib/l10n/      English, Spanish and Japanese translations
@@ -193,7 +265,7 @@ The engine still uses `cadence` internally as its namespace, C ABI prefix and dy
 
 Bug reports, feature ideas and pull requests are welcome. If you want to help:
 
-- Reproduce a bug and [open an issue](https://github.com/eztornado/EZMusicProduction/issues) with your macOS version, Mac model and the steps that trigger it.
+- Reproduce a bug and [open an issue](https://github.com/eztornado/EZMusicProduction/issues) with your OS version, hardware and the steps that trigger it.
 - Improve the translations in [`ui/lib/l10n/`](ui/lib/l10n/) (English, Spanish and Japanese must stay in sync).
 - Add or fix metadata in the sound library catalogue.
 - Improve the design documents or the test coverage.
