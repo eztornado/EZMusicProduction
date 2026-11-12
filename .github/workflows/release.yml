@@ -112,6 +112,15 @@ jobs:
           BUNDLE="ui/build/linux/x64/release/bundle"
           # Copy the engine .so next to the executable (FFI lookup path)
           cp "build/engine/libcadence_engine.so" "$BUNDLE/"
+          # Copy runtime dependencies of the engine .so (libopenblas, libfluidsynth, etc.)
+          ldd "build/engine/libcadence_engine.so" | \
+            awk '/ => / && !/ => not found/ { print $3 }' | \
+            while read -r dep; do
+              if [ -n "$dep" ] && [ -f "$dep" ]; then
+                cp "$dep" "$BUNDLE/"
+                echo "Copied dependency: $dep"
+              fi
+            done
           # Compress the bundle
           cd "ui/build/linux/x64/release"
           tar -czf "$GITHUB_WORKSPACE/EZMusicProduction-linux.tar.gz" bundle
