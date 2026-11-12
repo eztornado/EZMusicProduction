@@ -401,8 +401,7 @@ juce::StringArray availablePrograms()
     for (const auto& dir : programDirectories())
     {
         // Use std::filesystem for cross-platform directory listing.
-        const std::string dirStr = dir.getFullPathName().toUTF8();
-        const std::filesystem::path path(dirStr);
+        const std::filesystem::path path(dir.getFullPathName().toRawUTF8());
         if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path))
             continue;
         for (const auto& entry : std::filesystem::directory_iterator(path))
@@ -413,7 +412,7 @@ juce::StringArray availablePrograms()
             if (filename.size() < 6 || filename.substr(filename.size() - 5) != ".json")
                 continue;
             const auto stem = filename.substr(0, filename.size() - 5);
-            const juce::String name = juce::String::fromUTF8(stem);
+            const juce::String name = juce::String::fromUTF8(stem.c_str());
             if (!out.contains(name))
                 out.add(name);
         }
