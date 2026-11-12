@@ -401,7 +401,8 @@ juce::StringArray availablePrograms()
     for (const auto& dir : programDirectories())
     {
         // Use std::filesystem for cross-platform directory listing.
-        const auto path = std::filesystem::path(dir.getFullPathName().toUTF8());
+        const std::string dirStr = dir.getFullPathName().toUTF8();
+        const std::filesystem::path path(dirStr);
         if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path))
             continue;
         for (const auto& entry : std::filesystem::directory_iterator(path))
