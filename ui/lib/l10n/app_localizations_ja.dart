@@ -177,6 +177,12 @@ class AppLocalizationsJa extends AppLocalizations {
   String get timelineInputRight => '入力: 右';
 
   @override
+  String get timelineCreateMidiClipHere => 'ここにMIDIクリップを作成';
+
+  @override
+  String get timelineCreateMidiClipAtPlayhead => 'プレイヘッドにMIDIクリップを作成';
+
+  @override
   String get timelineMute => 'ミュート';
 
   @override
@@ -646,7 +652,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get alertTechnicalDetail => '技術的な詳細';
 
   @override
-  String get prefTitle => '環境設定 — オーディオ、MIDI、リモートコントロール';
+  String get prefTitle => '環境設定';
 
   @override
   String get prefSectionLanguage => '言語';
@@ -1193,4 +1199,155 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefRemoteHelp => 'リモートアプリでこのアドレスとコードを入力してください。';
+
+  @override
+  String get prefNavAudio => 'オーディオ';
+
+  @override
+  String get prefNavPlugins => 'プラグイン';
+
+  @override
+  String get prefNavMidi => 'MIDI';
+
+  @override
+  String get prefNavRemote => 'リモートコントロール';
+
+  @override
+  String get prefNavInterface => 'インターフェース';
+
+  @override
+  String get prefNavShortcuts => 'ショートカット';
+
+  @override
+  String get prefNavVersion => 'バージョン';
+
+  @override
+  String get prefAudioIntro => 'オーディオの出力・入力とエンジンのパフォーマンス。';
+
+  @override
+  String get prefPluginsIntro => 'プラグインライブラリとエンジンが索引するフォルダー。';
+
+  @override
+  String get prefMidiIntro => '入力デバイスとレイテンシー補正。';
+
+  @override
+  String get prefRemoteIntro => 'ローカルネットワーク上の別のデバイスから DAW を操作します。';
+
+  @override
+  String get prefInterfaceIntro => 'インターフェースの言語と開発向けオプション。';
+
+  @override
+  String get prefShortcutsIntro => 'アプリのキーボードショートカットを確認・変更します。';
+
+  @override
+  String get prefVersionIntro => 'インストールされているバージョンの情報。';
+
+  @override
+  String get prefSectionAudio => 'オーディオデバイス';
+
+  @override
+  String prefPluginsStatus(int count) {
+    return '$count 個のプラグインを索引済み';
+  }
+
+  @override
+  String get prefPluginsScanning => 'ライブラリをスキャン中…';
+
+  @override
+  String get prefPluginsRescan => 'プラグインを再スキャン';
+
+  @override
+  String get prefPluginsScanHint => 'スキャンはバックグラウンドで実行され、終了すると一覧が更新されます。';
+
+  @override
+  String get prefPluginsIndexedDirs => '索引するフォルダー';
+
+  @override
+  String get prefPluginsDirsHelp => 'VST3 プラグイン（.vst3）をここに置いてください。エンジンがこれらのフォルダーを走査して登録します。';
+
+  @override
+  String get prefPluginsDirExists => '利用可能';
+
+  @override
+  String get prefPluginsDirMissing => '存在しません';
+
+  @override
+  String get prefPluginsNoDirectories => 'このシステムの検索パスが見つかりませんでした。';
+
+  @override
+  String get prefPluginsAuNote => 'macOS では AudioUnit はフォルダーではなくシステムの登録情報から検出されます。';
+
+  @override
+  String get prefPluginsEmpty => 'まだプラグインが索引されていません。再スキャンを押してフォルダーを検索してください。';
+
+  @override
+  String get prefMidiScanHint => 'MIDI デバイスは接続すると自動的に検出されます。';
+
+  @override
+  String get prefLanguageHelp => '変更はすべてのウィンドウにすぐ反映されます。';
+
+  @override
+  String get prefShortcutsTitle => 'キーボードショートカット';
+
+  @override
+  String get prefShortcutsHint => '組み合わせをクリックすると変更できます。マウス修飾キー（スナップを無効にするキーなど）はここでは編集できません。';
+
+  @override
+  String get prefShortcutEdit => 'ショートカットを変更';
+
+  @override
+  String get prefShortcutReset => 'ショートカットをリセット';
+
+  @override
+  String get prefShortcutResetAll => 'すべてリセット';
+
+  @override
+  String get prefShortcutDialogTitle => '新しいショートカット';
+
+  @override
+  String get prefShortcutPressKeys => 'キーの組み合わせを押してください…';
+
+  @override
+  String prefShortcutConflict(String action) {
+    return 'その組み合わせは「$action」に割り当てられています。';
+  }
+
+  @override
+  String get prefShortcutSaveProject => 'プロジェクトを保存';
+
+  @override
+  String get prefShortcutOpenProject => 'プロジェクトを開く';
+
+  @override
+  String get prefShortcutNewProject => '新規プロジェクト';
+
+  @override
+  String get prefShortcutCopyClip => 'クリップをコピー';
+
+  @override
+  String get prefShortcutPasteClip => 'クリップを貼り付け';
+
+  @override
+  String get prefShortcutPlayPause => '再生 / 一時停止';
+
+  @override
+  String get prefShortcutRecord => '録音';
+
+  @override
+  String get prefShortcutSelectAllClips => 'すべてのクリップを選択';
+
+  @override
+  String get prefShortcutClearSelection => '選択を解除';
+
+  @override
+  String get prefShortcutDeleteSelection => '選択範囲を削除';
+
+  @override
+  String get prefShortcutSplitClip => '再生ヘッドでクリップを分割';
+
+  @override
+  String get prefShortcutKeySpace => 'スペース';
+
+  @override
+  String get prefShortcutKeyDelete => 'Delete';
 }

@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart';
 import '../l10n/l10n.dart';
+import '../shortcuts/shortcut_settings.dart';
 import 'add_track_dialog.dart' show showAddTrackDialog;
 import 'channel_settings_dialog.dart' show showChannelSettingsDialog;
 import 'design.dart';
@@ -336,6 +337,14 @@ class _TimelineViewState extends State<TimelineView> {
   // Trim affordance: the clip edge under the pointer (cursor + highlight).
   int? _hoverClipId;
   ClipEdge? _hoverEdge;
+  // Double-click detection for primary clicks. Do it from raw pointer
+  // timestamps instead of a DoubleTapGestureRecognizer: its timer otherwise
+  // stays pending after every single click (and in widget tests that never
+  // advance the clock).
+  static const Duration _doubleClickInterval = Duration(milliseconds: 350);
+  static const double _doubleClickSlopPx = 8;
+  Duration? _lastClickTime;
+  Offset? _lastClickContent;
 
   void _updateHoverEdge(Offset viewportLocal) {
     final hit = hitTestClipEdge(
@@ -727,8 +736,84 @@ class _TimelineViewState extends State<TimelineView> {
     return seconds;
   }
 
-  /// Right-click on a clip: split at playhead / delete. On empty space the
-  /// event is ignored (the track header owns the track menu).
+  void _resetClickTracking() {
+    _lastClickTime = null;
+    _lastClickContent = null;
+  }
+
+  /// Registers a completed click. Two clicks close enough in time and space
+  /// are treated as a double-click.
+  void _registerClick(PointerUpEvent event) {
+    final local = Offset(_pointerContentX, _pointerContentY);
+    final lastTime = _lastClickTime;
+    final lastContent = _lastClickContent;
+    final isDouble =
+        lastTime != null &&
+        lastContent != null &&
+        event.timeStamp >= lastTime &&
+        event.timeStamp - lastTime <= _doubleClickInterval &&
+        (local - lastContent).distance <= _doubleClickSlopPx;
+    if (!isDouble) {
+      _lastClickTime = event.timeStamp;
+      _lastClickContent = local;
+      return;
+    }
+    _resetClickTracking();
+    _handleDoubleClick(local);
+  }
+
+  void _handleDoubleClick(Offset local) {
+    if (local.dy < kRulerHeight) return;
+
+    final snapshot = widget.service.snapshot;
+    final clipId = hitTestClip(
+      snapshot,
+      local,
+      pixelsPerSecond: _pps,
+      automationOverlay: _automationOverlay,
+    );
+    if (clipId != null) {
+      final clip = _findClip(clipId);
+      if (clip != null && clip.isMidi) {
+        widget.onOpenMidiEditor?.call(clipId);
+      }
+      return;
+    }
+
+    final row = _rowAtContent(local.dy);
+    if (row < 0 || row >= snapshot.tracks.length) return;
+    if (_automationOverlay &&
+        local.dy - kRulerHeight - row * _stride >= kTrackRowHeight) {
+      return;
+    }
+    final track = snapshot.tracks[row];
+    if (track.type != 1) return;
+    _createMidiClipAt(track.id, local.dx / _pps);
+  }
+
+  /// Adds an empty MIDI clip, selects it and opens the piano roll so notes can
+  /// be drawn without recording from a MIDI device.
+  void _createMidiClipAt(int trackId, double startSeconds) {
+    final snapshot = widget.service.snapshot;
+    final start = snapSeconds(
+      startSeconds.clamp(0.0, double.infinity).toDouble(),
+      bypass: !widget.service.snapToGrid || _snapBypassed,
+      beatSeconds: snapshot.beatSeconds,
+    );
+    final clipId = widget.service.addMidiClip(
+      trackId,
+      start,
+      snapshot.barSeconds,
+    );
+    if (clipId < 0) return;
+    widget.service.selectTrack(trackId);
+    widget.service.selectClip(clipId);
+    widget.onOpenMidiEditor?.call(clipId);
+    setState(() {});
+  }
+
+  /// Right-click on a clip: split at playhead / delete. On an empty
+  /// instrument lane it offers to create an empty MIDI clip at that position.
   void _onSecondaryTapUp(TapUpDetails details) {
     final local = Offset(
       _contentDx(details.localPosition.dx),
@@ -740,7 +825,10 @@ class _TimelineViewState extends State<TimelineView> {
       pixelsPerSecond: _pps,
       automationOverlay: _automationOverlay,
     );
-    if (clipId == null) return;
+    if (clipId == null) {
+      _showEmptyLaneMenu(local, details.globalPosition);
+      return;
+    }
     // Right-clicking a clip that is already part of a group keeps the group
     // (Delete in the menu then removes the whole selection); otherwise it
     // becomes the new single selection.
@@ -775,6 +863,42 @@ class _TimelineViewState extends State<TimelineView> {
       } else if (value == 2) {
         widget.service.deleteSelectedClip();
       }
+    });
+  }
+
+  void _showEmptyLaneMenu(Offset local, Offset globalPosition) {
+    if (local.dy < kRulerHeight) return;
+    final snapshot = widget.service.snapshot;
+    final row = _rowAtContent(local.dy);
+    if (row < 0 || row >= snapshot.tracks.length) return;
+    if (_automationOverlay &&
+        local.dy - kRulerHeight - row * _stride >= kTrackRowHeight) {
+      return;
+    }
+    final track = snapshot.tracks[row];
+    if (track.type != 1) return;
+
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    showMenu<int>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromPoints(
+          globalPosition,
+          overlay?.localToGlobal(overlay.size.bottomRight(Offset.zero)) ??
+              globalPosition,
+        ),
+        Offset.zero & overlay!.size,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 1,
+          child: Text(context.l10n.timelineCreateMidiClipHere),
+        ),
+      ],
+    ).then((value) {
+      if (!mounted || value != 1) return;
+      _createMidiClipAt(track.id, local.dx / _pps);
     });
   }
 
@@ -897,6 +1021,7 @@ class _TimelineViewState extends State<TimelineView> {
 
     // Additive click: Shift extends a range, ⌘ toggles one clip.
     if (additive) {
+      _resetClickTracking();
       if (keyboard.isMetaPressed) {
         widget.service.toggleClipSelection(hit.clip.id);
         if (widget.service.isClipSelected(hit.clip.id)) {
@@ -964,6 +1089,7 @@ class _TimelineViewState extends State<TimelineView> {
     if (pendingSeek != null) {
       _pendingSeekContentX = null;
       widget.service.seek((pendingSeek / _pps).clamp(0.0, double.infinity));
+      _resetClickTracking();
       _resetGesture();
       setState(() {});
       return;
@@ -987,12 +1113,16 @@ class _TimelineViewState extends State<TimelineView> {
         widget.service.seek(
           (_pointerContentX / _pps).clamp(0.0, double.infinity),
         );
+        _registerClick(event);
+      } else {
+        _resetClickTracking();
       }
       setState(() {});
       return;
     }
 
     final clipId = _dragClipId;
+    final wasClick = clipId != null && !_didMove;
     if (clipId != null && _didMove) {
       if (_previewFade >= 0) {
         // Fade drag: one command, one undo entry.
@@ -1019,11 +1149,17 @@ class _TimelineViewState extends State<TimelineView> {
       }
     }
     _resetGesture();
+    if (wasClick) {
+      _registerClick(event);
+    } else {
+      _resetClickTracking();
+    }
     setState(() {});
   }
 
   void _onPointerCancel(PointerCancelEvent event) {
     _stopAutoScroll();
+    _resetClickTracking();
     _marqueeActive = false;
     _marqueeMoved = false;
     _marqueeStartContent = null;
@@ -1059,27 +1195,22 @@ class _TimelineViewState extends State<TimelineView> {
   }
 
   void _onKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
-    final key = event.logicalKey;
-
-    if (key == LogicalKeyboardKey.keyA &&
-        HardwareKeyboard.instance.isMetaPressed) {
+    if (ShortcutSettings.matches(ShortcutAction.selectAllClips, event)) {
       widget.service.selectAllClips();
       _selectionAnchorClipId = widget.service.selectedClipId;
       return;
     }
-    if (key == LogicalKeyboardKey.escape) {
+    if (ShortcutSettings.matches(ShortcutAction.clearSelection, event)) {
       widget.service.clearClipSelection();
       _selectionAnchorClipId = null;
       return;
     }
-    if (key == LogicalKeyboardKey.delete ||
-        key == LogicalKeyboardKey.backspace) {
+    if (ShortcutSettings.matches(ShortcutAction.deleteSelection, event)) {
       widget.service.deleteSelectedClip();
       _selectionAnchorClipId = null;
       return;
     }
-    if (key == LogicalKeyboardKey.keyS) {
+    if (ShortcutSettings.matches(ShortcutAction.splitClip, event)) {
       final clipId = widget.service.selectedClipId;
       if (clipId != null) {
         widget.service.splitClip(clipId, widget.service.positionSeconds);
@@ -1232,6 +1363,10 @@ class _TimelineViewState extends State<TimelineView> {
                                 automationOverlay: _automationOverlay,
                                 onAutomation: () => _openAutomationFor(
                                     snapshot.tracks[i].id),
+                                onCreateMidiClip: () => _createMidiClipAt(
+                                  snapshot.tracks[i].id,
+                                  widget.service.positionSeconds,
+                                ),
                               ),
                           ],
                         ),
@@ -1538,6 +1673,7 @@ class _TrackHeader extends StatelessWidget {
     required this.selected,
     required this.automationOverlay,
     required this.onAutomation,
+    required this.onCreateMidiClip,
   });
 
   final int index;
@@ -1547,6 +1683,7 @@ class _TrackHeader extends StatelessWidget {
   final bool selected;
   final bool automationOverlay;
   final VoidCallback onAutomation;
+  final VoidCallback onCreateMidiClip;
 
   Future<void> _showMenu(BuildContext context, Offset position) async {
     final overlay =
@@ -1577,6 +1714,11 @@ class _TrackHeader extends StatelessWidget {
                 : context.l10n.timelineInputRight,
           ),
         ),
+        if (track.type == 1)
+          PopupMenuItem(
+            value: 'midi',
+            child: Text(context.l10n.timelineCreateMidiClipAtPlayhead),
+          ),
         PopupMenuItem(value: 'mute', child: Text(context.l10n.timelineMute)),
         PopupMenuItem(value: 'solo', child: Text(context.l10n.timelineSolo)),
         const PopupMenuDivider(),
@@ -1596,6 +1738,8 @@ class _TrackHeader extends StatelessWidget {
         await showChannelSettingsDialog(context, service, track.id);
       case 'input':
         service.setTrackInputChannel(track.id, track.inputChannel == 0 ? 1 : 0);
+      case 'midi':
+        onCreateMidiClip();
       case 'mute':
         service.setTrackMute(track.id, !track.mute);
       case 'solo':

@@ -177,6 +177,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get timelineInputRight => 'Input: Right';
 
   @override
+  String get timelineCreateMidiClipHere => 'Create MIDI clip here';
+
+  @override
+  String get timelineCreateMidiClipAtPlayhead => 'Create MIDI clip at playhead';
+
+  @override
   String get timelineMute => 'Mute';
 
   @override
@@ -646,7 +652,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get alertTechnicalDetail => 'Technical details';
 
   @override
-  String get prefTitle => 'Preferences — Audio, MIDI and remote control';
+  String get prefTitle => 'Preferences';
 
   @override
   String get prefSectionLanguage => 'Language';
@@ -1024,8 +1030,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mixPromptLabel => 'What should the mix sound like?';
 
   @override
-  String get mixPromptHint =>
-      'e.g. -14 LUFS, -1 dBTP, pop, gentle, master only';
+  String get mixPromptHint => 'e.g. -14 LUFS, -1 dBTP, pop, gentle, master only';
 
   @override
   String get mixMasterOnly => 'Master bus only';
@@ -1194,4 +1199,155 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get prefRemoteHelp => 'Open the remote app and enter this address and code.';
+
+  @override
+  String get prefNavAudio => 'Audio';
+
+  @override
+  String get prefNavPlugins => 'Plugins';
+
+  @override
+  String get prefNavMidi => 'MIDI';
+
+  @override
+  String get prefNavRemote => 'Remote control';
+
+  @override
+  String get prefNavInterface => 'Interface';
+
+  @override
+  String get prefNavShortcuts => 'Shortcuts';
+
+  @override
+  String get prefNavVersion => 'Version';
+
+  @override
+  String get prefAudioIntro => 'Audio output, input and engine performance.';
+
+  @override
+  String get prefPluginsIntro => 'Plugin library and the folders indexed by the engine.';
+
+  @override
+  String get prefMidiIntro => 'Input device and latency compensation.';
+
+  @override
+  String get prefRemoteIntro => 'Control the DAW from another device on your local network.';
+
+  @override
+  String get prefInterfaceIntro => 'Interface language and development options.';
+
+  @override
+  String get prefShortcutsIntro => 'Browse and change the app\'s keyboard shortcuts.';
+
+  @override
+  String get prefVersionIntro => 'Information about the installed version.';
+
+  @override
+  String get prefSectionAudio => 'Audio device';
+
+  @override
+  String prefPluginsStatus(int count) {
+    return '$count plugins indexed';
+  }
+
+  @override
+  String get prefPluginsScanning => 'Scanning the library…';
+
+  @override
+  String get prefPluginsRescan => 'Rescan plugins';
+
+  @override
+  String get prefPluginsScanHint => 'Scanning runs in the background; the list updates when it finishes.';
+
+  @override
+  String get prefPluginsIndexedDirs => 'Indexed folders';
+
+  @override
+  String get prefPluginsDirsHelp => 'Install VST3 plugins (.vst3) here. The engine walks these folders and registers what it finds.';
+
+  @override
+  String get prefPluginsDirExists => 'Available';
+
+  @override
+  String get prefPluginsDirMissing => 'Missing';
+
+  @override
+  String get prefPluginsNoDirectories => 'No search paths were found for this system.';
+
+  @override
+  String get prefPluginsAuNote => 'On macOS, AudioUnits are detected from the system registry, not by folder.';
+
+  @override
+  String get prefPluginsEmpty => 'No plugins indexed yet. Press Rescan to search the folders.';
+
+  @override
+  String get prefMidiScanHint => 'MIDI devices are detected automatically when connected.';
+
+  @override
+  String get prefLanguageHelp => 'The change applies to every window immediately.';
+
+  @override
+  String get prefShortcutsTitle => 'Keyboard shortcuts';
+
+  @override
+  String get prefShortcutsHint => 'Click a combination to change it. Mouse modifiers (such as the one that bypasses snapping) are not edited here.';
+
+  @override
+  String get prefShortcutEdit => 'Change shortcut';
+
+  @override
+  String get prefShortcutReset => 'Reset shortcut';
+
+  @override
+  String get prefShortcutResetAll => 'Reset all';
+
+  @override
+  String get prefShortcutDialogTitle => 'New shortcut';
+
+  @override
+  String get prefShortcutPressKeys => 'Press the key combination…';
+
+  @override
+  String prefShortcutConflict(String action) {
+    return 'That combination is already assigned to “$action”.';
+  }
+
+  @override
+  String get prefShortcutSaveProject => 'Save project';
+
+  @override
+  String get prefShortcutOpenProject => 'Open project';
+
+  @override
+  String get prefShortcutNewProject => 'New project';
+
+  @override
+  String get prefShortcutCopyClip => 'Copy clip';
+
+  @override
+  String get prefShortcutPasteClip => 'Paste clip';
+
+  @override
+  String get prefShortcutPlayPause => 'Play / pause';
+
+  @override
+  String get prefShortcutRecord => 'Record';
+
+  @override
+  String get prefShortcutSelectAllClips => 'Select all clips';
+
+  @override
+  String get prefShortcutClearSelection => 'Clear selection';
+
+  @override
+  String get prefShortcutDeleteSelection => 'Delete selection';
+
+  @override
+  String get prefShortcutSplitClip => 'Split clip at playhead';
+
+  @override
+  String get prefShortcutKeySpace => 'Space';
+
+  @override
+  String get prefShortcutKeyDelete => 'Del';
 }

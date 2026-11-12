@@ -421,6 +421,18 @@ abstract class AppLocalizations {
   /// **'Input: Right'**
   String get timelineInputRight;
 
+  /// No description provided for @timelineCreateMidiClipHere.
+  ///
+  /// In es, this message translates to:
+  /// **'Crear clip MIDI aquí'**
+  String get timelineCreateMidiClipHere;
+
+  /// No description provided for @timelineCreateMidiClipAtPlayhead.
+  ///
+  /// In es, this message translates to:
+  /// **'Crear clip MIDI en el playhead'**
+  String get timelineCreateMidiClipAtPlayhead;
+
   /// No description provided for @timelineMute.
   ///
   /// In es, this message translates to:
@@ -1246,7 +1258,7 @@ abstract class AppLocalizations {
   /// No description provided for @prefTitle.
   ///
   /// In es, this message translates to:
-  /// **'Preferencias — Audio, MIDI y control remoto'**
+  /// **'Preferencias'**
   String get prefTitle;
 
   /// No description provided for @prefSectionLanguage.
@@ -2280,6 +2292,300 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Abre la app remota y escribe esta dirección y el código.'**
   String get prefRemoteHelp;
+
+  /// No description provided for @prefNavAudio.
+  ///
+  /// In es, this message translates to:
+  /// **'Audio'**
+  String get prefNavAudio;
+
+  /// No description provided for @prefNavPlugins.
+  ///
+  /// In es, this message translates to:
+  /// **'Plugins'**
+  String get prefNavPlugins;
+
+  /// No description provided for @prefNavMidi.
+  ///
+  /// In es, this message translates to:
+  /// **'MIDI'**
+  String get prefNavMidi;
+
+  /// No description provided for @prefNavRemote.
+  ///
+  /// In es, this message translates to:
+  /// **'Control remoto'**
+  String get prefNavRemote;
+
+  /// No description provided for @prefNavInterface.
+  ///
+  /// In es, this message translates to:
+  /// **'Interfaz'**
+  String get prefNavInterface;
+
+  /// No description provided for @prefNavShortcuts.
+  ///
+  /// In es, this message translates to:
+  /// **'Atajos'**
+  String get prefNavShortcuts;
+
+  /// No description provided for @prefNavVersion.
+  ///
+  /// In es, this message translates to:
+  /// **'Versión'**
+  String get prefNavVersion;
+
+  /// No description provided for @prefAudioIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Salida, entrada y rendimiento del motor de audio.'**
+  String get prefAudioIntro;
+
+  /// No description provided for @prefPluginsIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Biblioteca de plugins y carpetas que indexa el motor.'**
+  String get prefPluginsIntro;
+
+  /// No description provided for @prefMidiIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Dispositivo de entrada y compensación de latencia.'**
+  String get prefMidiIntro;
+
+  /// No description provided for @prefRemoteIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Controla la DAW desde otro dispositivo de tu red local.'**
+  String get prefRemoteIntro;
+
+  /// No description provided for @prefInterfaceIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Idioma de la interfaz y opciones de desarrollo.'**
+  String get prefInterfaceIntro;
+
+  /// No description provided for @prefShortcutsIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Consulta y cambia las combinaciones de teclado de la app.'**
+  String get prefShortcutsIntro;
+
+  /// No description provided for @prefVersionIntro.
+  ///
+  /// In es, this message translates to:
+  /// **'Información de la versión instalada.'**
+  String get prefVersionIntro;
+
+  /// No description provided for @prefSectionAudio.
+  ///
+  /// In es, this message translates to:
+  /// **'Dispositivo de audio'**
+  String get prefSectionAudio;
+
+  /// No description provided for @prefPluginsStatus.
+  ///
+  /// In es, this message translates to:
+  /// **'{count} plugins indexados'**
+  String prefPluginsStatus(int count);
+
+  /// No description provided for @prefPluginsScanning.
+  ///
+  /// In es, this message translates to:
+  /// **'Escaneando la biblioteca…'**
+  String get prefPluginsScanning;
+
+  /// No description provided for @prefPluginsRescan.
+  ///
+  /// In es, this message translates to:
+  /// **'Re-escanear plugins'**
+  String get prefPluginsRescan;
+
+  /// No description provided for @prefPluginsScanHint.
+  ///
+  /// In es, this message translates to:
+  /// **'El escaneo se ejecuta en segundo plano; la lista se actualiza al terminar.'**
+  String get prefPluginsScanHint;
+
+  /// No description provided for @prefPluginsIndexedDirs.
+  ///
+  /// In es, this message translates to:
+  /// **'Directorios indexados'**
+  String get prefPluginsIndexedDirs;
+
+  /// No description provided for @prefPluginsDirsHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Copia aquí los plugins VST3 (.vst3). El motor recorre estas carpetas y registra lo que encuentra.'**
+  String get prefPluginsDirsHelp;
+
+  /// No description provided for @prefPluginsDirExists.
+  ///
+  /// In es, this message translates to:
+  /// **'Disponible'**
+  String get prefPluginsDirExists;
+
+  /// No description provided for @prefPluginsDirMissing.
+  ///
+  /// In es, this message translates to:
+  /// **'No existe'**
+  String get prefPluginsDirMissing;
+
+  /// No description provided for @prefPluginsNoDirectories.
+  ///
+  /// In es, this message translates to:
+  /// **'No se han encontrado rutas de búsqueda para este sistema.'**
+  String get prefPluginsNoDirectories;
+
+  /// No description provided for @prefPluginsAuNote.
+  ///
+  /// In es, this message translates to:
+  /// **'En macOS los AudioUnit se detectan desde el registro del sistema, no por carpeta.'**
+  String get prefPluginsAuNote;
+
+  /// No description provided for @prefPluginsEmpty.
+  ///
+  /// In es, this message translates to:
+  /// **'Todavía no hay plugins indexados. Pulsa Re-escanear para buscar en las carpetas.'**
+  String get prefPluginsEmpty;
+
+  /// No description provided for @prefMidiScanHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Los dispositivos MIDI se detectan automáticamente al conectarlos.'**
+  String get prefMidiScanHint;
+
+  /// No description provided for @prefLanguageHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'El cambio se aplica al instante a todas las ventanas.'**
+  String get prefLanguageHelp;
+
+  /// No description provided for @prefShortcutsTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Atajos de teclado'**
+  String get prefShortcutsTitle;
+
+  /// No description provided for @prefShortcutsHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Haz clic en una combinación para cambiarla. Los modificadores del ratón (como el que desactiva el snap) no se editan aquí.'**
+  String get prefShortcutsHint;
+
+  /// No description provided for @prefShortcutEdit.
+  ///
+  /// In es, this message translates to:
+  /// **'Cambiar atajo'**
+  String get prefShortcutEdit;
+
+  /// No description provided for @prefShortcutReset.
+  ///
+  /// In es, this message translates to:
+  /// **'Restablecer atajo'**
+  String get prefShortcutReset;
+
+  /// No description provided for @prefShortcutResetAll.
+  ///
+  /// In es, this message translates to:
+  /// **'Restablecer todos'**
+  String get prefShortcutResetAll;
+
+  /// No description provided for @prefShortcutDialogTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Nuevo atajo'**
+  String get prefShortcutDialogTitle;
+
+  /// No description provided for @prefShortcutPressKeys.
+  ///
+  /// In es, this message translates to:
+  /// **'Pulsa la combinación de teclas…'**
+  String get prefShortcutPressKeys;
+
+  /// No description provided for @prefShortcutConflict.
+  ///
+  /// In es, this message translates to:
+  /// **'Esa combinación ya está asignada a «{action}».'**
+  String prefShortcutConflict(String action);
+
+  /// No description provided for @prefShortcutSaveProject.
+  ///
+  /// In es, this message translates to:
+  /// **'Guardar proyecto'**
+  String get prefShortcutSaveProject;
+
+  /// No description provided for @prefShortcutOpenProject.
+  ///
+  /// In es, this message translates to:
+  /// **'Abrir proyecto'**
+  String get prefShortcutOpenProject;
+
+  /// No description provided for @prefShortcutNewProject.
+  ///
+  /// In es, this message translates to:
+  /// **'Nuevo proyecto'**
+  String get prefShortcutNewProject;
+
+  /// No description provided for @prefShortcutCopyClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Copiar clip'**
+  String get prefShortcutCopyClip;
+
+  /// No description provided for @prefShortcutPasteClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Pegar clip'**
+  String get prefShortcutPasteClip;
+
+  /// No description provided for @prefShortcutPlayPause.
+  ///
+  /// In es, this message translates to:
+  /// **'Reproducir / pausar'**
+  String get prefShortcutPlayPause;
+
+  /// No description provided for @prefShortcutRecord.
+  ///
+  /// In es, this message translates to:
+  /// **'Grabar'**
+  String get prefShortcutRecord;
+
+  /// No description provided for @prefShortcutSelectAllClips.
+  ///
+  /// In es, this message translates to:
+  /// **'Seleccionar todos los clips'**
+  String get prefShortcutSelectAllClips;
+
+  /// No description provided for @prefShortcutClearSelection.
+  ///
+  /// In es, this message translates to:
+  /// **'Quitar selección'**
+  String get prefShortcutClearSelection;
+
+  /// No description provided for @prefShortcutDeleteSelection.
+  ///
+  /// In es, this message translates to:
+  /// **'Borrar selección'**
+  String get prefShortcutDeleteSelection;
+
+  /// No description provided for @prefShortcutSplitClip.
+  ///
+  /// In es, this message translates to:
+  /// **'Dividir clip en el playhead'**
+  String get prefShortcutSplitClip;
+
+  /// No description provided for @prefShortcutKeySpace.
+  ///
+  /// In es, this message translates to:
+  /// **'Espacio'**
+  String get prefShortcutKeySpace;
+
+  /// No description provided for @prefShortcutKeyDelete.
+  ///
+  /// In es, this message translates to:
+  /// **'Supr'**
+  String get prefShortcutKeyDelete;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

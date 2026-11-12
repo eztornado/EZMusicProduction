@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart';
 import '../l10n/l10n.dart';
+import '../shortcuts/shortcut_settings.dart';
 
 const double kPrPixelsPerSecond = 140;
 const double kPrRowHeight = 10;
@@ -869,9 +870,10 @@ class _PianoRollState extends State<PianoRoll> {
               child: KeyboardListener(
                 focusNode: _focusNode,
                 onKeyEvent: (event) {
-                  if (event is KeyDownEvent &&
-                      (event.logicalKey == LogicalKeyboardKey.delete ||
-                          event.logicalKey == LogicalKeyboardKey.backspace) &&
+                  if (ShortcutSettings.matches(
+                        ShortcutAction.deleteSelection,
+                        event,
+                      ) &&
                       _selectedNotes.isNotEmpty) {
                     _deleteSelectedNotes();
                   }

@@ -78,31 +78,7 @@ Future<void> showAboutAppDialog(BuildContext context) {
         context.l10n.projectAppName,
         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
       ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(context.l10n.projectVersion(kAppVersion),
-              style: const TextStyle(
-                  fontSize: 12, color: Color(0xFFC7CBD4))),
-          const SizedBox(height: 10),
-          Text(context.l10n.projectAuthors,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
-          const SizedBox(height: 10),
-          InkWell(
-            onTap: () {
-              Process.run('open', ['https://www.ezmusicproduction.com']);
-            },
-            child: Text(
-              context.l10n.projectWeb,
-              style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF4D9DF7),
-                  decoration: TextDecoration.underline),
-            ),
-          ),
-        ],
-      ),
+      content: const AppAboutContent(),
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(context),
@@ -110,4 +86,49 @@ Future<void> showAboutAppDialog(BuildContext context) {
       ],
     ),
   );
+}
+
+/// Información de la versión instalada. Se reutiliza en el "Acerca de" (click
+/// en el logo) y en la sección Versión de Preferencias.
+class AppAboutContent extends StatelessWidget {
+  const AppAboutContent({super.key, this.showName = false});
+
+  /// Muestra el nombre de la app encima de la versión (sección Versión).
+  final bool showName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showName) ...[
+          Text(
+            context.l10n.projectAppName,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+        ],
+        Text(context.l10n.projectVersion(kAppVersion),
+            style: const TextStyle(
+                fontSize: 12, color: Color(0xFFC7CBD4))),
+        const SizedBox(height: 10),
+        Text(context.l10n.projectAuthors,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF9BA1AE))),
+        const SizedBox(height: 10),
+        InkWell(
+          onTap: () {
+            Process.run('open', ['https://www.ezmusicproduction.com']);
+          },
+          child: Text(
+            context.l10n.projectWeb,
+            style: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF4D9DF7),
+                decoration: TextDecoration.underline),
+          ),
+        ),
+      ],
+    );
+  }
 }
