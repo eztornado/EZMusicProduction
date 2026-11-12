@@ -173,8 +173,8 @@ jobs:
         shell: bash
         run: |
           BUNDLE="ui/build/windows/x64/runner/Release"
-          # Copy the engine .dll next to the executable (FFI lookup path)
-          cp "build/engine/cadence_engine.dll" "$BUNDLE/"
+          # Visual Studio puts the DLL in the Release/ subdirectory
+          cp "build/engine/Release/cadence_engine.dll" "$BUNDLE/"
           # Compress the bundle
           cd "ui/build/windows/x64/runner"
           7z a "$GITHUB_WORKSPACE/EZMusicProduction-windows.zip" Release/
