@@ -1,0 +1,189 @@
+# Multi-platform release builds for EZMusicProduction.
+# Triggers on version tags (v*) and manual dispatch.
+# Produces artefacts for macOS, Linux and Windows x64.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # macOS
+  # ------------------------------------------------------------------
+  macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CMake and Ninja
+        run: |
+          brew install cmake ninja libsndfile
+
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.29.3"
+          cache: true
+          cache-path: "${{ github.workspace }}/ui/.flutter_cache"
+
+      - name: Build engine
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          cmake --build build --target cadence_engine_shared -j $(sysctl -n hw.ncpu)
+
+      - name: Build Flutter app
+        run: |
+          cd ui
+          flutter pub get
+          flutter build macos --release
+
+      - name: Package macOS app
+        run: |
+          APP="ui/build/macos/Build/Products/Release/EZMusicProduction.app"
+          # Copy engine dylib into the app bundle
+          cp "build/engine/libcadence_engine.dylib" "$APP/Contents/MacOS/"
+          # Re-sign the dylib and the bundle
+          codesign --force --sign - "$APP/Contents/MacOS/libcadence_engine.dylib"
+          codesign --force --sign - "$APP"
+          codesign -v "$APP"
+          # Compress
+          cd "ui/build/macos/Build/Products/Release"
+          tar -czf "$GITHUB_WORKSPACE/EZMusicProduction-macos.tar.gz" EZMusicProduction.app
+
+      - name: Upload macOS artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EZMusicProduction-macos
+          path: EZMusicProduction-macos.tar.gz
+
+      - name: Release macOS
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EZMusicProduction-macos.tar.gz
+
+  # ------------------------------------------------------------------
+  # Linux
+  # ------------------------------------------------------------------
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build \
+            libgtk-3-dev libblkid-dev libsndfile1-dev \
+            libopenblas-dev libasound2-dev \
+            libx11-dev libxext-dev libxrandr-dev libxfixes-dev libxcursor-dev \
+            libxi-dev libxcursor-dev libxcomposite-dev libxdamage-dev \
+            libxss-dev libxtst-dev
+
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.29.3"
+          cache: true
+          cache-path: "${{ github.workspace }}/ui/.flutter_cache"
+
+      - name: Build engine
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target cadence_engine_shared -j $(nproc)
+
+      - name: Build Flutter app
+        run: |
+          cd ui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Package Linux app
+        run: |
+          BUNDLE="ui/build/linux/x64/release/bundle"
+          # Copy the engine .so next to the executable (FFI lookup path)
+          cp "build/engine/libcadence_engine.so" "$BUNDLE/"
+          # Compress the bundle
+          cd "ui/build/linux/x64/release"
+          tar -czf "$GITHUB_WORKSPACE/EZMusicProduction-linux.tar.gz" bundle
+
+      - name: Upload Linux artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EZMusicProduction-linux
+          path: EZMusicProduction-linux.tar.gz
+
+      - name: Release Linux
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EZMusicProduction-linux.tar.gz
+
+  # ------------------------------------------------------------------
+  # Windows
+  # ------------------------------------------------------------------
+  windows:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.29.3"
+          cache: true
+          cache-path: "${{ github.workspace }}\\.flutter_cache"
+
+      - name: Build engine
+        shell: bash
+        run: |
+          cmake -S . -B build -G "Ninja" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target cadence_engine_shared -j "$(nproc)"
+
+      - name: Build Flutter app
+        shell: bash
+        run: |
+          cd ui
+          flutter pub get
+          flutter build windows --release
+
+      - name: Package Windows app
+        shell: bash
+        run: |
+          BUNDLE="ui/build/windows/x64/runner/Release"
+          # Copy the engine .dll next to the executable (FFI lookup path)
+          cp "build/engine/cadence_engine.dll" "$BUNDLE/"
+          # Also copy VCRuntime redistributable if available
+          if [ -f "$BUNDLE/vcruntime140.dll" ]; then
+            echo "VCRuntime already bundled by Flutter"
+          fi
+          # Compress the bundle
+          cd "ui/build/windows/x64/runner"
+          7z a "$GITHUB_WORKSPACE/EZMusicProduction-windows.zip" Release/
+
+      - name: Upload Windows artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EZMusicProduction-windows
+          path: EZMusicProduction-windows.zip
+
+      - name: Release Windows
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EZMusicProduction-windows.zip
