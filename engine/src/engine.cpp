@@ -18,10 +18,10 @@
 #include <bit>
 #include <cmath>
 #include <cstdlib>
-#include <pthread.h>
 #include <thread>
 #if defined(__APPLE__)
 #include <dispatch/dispatch.h>
+#include <pthread.h>
 #endif
 
 namespace cadence {

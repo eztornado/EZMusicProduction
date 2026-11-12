@@ -15,7 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
-#include <dirent.h>
+#include <filesystem>
 
 #include <map>
 #include <memory>
@@ -400,21 +400,22 @@ juce::StringArray availablePrograms()
     juce::StringArray out;
     for (const auto& dir : programDirectories())
     {
-        // Manual readdir: JUCE's findChildFiles returned 0 entries in the
-        // bundled app for a directory the shell sees populated.
-        DIR* dp = opendir(dir.getFullPathName().toRawUTF8());
-        if (dp == nullptr)
+        // Use std::filesystem for cross-platform directory listing.
+        const auto path = std::filesystem::path(dir.getFullPathName().toUTF8());
+        if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path))
             continue;
-        while (auto* ent = readdir(dp))
+        for (const auto& entry : std::filesystem::directory_iterator(path))
         {
-            const juce::String n = juce::String::fromUTF8(ent->d_name);
-            if (! n.endsWithIgnoreCase(".json"))
+            if (!entry.is_regular_file())
                 continue;
-            const auto stem = n.upToLastOccurrenceOf(".", false, true);
-            if (! out.contains(stem))
-                out.add(stem);
+            const auto filename = entry.path().filename().string();
+            if (filename.size() < 6 || filename.substr(filename.size() - 5) != ".json")
+                continue;
+            const auto stem = filename.substr(0, filename.size() - 5);
+            const juce::String name = juce::String::fromUTF8(stem);
+            if (!out.contains(name))
+                out.add(name);
         }
-        closedir(dp);
     }
     out.sort(true);
     return out;
