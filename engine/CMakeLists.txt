@@ -83,11 +83,14 @@ if(APPLE)
 else()
     # MusicVAE makes a single BLAS call (cblas_sgemv); system CBLAS covers it
     # on Linux (pacman: cblas / blas-openblas, apt: libopenblas-dev).
-    find_library(CADENCE_CBLAS NAMES cblas)
-    if(NOT CADENCE_CBLAS)
-        message(FATAL_ERROR "CBLAS library not found — install openblas (pacman -S blas-openblas, apt install libopenblas-dev)")
+    # On Windows CBLAS is optional: without it, AI generation is disabled.
+    find_library(CADENCE_CBLAS NAMES cblas openblas)
+    if(CADENCE_CBLAS)
+        target_link_libraries(cadence_engine PUBLIC ${CADENCE_CBLAS})
+    else()
+        message(STATUS "CBLAS not found — AI generation (MusicVAE) will be disabled")
+        target_compile_definitions(cadence_engine PUBLIC CADENCE_NO_CBLAS)
     endif()
-    target_link_libraries(cadence_engine PUBLIC ${CADENCE_CBLAS})
 endif()
 
 target_link_libraries(cadence_engine
@@ -125,7 +128,11 @@ if(APPLE)
         "-framework UniformTypeIdentifiers"
         "-framework Accelerate")
 else()
-    target_link_libraries(cadence_engine_shared PRIVATE ${CADENCE_CBLAS})
+    if(CADENCE_CBLAS)
+        target_link_libraries(cadence_engine_shared PRIVATE ${CADENCE_CBLAS})
+    else()
+        target_compile_definitions(cadence_engine_shared PRIVATE CADENCE_NO_CBLAS)
+    endif()
 endif()
 target_link_libraries(cadence_engine_shared
     PRIVATE

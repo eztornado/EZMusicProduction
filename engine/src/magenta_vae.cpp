@@ -1,10 +1,12 @@
 #include "magenta_vae.h"
 
-// macOS: Accelerate framework. Linux/Windows: netlib-compatible cblas.h
-// (both expose the same cblas_sgemv the LSTM mat-vecs need).
+// BLAS backend for the LSTM mat-vecs:
+// macOS: Accelerate framework. Linux: netlib-compatible cblas.h.
+// Windows: CBLAS is optional; when absent, CADENCE_NO_CBLAS is defined
+// and a fallback software matvec is used instead.
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
-#else
+#elif !defined(CADENCE_NO_CBLAS)
 #include <cblas.h>
 #endif
 
@@ -384,8 +386,21 @@ void MusicVAE::matvec(const Tensor& a, const float* x, std::vector<float>& y)
     y.resize((std::size_t) juce::jmax(0, outDim));
     if (inDim == 0 || outDim == 0)
         return;
+
+#ifndef CADENCE_NO_CBLAS
     cblas_sgemv(CblasRowMajor, CblasTrans, inDim, outDim, 1.0f, a.data,
                 outDim, x, 1, 0.0f, y.data(), 1);
+#else
+    // Fallback software matvec when CBLAS is not available (e.g. Windows).
+    // Computes y = A^T * x  where A is row-major [inDim x outDim].
+    for (int j = 0; j < outDim; ++j)
+    {
+        float sum = 0.0f;
+        for (int i = 0; i < inDim; ++i)
+            sum += a.data[(std::size_t) i * outDim + j] * x[i];
+        y[(std::size_t) j] = sum;
+    }
+#endif
 }
 
 float MusicVAE::sigmoid(float v) noexcept
@@ -454,8 +469,19 @@ void MusicVAE::lstmStep(const Tensor& kernel, const Tensor& bias,
                 (std::size_t) hidden_ * sizeof(float));
 
     std::vector<float> gates((std::size_t) gatesDim);
+#ifndef CADENCE_NO_CBLAS
     cblas_sgemv(CblasRowMajor, CblasTrans, rows, gatesDim, 1.0f,
                 kernel.data, gatesDim, work.data(), 1, 0.0f, gates.data(), 1);
+#else
+    // Fallback software matvec when CBLAS is not available.
+    for (int j = 0; j < gatesDim; ++j)
+    {
+        float sum = 0.0f;
+        for (int i = 0; i < rows; ++i)
+            sum += kernel.data[(std::size_t) i * gatesDim + j] * work[(std::size_t) i];
+        gates[(std::size_t) j] = sum;
+    }
+#endif
 
     for (int i = 0; i < gatesDim; ++i)
         gates[(std::size_t) i] += bias.data[i];
