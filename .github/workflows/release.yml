@@ -156,6 +156,12 @@ jobs:
         run: |
           cd ui
           flutter pub get
+          # Patch desktop_multi_window: Flutter 3.29+ removed set_ui_thread_policy.
+          # Comment out the line that calls it so the Windows build succeeds.
+          FLUTTER_WINDOW_CC=$(find "$HOME/.pub-cache" -path "*/desktop_multi_window*/windows/flutter_window.cc" 2>/dev/null | head -1)
+          if [ -n "$FLUTTER_WINDOW_CC" ]; then
+            sed -i 's/project\.set_ui_thread_policy(/\/\/ project.set_ui_thread_policy(/' "$FLUTTER_WINDOW_CC"
+          fi
           flutter build windows --release
 
       - name: Package Windows app
