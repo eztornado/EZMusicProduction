@@ -147,3 +147,13 @@ target_link_libraries(cadence_engine_shared
         juce::juce_dsp
         libfluidsynth)
 set_target_properties(cadence_engine_shared PROPERTIES OUTPUT_NAME cadence_engine)
+# Linux bundles ship the engine's runtime dependencies (libopenblas,
+# libfluidsynth, ...) next to the .so; $ORIGIN makes the dynamic loader find
+# them there instead of relying on LD_LIBRARY_PATH or the ldconfig cache.
+# Windows/Apple: the DLL search already covers the DLL's directory, and macOS
+# bundles use @rpath handling — only Linux needs this.
+if(UNIX AND NOT APPLE)
+    set_target_properties(cadence_engine_shared PROPERTIES
+        BUILD_RPATH "\$ORIGIN"
+        INSTALL_RPATH "\$ORIGIN")
+endif()
