@@ -32,6 +32,22 @@ jobs:
           git clone --depth 1 --branch 3.29.3 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
 
+      - name: Generate app version
+        run: |
+          if [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            echo "Version from tag: $VERSION"
+          else
+            VERSION="$(date -u +%y.%m.%d).${GITHUB_RUN_NUMBER}"
+            echo "No vYY.MM.DD.N tag — using UTC date + run number: $VERSION"
+          fi
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p ui/lib/generated
+          cat > ui/lib/generated/version.dart <<EOF
+          // GENERADO por el workflow de release — no editar a mano.
+          const String kAppVersion = '$VERSION';
+          EOF
+
       - name: Build engine
         run: |
           cmake -S . -B build -G Ninja \
@@ -48,6 +64,12 @@ jobs:
       - name: Package macOS app
         run: |
           APP="ui/build/macos/Build/Products/Release/EZMusicProduction.app"
+          # Stamp the generated release version into the bundle (About, Finder,
+          # crash reports) — same as build_app.sh does for local builds.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" \
+            "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" \
+            "$APP/Contents/Info.plist"
           # Copy engine dylib into the app bundle
           cp "build/engine/libcadence_engine.dylib" "$APP/Contents/MacOS/"
           # Re-sign the dylib and the bundle
@@ -94,6 +116,22 @@ jobs:
         run: |
           git clone --depth 1 --branch 3.29.3 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
+
+      - name: Generate app version
+        run: |
+          if [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            echo "Version from tag: $VERSION"
+          else
+            VERSION="$(date -u +%y.%m.%d).${GITHUB_RUN_NUMBER}"
+            echo "No vYY.MM.DD.N tag — using UTC date + run number: $VERSION"
+          fi
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p ui/lib/generated
+          cat > ui/lib/generated/version.dart <<EOF
+          // GENERADO por el workflow de release — no editar a mano.
+          const String kAppVersion = '$VERSION';
+          EOF
 
       - name: Build engine
         run: |
@@ -171,6 +209,23 @@ jobs:
         run: |
           git clone --depth 1 --branch 3.29.3 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
+
+      - name: Generate app version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            echo "Version from tag: $VERSION"
+          else
+            VERSION="$(date -u +%y.%m.%d).${GITHUB_RUN_NUMBER}"
+            echo "No vYY.MM.DD.N tag — using UTC date + run number: $VERSION"
+          fi
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p ui/lib/generated
+          cat > ui/lib/generated/version.dart <<EOF
+          // GENERADO por el workflow de release — no editar a mano.
+          const String kAppVersion = '$VERSION';
+          EOF
 
       - name: Build engine
         shell: bash
