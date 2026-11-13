@@ -83,7 +83,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            cmake ninja-build \
+            cmake ninja-build patchelf \
             libgtk-3-dev libblkid-dev libsndfile1-dev \
             libopenblas-dev libasound2-dev \
             libx11-dev libxext-dev libxrandr-dev libxfixes-dev libxcursor-dev \
@@ -110,8 +110,11 @@ jobs:
       - name: Package Linux app
         run: |
           BUNDLE="ui/build/linux/x64/release/bundle"
-          # Copy the engine .so next to the executable (FFI lookup path)
+          # Copy the engine .so next to the executable (FFI lookup path).
+          # Keep only $ORIGIN as its RUNPATH: the build-tree RUNPATH would
+          # point at paths that don't exist on the user's machine.
           cp "build/engine/libcadence_engine.so" "$BUNDLE/"
+          patchelf --set-rpath '$ORIGIN' "$BUNDLE/libcadence_engine.so"
           # Copy runtime dependencies of the engine .so (libopenblas,
           # libfluidsynth, ...). The .so carries an $ORIGIN RPATH (engine
           # CMakeLists) so the loader resolves them from the bundle dir.
@@ -128,7 +131,11 @@ jobs:
                     echo "Skipped system library: $base"
                     ;;
                   *)
+                    # Each copied lib needs its own $ORIGIN RUNPATH: DT_RUNPATH
+                    # is not transitive, so without this second-level deps
+                    # (e.g. libopenblas -> libgfortran) would miss the bundle.
                     cp -L "$dep" "$BUNDLE/"
+                    patchelf --set-rpath '$ORIGIN' "$BUNDLE/$base"
                     echo "Copied dependency: $base"
                     ;;
                 esac
