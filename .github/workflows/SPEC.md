@@ -51,6 +51,22 @@ without it, AI generation (MusicVAE) is disabled by build definition
 The dylib is copied into `Contents/MacOS/` and ad-hoc re-signed; macOS was not
 part of the runtime-deps fix (system frameworks via Accelerate).
 
+## Versioning (YY.MM.DD.N)
+
+The app version follows the local `build_app.sh` scheme: `YY.MM.DD.N` (N =
+build counter). The workflow generates it, it never commits it back:
+
+- Tag `vYY.MM.DD.N` → version parsed from the tag (releases are reproducible;
+  the tag is the source of truth).
+- `workflow_dispatch` or a non-conforming ref → UTC date + `github.run_number`.
+- A "Generate app version" step in each job (macos/linux/windows) writes
+  `ui/lib/generated/version.dart` (`kAppVersion`, consumed by the About dialog)
+  and exports `APP_VERSION` to `GITHUB_ENV`. On macOS the same value is stamped
+  into `CFBundleShortVersionString`/`CFBundleVersion` before codesign.
+- The committed `ui/lib/generated/version.dart` stays as the dev default for
+  `flutter run`; `build_app.sh` keeps generating it locally with the same
+  format, so both paths agree.
+
 ## Known limitation
 
 End-to-end artifact validation happens when a `v*` tag triggers the workflow;
