@@ -112,13 +112,26 @@ jobs:
           BUNDLE="ui/build/linux/x64/release/bundle"
           # Copy the engine .so next to the executable (FFI lookup path)
           cp "build/engine/libcadence_engine.so" "$BUNDLE/"
-          # Copy runtime dependencies of the engine .so (libopenblas, libfluidsynth, etc.)
+          # Copy runtime dependencies of the engine .so (libopenblas,
+          # libfluidsynth, ...). The .so carries an $ORIGIN RPATH (engine
+          # CMakeLists) so the loader resolves them from the bundle dir.
+          # Base system libraries are skipped: they exist on every desktop
+          # Linux and shadowing glibc/libstdc++ from another distro would
+          # crash the process (GLIBC_PRIVATE / libstdc++ version mismatch).
           ldd "build/engine/libcadence_engine.so" | \
             awk '/ => / && !/ => not found/ { print $3 }' | \
             while read -r dep; do
               if [ -n "$dep" ] && [ -f "$dep" ]; then
-                cp "$dep" "$BUNDLE/"
-                echo "Copied dependency: $dep"
+                base=$(basename "$dep")
+                case "$base" in
+                  ld-linux*|libc.so*|libm.so*|libdl*|libpthread*|librt.so*|libresolv*|libnss*|libnsl*|libanl*|libutil*|libstdc++*|libgcc_s*|libX11*|libXext*|libXrandr*|libXfixes*|libXcursor*|libXi*|libXcomposite*|libXdamage*|libXss*|libXtst*|libxcb*|libXau*|libXdmcp*)
+                    echo "Skipped system library: $base"
+                    ;;
+                  *)
+                    cp -L "$dep" "$BUNDLE/"
+                    echo "Copied dependency: $base"
+                    ;;
+                esac
               fi
             done
           # Compress the bundle
@@ -184,6 +197,12 @@ jobs:
           BUNDLE="ui/build/windows/x64/runner/Release"
           # Visual Studio puts the DLL in the Release/ subdirectory
           cp "build/engine/Release/cadence_engine.dll" "$BUNDLE/"
+          # FluidSynth (built from source via FetchContent) is a DLL the engine
+          # links against — copy it (fluidsynth[-2].dll under
+          # _deps/fluidsynth-build/src/<Config>/) and any other runtime DLLs
+          # from its build tree. LoadLibrary's search already includes the exe
+          # directory, so no extra path config is required.
+          find build/_deps/fluidsynth-build -name "*.dll" -print -exec cp {} "$BUNDLE/" \; 2>/dev/null || true
           # Compress the bundle
           cd "ui/build/windows/x64/runner"
           7z a "$GITHUB_WORKSPACE/EZMusicProduction-windows.zip" Release/
