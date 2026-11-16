@@ -591,6 +591,31 @@ class EngineService extends ChangeNotifier {
 
   int get selectedMidiInputIndex => _engine.selectedMidiInputIndex;
 
+  /// Drains the engine MIDI monitor (controller/performance mappings).
+  List<EngineMidiEvent> pollMidiEvents([int maxEvents = 256]) =>
+      _engine.pollMidiEvents(maxEvents);
+
+  /// Test hook: injects raw MIDI as if it came from the selected input.
+  bool injectMidiMessage(List<int> bytes) =>
+      _engine.injectMidiMessage(bytes);
+
+  /// Reserves a pad/note for a controller action: the UI still sees it in the
+  /// MIDI monitor, but it no longer plays an instrument or enters a take.
+  void setControllerNoteConsumed(int note, bool consumed) =>
+      _engine.setControllerNoteConsumed(note, consumed);
+
+  /// Live mixer values/updates used by hardware controllers. Unlike the
+  /// normal setters these do not refresh the whole snapshot on every CC;
+  /// [ControllerService] asks for a throttled refresh instead.
+  double liveTrackVolume(int trackId) => _engine.trackVolume(trackId);
+  double liveTrackPan(int trackId) => _engine.trackPan(trackId);
+  double get liveMasterGain => _engine.masterGain;
+  void liveSetTrackVolume(int trackId, double gain) =>
+      _engine.setTrackVolume(trackId, gain);
+  void liveSetTrackPan(int trackId, double pan) =>
+      _engine.setTrackPan(trackId, pan);
+  void liveSetMasterGain(double gain) => _engine.setGain(gain);
+
   /// Selects a single clip (clears any group selection).
   void selectClip(int? clipId) {
     final next = clipId == null ? const <int>{} : <int>{clipId};
@@ -837,6 +862,48 @@ class EngineService extends ChangeNotifier {
   String pluginParamName(
           int trackId, int slotKind, int slotIndex, int paramIndex) =>
       _engine.pluginParamName(trackId, slotKind, slotIndex, paramIndex);
+
+  double pluginParamValue(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamValue(trackId, slotKind, slotIndex, paramIndex);
+
+  String pluginParamText(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamText(trackId, slotKind, slotIndex, paramIndex);
+
+  int pluginParamFlags(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamFlags(trackId, slotKind, slotIndex, paramIndex);
+
+  double pluginParamDefault(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamDefault(trackId, slotKind, slotIndex, paramIndex);
+
+  int pluginParamNumSteps(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamNumSteps(trackId, slotKind, slotIndex, paramIndex);
+
+  String pluginParamTextAtValue(int trackId, int slotKind, int slotIndex,
+          int paramIndex, double value) =>
+      _engine.pluginParamTextAtValue(
+          trackId, slotKind, slotIndex, paramIndex, value);
+
+  void setPluginParamValue(
+      int trackId, int slotKind, int slotIndex, int paramIndex, double value) {
+    _engine.setPluginParamValue(
+        trackId, slotKind, slotIndex, paramIndex, value);
+  }
+
+  String trackFxUidAt(int trackId, int slotIndex) =>
+      _engine.trackFxUidAt(trackId, slotIndex);
+
+  String trackInstrumentUid(int trackId) =>
+      _engine.trackInstrumentUid(trackId);
+
+  String masterFxUidAt(int slotIndex) => _engine.masterFxUidAt(slotIndex);
+
+  bool isInternalDeviceUid(String uid) =>
+      uid.startsWith('Internal-') || uid.startsWith('internal:');
 
   /// Input quantize grid for recorded MIDI takes, in seconds (0 = off).
   /// Returns an error message or null.

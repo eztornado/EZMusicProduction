@@ -331,6 +331,47 @@ const char* cadence_engine_plugin_param_text(CadenceEngine* engine,
                : "";
 }
 
+int cadence_engine_plugin_param_flags(CadenceEngine* engine,
+                                      CadenceTrackId track_id, int slot_kind,
+                                      int slot_index, int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamFlags(track_id, slot_kind,
+                                                    slot_index, param_index)
+               : 0;
+}
+
+float cadence_engine_plugin_param_default(CadenceEngine* engine,
+                                          CadenceTrackId track_id, int slot_kind,
+                                          int slot_index, int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamDefault(track_id, slot_kind,
+                                                      slot_index, param_index)
+               : 0.0f;
+}
+
+int cadence_engine_plugin_param_num_steps(CadenceEngine* engine,
+                                          CadenceTrackId track_id, int slot_kind,
+                                          int slot_index, int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamNumSteps(track_id, slot_kind,
+                                                       slot_index, param_index)
+               : 0;
+}
+
+const char* cadence_engine_plugin_param_text_at_value(
+    CadenceEngine* engine, CadenceTrackId track_id, int slot_kind,
+    int slot_index, int param_index, float normalised_value)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamTextAtValue(
+                     track_id, slot_kind, slot_index, param_index,
+                     normalised_value)
+               : "";
+}
+
 CadenceResult cadence_engine_set_plugin_param_value(CadenceEngine* engine,
                                                     CadenceTrackId track_id,
                                                     int slot_kind,
@@ -689,6 +730,33 @@ int cadence_engine_midi_input_count(CadenceEngine* engine)
 const char* cadence_engine_midi_input_name_at(CadenceEngine* engine, int index)
 {
     return engine != nullptr ? asEngine(engine)->midiInputNameAtUtf8(index) : "";
+}
+
+int cadence_engine_poll_midi_events(CadenceEngine* engine, int* out_events,
+                                    int max_events)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pollMidiEvents(out_events, max_events)
+               : 0;
+}
+
+CadenceResult cadence_engine_debug_inject_midi(CadenceEngine* engine,
+                                               const unsigned char* data,
+                                               int size)
+{
+    if (engine == nullptr || data == nullptr || size <= 0)
+        return kCadenceErrorNullArgument;
+    asEngine(engine)->debugInjectMidi(data, size);
+    return kCadenceOk;
+}
+
+CadenceResult cadence_engine_set_controller_note_consumed(
+    CadenceEngine* engine, int note, int consumed)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    asEngine(engine)->setControllerNoteConsumed(note, consumed != 0);
+    return kCadenceOk;
 }
 
 CadenceResult cadence_engine_save_device_settings(CadenceEngine* engine, const char* utf8_path)
@@ -1520,6 +1588,12 @@ const char* cadence_engine_track_fx_name_at(CadenceEngine* engine, CadenceTrackI
     return engine != nullptr ? asEngine(engine)->trackFxNameAt(track_id, slot_index) : "";
 }
 
+const char* cadence_engine_track_fx_uid_at(CadenceEngine* engine, CadenceTrackId track_id,
+                                           int slot_index)
+{
+    return engine != nullptr ? asEngine(engine)->trackFxUidAt(track_id, slot_index) : "";
+}
+
 int cadence_engine_track_fx_bypass_at(CadenceEngine* engine, CadenceTrackId track_id,
                                       int slot_index)
 {
@@ -1591,6 +1665,11 @@ const char* cadence_engine_track_instrument_name(CadenceEngine* engine, CadenceT
     return engine != nullptr ? asEngine(engine)->trackInstrumentName(track_id) : "";
 }
 
+const char* cadence_engine_track_instrument_uid(CadenceEngine* engine, CadenceTrackId track_id)
+{
+    return engine != nullptr ? asEngine(engine)->trackInstrumentUid(track_id) : "";
+}
+
 CadenceResult cadence_engine_track_set_midifx(CadenceEngine* engine,
                                               CadenceTrackId track_id,
                                               int plugin_index)
@@ -1655,6 +1734,11 @@ int cadence_engine_master_fx_count(CadenceEngine* engine)
 const char* cadence_engine_master_fx_name_at(CadenceEngine* engine, int slot_index)
 {
     return engine != nullptr ? asEngine(engine)->masterFxNameAt(slot_index) : "";
+}
+
+const char* cadence_engine_master_fx_uid_at(CadenceEngine* engine, int slot_index)
+{
+    return engine != nullptr ? asEngine(engine)->masterFxUidAt(slot_index) : "";
 }
 
 CadenceResult cadence_engine_master_add_fx(CadenceEngine* engine, int plugin_index)

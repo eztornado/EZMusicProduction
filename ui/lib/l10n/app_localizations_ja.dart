@@ -1350,4 +1350,108 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefShortcutKeyDelete => 'Delete';
+
+  @override
+  String get appMenuPerformance => 'パフォーマンス (MiniLab 3)';
+
+  @override
+  String get performanceTitle => 'パフォーマンス';
+
+  @override
+  String get performanceSubtitle => '選択トラックのハードウェア操作';
+
+  @override
+  String get performanceTrack => 'トラック';
+
+  @override
+  String get performanceDevice => 'デバイス';
+
+  @override
+  String get performanceSoftTakeover => 'ソフトテイクオーバー';
+
+  @override
+  String get performanceRelative => '相対エンコーダー';
+
+  @override
+  String get performanceLearn => '学習';
+
+  @override
+  String get performanceLearning => 'コントロールを動かしてください…';
+
+  @override
+  String get performanceCancelLearn => 'キャンセル';
+
+  @override
+  String get performanceNoTrack => 'トラックを選択または作成してください';
+
+  @override
+  String get performanceNoDevice => 'このトラックには操作可能なデバイスがありません';
+
+  @override
+  String get performanceEncoder => 'ENC';
+
+  @override
+  String get performanceFader => 'FADER';
+
+  @override
+  String get performanceTrackVolume => 'トラック音量';
+
+  @override
+  String get performanceTrackPan => 'トラックパン';
+
+  @override
+  String get performanceMasterVolume => 'マスター音量';
+
+  @override
+  String get performanceNoParameter => 'パラメーターなし';
+
+  @override
+  String get performanceInput => 'MIDI 入力';
+
+  @override
+  String get performanceNoInput => 'MIDI 入力なし';
+
+  @override
+  String get performanceHintCatch => 'ノブまたはフェーダーを動かしてください。現在値に達すると追従します。';
+
+  @override
+  String get performanceHintLearn => 'コントロールのターゲットアイコンを押してから動かすと CC を再割り当てできます。';
+
+  @override
+  String get performanceActions => 'トランスポートとアクション';
+
+  @override
+  String get performanceActionHint => 'ターゲットアイコンを押してから、パッドかボタンを押します。';
+
+  @override
+  String get performanceActionUnassigned => '未割り当て';
+
+  @override
+  String get performanceActionClear => 'トリガーを消去';
+
+  @override
+  String get performanceLearningAction => 'パッドかボタンを押してください…';
+
+  @override
+  String get performanceTapTempo => 'タップテンポ';
+
+  @override
+  String get performanceClose => '閉じる';
+
+  @override
+  String performanceParamCount(int count) {
+    return '$count パラメーター';
+  }
+
+  @override
+  String get performanceCatch => 'キャッチ';
+
+  @override
+  String get performanceMidiActivity => 'MIDI アクティビティ';
+
+  @override
+  String get performanceGenericController => '汎用コントローラー';
+
+  @override
+  String get performanceMiniLab => 'MiniLab 3';
 }

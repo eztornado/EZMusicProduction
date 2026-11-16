@@ -6,12 +6,19 @@
 #include "../src/ezorq.h"
 #include "../src/ezdrums.h"
 #include "../src/ezq4.h"
+#include "../src/ezreverb.h"
+#include "../src/ezdelay.h"
+#include "../src/ezautofilter.h"
+#include "../src/ezchorus.h"
+#include "../src/ezdrive.h"
+#include "../src/ezutility.h"
 #include "../src/magenta_vae.h"
 #include "../src/ai_generation.h"
 #include <fstream>
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -30,6 +37,13 @@ void printUsage()
         "\n"
         "usage:\n"
         "  cadence-cli devices\n"
+        "  cadence-cli fx-test\n"
+        "      renders an impulse + noise through every built-in effect and\n"
+        "      verifies finite, non-silent output. Also dumps their parameters.\n"
+        "  cadence-cli midi-monitor\n"
+        "      injects note/CC/pitch-bend messages and verifies the controller\n"
+        "      monitor used by the MiniLab 3 performance panel, including\n"
+        "      pads reserved for transport/performance actions.\n"
         "  cadence-cli tone <out.wav> [seconds=3] [freq=440]\n"
         "  cadence-cli play <file> [seconds=9999]\n"
         "  cadence-cli selftest <file>\n"
@@ -4094,6 +4108,229 @@ int cmdArrangerTest()
     return 0;
 }
 
+static int cmdFxTest()
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto run = [](const char* label, juce::AudioProcessor* raw) {
+        if (raw == nullptr)
+        {
+            std::fprintf(stderr, "%s: create() returned null\n", label);
+            return false;
+        }
+        std::unique_ptr<juce::AudioProcessor> proc(raw);
+        proc->prepareToPlay(48000.0, 256);
+
+        const auto& params = proc->getParameters();
+        std::printf("%s: %d parameters\n", label, (int) params.size());
+        for (int i = 0; i < juce::jmin(24, (int) params.size()); ++i)
+            if (auto* p = params[(size_t) i])
+                std::printf("  [%2d] %-18s %s\n", i,
+                            p->getName(32).toRawUTF8(),
+                            p->getCurrentValueAsText().toRawUTF8());
+
+        juce::AudioBuffer<float> buffer(2, 256);
+        juce::MidiBuffer midi;
+        juce::Random random(0x5eed);
+        double peak = 0.0;
+        double sum = 0.0;
+        std::int64_t samples = 0;
+        for (int block = 0; block < 160; ++block)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buffer.getWritePointer(ch);
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    const float noise = (random.nextFloat() * 2.0f - 1.0f) * 0.12f;
+                    const float tone = std::sin((float) (samples + i) * 0.031f) * 0.08f;
+                    data[i] = noise + tone;
+                }
+            }
+            if (block == 0)
+            {
+                buffer.setSample(0, 0, 0.9f);
+                buffer.setSample(1, 0, -0.9f);
+            }
+
+            proc->processBlock(buffer, midi);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const auto* data = buffer.getReadPointer(ch);
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    const double v = (double) data[i];
+                    if (! std::isfinite(v))
+                    {
+                        std::fprintf(stderr, "%s: non-finite output\n", label);
+                        return false;
+                    }
+                    peak = std::max(peak, std::abs(v));
+                    sum += v * v;
+                    ++samples;
+                }
+            }
+        }
+        const double rms = samples > 0 ? std::sqrt(sum / (double) samples) : 0.0;
+        std::printf("%s: peak %.4f  rms %.4f\n", label, peak, rms);
+
+        juce::MemoryBlock state;
+        proc->getStateInformation(state);
+        if (state.getSize() == 0)
+        {
+            std::fprintf(stderr, "%s: empty state\n", label);
+            return false;
+        }
+        proc->setStateInformation(state.getData(), (int) state.getSize());
+
+        if (peak < 1.0e-6 || rms < 1.0e-9)
+        {
+            std::fprintf(stderr, "%s: output is silent\n", label);
+            return false;
+        }
+
+        // Push every parameter to both extremes and render a short burst. This
+        // catches unstable feedback/filter states and NaNs that the default
+        // preset would hide. It deliberately does not assert on peak level:
+        // some devices are meant to drive the bus hard.
+        for (size_t pi = 0; pi < params.size(); ++pi)
+        {
+            auto* p = params[pi];
+            if (p == nullptr)
+                continue;
+            for (float value : { 0.0f, 1.0f })
+            {
+                p->setValueNotifyingHost(value);
+                for (int block = 0; block < 4; ++block)
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        auto* data = buffer.getWritePointer(ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                        {
+                            const float noise =
+                                (random.nextFloat() * 2.0f - 1.0f) * 0.12f;
+                            const float tone =
+                                std::sin((float) (block * 256 + i) * 0.031f)
+                                * 0.08f;
+                            data[i] = noise + tone;
+                        }
+                    }
+                    proc->processBlock(buffer, midi);
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        const auto* data = buffer.getReadPointer(ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                            if (! std::isfinite((double) data[i]))
+                            {
+                                std::fprintf(stderr,
+                                             "%s: non-finite output while "
+                                             "sweeping parameter %d\n",
+                                             label, (int) pi);
+                                return false;
+                            }
+                    }
+                }
+            }
+        }
+        return true;
+    };
+
+    bool ok = true;
+    ok = run("EZ Reverb", ezreverb::create()) && ok;
+    ok = run("EZ Delay", ezdelay::create()) && ok;
+    ok = run("EZ AutoFilter", ezautofilter::create()) && ok;
+    ok = run("EZ Chorus", ezchorus::create()) && ok;
+    ok = run("EZ Drive", ezdrive::create()) && ok;
+    ok = run("EZ Utility", ezutility::create()) && ok;
+    if (ok)
+        std::printf("fx-test: all built-in effects rendered a finite, non-silent tail\n");
+    return ok ? 0 : 1;
+}
+
+int cmdMidiMonitor()
+{
+    cadence::Engine engine;
+    engine.newProject(48000);
+
+    const std::array<std::array<unsigned char, 3>, 4> messages {{
+        {{ 0x90, 60, 100 }}, // note-on C4
+        {{ 0xB0, 74, 64 }},  // CC 74 (MiniLab encoder 1)
+        {{ 0xE0, 0x00, 0x40 }}, // pitch-bend centre
+        {{ 0x80, 60, 0 }},   // note-off C4
+    }};
+    for (const auto& message : messages)
+        engine.debugInjectMidi(message.data(), (int) message.size());
+
+    std::array<int, 5 * 8> events {};
+    const int count = engine.pollMidiEvents(events.data(), 8);
+    if (count != 4)
+    {
+        std::fprintf(stderr, "midi-monitor: expected 4 events, got %d\n",
+                     count);
+        return 1;
+    }
+
+    struct Expected { int type, channel, data1, data2; };
+    const std::array<Expected, 4> expected {{
+        { 0, 1, 60, 100 },
+        { 2, 1, 74, 64 },
+        { 3, 1, 8192, 0 },
+        { 1, 1, 60, 0 },
+    }};
+    for (int i = 0; i < count; ++i)
+    {
+        const int base = i * 5;
+        const auto& want = expected[(size_t) i];
+        if (events[(size_t) base] != want.type
+            || events[(size_t) base + 1] != want.channel
+            || events[(size_t) base + 2] != want.data1
+            || events[(size_t) base + 3] != want.data2)
+        {
+            std::fprintf(stderr,
+                         "midi-monitor: event %d mismatch "
+                         "(got %d/%d/%d/%d, want %d/%d/%d/%d)\n",
+                         i, events[(size_t) base],
+                         events[(size_t) base + 1],
+                         events[(size_t) base + 2],
+                         events[(size_t) base + 3], want.type, want.channel,
+                         want.data1, want.data2);
+            return 1;
+        }
+    }
+
+    // Draining is destructive: a second poll must be empty.
+    if (engine.pollMidiEvents(events.data(), 8) != 0)
+    {
+        std::fprintf(stderr, "midi-monitor: second poll was not empty\n");
+        return 1;
+    }
+
+    // A note reserved by a controller action still reaches the monitor (so
+    // the UI can fire the action) while the engine keeps it away from
+    // instruments and recording.
+    engine.setControllerNoteConsumed(60, true);
+    const std::array<unsigned char, 3> padOn {{ 0x90, 60, 100 }};
+    const std::array<unsigned char, 3> padOff {{ 0x80, 60, 0 }};
+    engine.debugInjectMidi(padOn.data(), (int) padOn.size());
+    engine.debugInjectMidi(padOff.data(), (int) padOff.size());
+    const int padCount = engine.pollMidiEvents(events.data(), 8);
+    engine.setControllerNoteConsumed(60, false);
+    if (padCount != 2
+        || events[0] != 0 || events[1] != 1 || events[2] != 60
+        || events[3] != 100
+        || events[5] != 1 || events[7] != 60)
+    {
+        std::fprintf(stderr,
+                     "midi-monitor: controller-owned note did not reach the "
+                     "monitor\n");
+        return 1;
+    }
+
+    std::printf("midi-monitor: note-on, CC, pitch-bend, note-off and "
+                "controller-owned pad round-tripped\n");
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
@@ -4106,6 +4343,12 @@ int main(int argc, char** argv)
 
     if (cmd == "devices")
         return cmdDevices();
+
+    if (cmd == "fx-test")
+        return cmdFxTest();
+
+    if (cmd == "midi-monitor")
+        return cmdMidiMonitor();
 
     if (cmd == "plugins")
         return cmdPlugins();

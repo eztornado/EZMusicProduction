@@ -42,6 +42,12 @@ set(CADENCE_ENGINE_SOURCES
     src/ezq4.cpp
     src/ezcomp.cpp
     src/ezlim.cpp
+    src/ezreverb.cpp
+    src/ezdelay.cpp
+    src/ezautofilter.cpp
+    src/ezchorus.cpp
+    src/ezdrive.cpp
+    src/ezutility.cpp
     src/ezinst.cpp
     src/ezsynth.cpp
     src/ezorq.cpp

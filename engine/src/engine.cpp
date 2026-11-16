@@ -5,6 +5,12 @@
 #include "ezq4.h"
 #include "ezcomp.h"
 #include "ezlim.h"
+#include "ezreverb.h"
+#include "ezdelay.h"
+#include "ezautofilter.h"
+#include "ezchorus.h"
+#include "ezdrive.h"
+#include "ezutility.h"
 #include "ezinst.h"
 #include "ezsynth.h"
 #include "ezorq.h"
@@ -241,6 +247,91 @@ void PluginHost::setup()
     dl.isInstrument = false;
     dl.category = "Effect";
     builtins_.push_back(dl);
+
+    // Built-in reverb and delay: the first two devices of the new native
+    // effects suite. Both are plain AudioProcessors with stable parameter ids,
+    // so the Flutter device editor can drive them through the generic
+    // plugin-parameter ABI.
+    juce::PluginDescription dr;
+    dr.pluginFormatName = "Internal";
+    dr.name = "EZ Reverb";
+    dr.descriptiveName = "EZ Reverb";
+    dr.manufacturerName = "EZMusicProduction";
+    dr.uniqueId = (int) (juce::String("ezverb").hashCode());
+    dr.fileOrIdentifier = "internal:ezverb";
+    dr.numInputChannels = 2;
+    dr.numOutputChannels = 2;
+    dr.isInstrument = false;
+    dr.category = "Effect";
+    builtins_.push_back(dr);
+
+    juce::PluginDescription dly;
+    dly.pluginFormatName = "Internal";
+    dly.name = "EZ Delay";
+    dly.descriptiveName = "EZ Delay";
+    dly.manufacturerName = "EZMusicProduction";
+    dly.uniqueId = (int) (juce::String("ezdelay").hashCode());
+    dly.fileOrIdentifier = "internal:ezdelay";
+    dly.numInputChannels = 2;
+    dly.numOutputChannels = 2;
+    dly.isInstrument = false;
+    dly.category = "Effect";
+    builtins_.push_back(dly);
+
+    // Built-in modulation, filter, saturation and utility devices. They share
+    // the same parameter/state contract as EZ Reverb and EZ Delay, so the
+    // Flutter editor and the hardware controller layer see them automatically.
+    juce::PluginDescription daf;
+    daf.pluginFormatName = "Internal";
+    daf.name = "EZ AutoFilter";
+    daf.descriptiveName = "EZ AutoFilter";
+    daf.manufacturerName = "EZMusicProduction";
+    daf.uniqueId = (int) (juce::String("ezautofilter").hashCode());
+    daf.fileOrIdentifier = "internal:ezautofilter";
+    daf.numInputChannels = 2;
+    daf.numOutputChannels = 2;
+    daf.isInstrument = false;
+    daf.category = "Effect";
+    builtins_.push_back(daf);
+
+    juce::PluginDescription dch;
+    dch.pluginFormatName = "Internal";
+    dch.name = "EZ Chorus";
+    dch.descriptiveName = "EZ Chorus";
+    dch.manufacturerName = "EZMusicProduction";
+    dch.uniqueId = (int) (juce::String("ezchorus").hashCode());
+    dch.fileOrIdentifier = "internal:ezchorus";
+    dch.numInputChannels = 2;
+    dch.numOutputChannels = 2;
+    dch.isInstrument = false;
+    dch.category = "Effect";
+    builtins_.push_back(dch);
+
+    juce::PluginDescription ddr;
+    ddr.pluginFormatName = "Internal";
+    ddr.name = "EZ Drive";
+    ddr.descriptiveName = "EZ Drive";
+    ddr.manufacturerName = "EZMusicProduction";
+    ddr.uniqueId = (int) (juce::String("ezdrive").hashCode());
+    ddr.fileOrIdentifier = "internal:ezdrive";
+    ddr.numInputChannels = 2;
+    ddr.numOutputChannels = 2;
+    ddr.isInstrument = false;
+    ddr.category = "Effect";
+    builtins_.push_back(ddr);
+
+    juce::PluginDescription dut;
+    dut.pluginFormatName = "Internal";
+    dut.name = "EZ Utility";
+    dut.descriptiveName = "EZ Utility";
+    dut.manufacturerName = "EZMusicProduction";
+    dut.uniqueId = (int) (juce::String("ezutility").hashCode());
+    dut.fileOrIdentifier = "internal:ezutility";
+    dut.numInputChannels = 2;
+    dut.numOutputChannels = 2;
+    dut.isInstrument = false;
+    dut.category = "Effect";
+    builtins_.push_back(dut);
 
     // Built-in instrument (EZInstruments): the FluidSynth-backed GM catalog.
     juce::PluginDescription di;
@@ -530,6 +621,24 @@ std::unique_ptr<juce::AudioProcessor> PluginHost::create(
                 if (b.fileOrIdentifier == "internal:ezlim")
                     return std::unique_ptr<juce::AudioProcessor>(
                         ezlim::create());
+                if (b.fileOrIdentifier == "internal:ezverb")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezreverb::create());
+                if (b.fileOrIdentifier == "internal:ezdelay")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezdelay::create());
+                if (b.fileOrIdentifier == "internal:ezautofilter")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezautofilter::create());
+                if (b.fileOrIdentifier == "internal:ezchorus")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezchorus::create());
+                if (b.fileOrIdentifier == "internal:ezdrive")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezdrive::create());
+                if (b.fileOrIdentifier == "internal:ezutility")
+                    return std::unique_ptr<juce::AudioProcessor>(
+                        ezutility::create());
                 return std::unique_ptr<juce::AudioProcessor>(ezq4::create());
             }
     }
@@ -3554,11 +3663,139 @@ void Engine::activateMidiInput(const juce::String& identifier)
     }
 }
 
+void Engine::recordMidiMonitorEvent(const juce::MidiMessage& message)
+{
+    int type = -1;
+    int data1 = 0;
+    int data2 = 0;
+    if (message.isNoteOn())
+    {
+        type = midiMonitorNoteOn;
+        data1 = message.getNoteNumber();
+        data2 = message.getVelocity();
+    }
+    else if (message.isNoteOff())
+    {
+        type = midiMonitorNoteOff;
+        data1 = message.getNoteNumber();
+        data2 = message.getVelocity();
+    }
+    else if (message.isController())
+    {
+        type = midiMonitorController;
+        data1 = message.getControllerNumber();
+        data2 = message.getControllerValue();
+    }
+    else if (message.isPitchWheel())
+    {
+        type = midiMonitorPitchBend;
+        data1 = message.getPitchWheelValue();
+    }
+    else if (message.isProgramChange())
+    {
+        type = midiMonitorProgramChange;
+        data1 = message.getProgramChangeNumber();
+    }
+    else if (message.isChannelPressure())
+    {
+        type = midiMonitorPressure;
+        data1 = message.getChannelPressureValue();
+    }
+    else if (message.isAftertouch())
+    {
+        type = midiMonitorPressure;
+        data1 = message.getNoteNumber();
+        data2 = message.getAfterTouchValue();
+    }
+    if (type < 0)
+        return;
+
+    const juce::SpinLock::ScopedLockType lock(midiMonitorLock_);
+    auto& slot = midiMonitor_[(size_t) midiMonitorWrite_];
+    slot.type = type;
+    slot.channel = message.getChannel();
+    slot.data1 = data1;
+    slot.data2 = data2;
+    slot.timestampMs = (int) juce::Time::getMillisecondCounter();
+    midiMonitorWrite_ = (midiMonitorWrite_ + 1) % kMidiMonitorCapacity;
+    if (midiMonitorCount_ < kMidiMonitorCapacity)
+        ++midiMonitorCount_;
+}
+
+int Engine::pollMidiEvents(int* outEvents, int maxEvents)
+{
+    if (outEvents == nullptr || maxEvents <= 0)
+        return 0;
+
+    const juce::SpinLock::ScopedLockType lock(midiMonitorLock_);
+    const int count = juce::jmin(maxEvents, midiMonitorCount_);
+    const int start = (midiMonitorWrite_ - midiMonitorCount_
+                       + kMidiMonitorCapacity)
+                      % kMidiMonitorCapacity;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& event =
+            midiMonitor_[(size_t) ((start + i) % kMidiMonitorCapacity)];
+        *outEvents++ = event.type;
+        *outEvents++ = event.channel;
+        *outEvents++ = event.data1;
+        *outEvents++ = event.data2;
+        *outEvents++ = event.timestampMs;
+    }
+    midiMonitorCount_ -= count;
+    return count;
+}
+
+void Engine::debugInjectMidi(const void* data, int size)
+{
+    if (data == nullptr || size <= 0)
+        return;
+    onMidiMessage(juce::MidiMessage(data, size));
+}
+
+void Engine::setControllerNoteConsumed(int note, bool consumed)
+{
+    if (note < 0 || note > 127)
+        return;
+    auto& word = note < 64 ? controllerNotesLow_ : controllerNotesHigh_;
+    const auto bit = std::uint64_t {1} << (note & 63);
+    if (consumed)
+    {
+        word.fetch_or(bit, std::memory_order_relaxed);
+    }
+    else
+    {
+        word.fetch_and(~bit, std::memory_order_relaxed);
+        markControllerNoteActive(note, false);
+    }
+}
+
 void Engine::onMidiMessage(const juce::MidiMessage& message)
 {
     if (message.isMidiClock() || message.isMidiStart() || message.isMidiStop()
         || message.isSongPositionPointer() || message.isActiveSense())
         return;
+
+    // Controller/performance views poll this mirror; notes still follow the
+    // normal live-monitoring path below unless a controller action owns them.
+    recordMidiMonitorEvent(message);
+
+    // A pad mapped to a transport/performance action is visible to the UI but
+    // must not also play an instrument or enter a recording. Only swallow the
+    // note-off when its note-on was swallowed too: mapping a pad while it is
+    // held must still release the note that was already sounding.
+    if (message.isNoteOnOrOff()
+        && isControllerNoteConsumed(message.getNoteNumber()))
+    {
+        if (message.isNoteOn())
+        {
+            markControllerNoteActive(message.getNoteNumber(), true);
+            return;
+        }
+        if (message.isNoteOff()
+            && takeControllerNoteActive(message.getNoteNumber()))
+            return;
+    }
 
     // Live monitoring routes notes to armed instrument tracks regardless of
     // whether we are recording.
@@ -6476,6 +6713,8 @@ int Engine::pluginParamCount(TrackId trackId, int slotKind, int slotIndex) const
         proc = transport_->fxProcessorFor(trackId, slotIndex);
     else if (slotKind == 1)
         proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
     if (proc == nullptr)
         return 0;
     return proc->getParameters().size();
@@ -6490,6 +6729,8 @@ const char* Engine::pluginParamName(TrackId trackId, int slotKind,
         proc = transport_->fxProcessorFor(trackId, slotIndex);
     else if (slotKind == 1)
         proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
     if (proc != nullptr)
         if (const auto& params = proc->getParameters();
             paramIndex >= 0 && paramIndex < (int) params.size())
@@ -6506,6 +6747,8 @@ float Engine::pluginParamValue(TrackId trackId, int slotKind, int slotIndex,
         proc = transport_->fxProcessorFor(trackId, slotIndex);
     else if (slotKind == 1)
         proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
     if (proc == nullptr)
         return 0.0f;
     const auto& params = proc->getParameters();
@@ -6524,6 +6767,8 @@ const char* Engine::pluginParamText(TrackId trackId, int slotKind,
         proc = transport_->fxProcessorFor(trackId, slotIndex);
     else if (slotKind == 1)
         proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
     if (proc == nullptr)
         return stringOut_.c_str();
     const auto& params = proc->getParameters();
@@ -6531,6 +6776,102 @@ const char* Engine::pluginParamText(TrackId trackId, int slotKind,
         return stringOut_.c_str();
     if (auto* p = params[(size_t) paramIndex])
         stringOut_ = p->getCurrentValueAsText().toStdString();
+    return stringOut_.c_str();
+}
+
+int Engine::pluginParamFlags(TrackId trackId, int slotKind, int slotIndex,
+                             int paramIndex) const
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc == nullptr)
+        return 0;
+    const auto& params = proc->getParameters();
+    if (paramIndex < 0 || paramIndex >= (int) params.size())
+        return 0;
+    auto* p = params[(size_t) paramIndex];
+    if (p == nullptr)
+        return 0;
+    int flags = 0;
+    if (dynamic_cast<juce::AudioParameterBool*>(p) != nullptr)
+        flags |= 1;
+    if (dynamic_cast<juce::AudioParameterChoice*>(p) != nullptr)
+        flags |= 2;
+    if (dynamic_cast<juce::AudioParameterInt*>(p) != nullptr)
+        flags |= 4;
+    return flags;
+}
+
+float Engine::pluginParamDefault(TrackId trackId, int slotKind,
+                                  int slotIndex, int paramIndex) const
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc == nullptr)
+        return 0.0f;
+    const auto& params = proc->getParameters();
+    if (paramIndex < 0 || paramIndex >= (int) params.size())
+        return 0.0f;
+    auto* p = params[(size_t) paramIndex];
+    return p != nullptr ? juce::jlimit(0.0f, 1.0f, p->getDefaultValue()) : 0.0f;
+}
+
+int Engine::pluginParamNumSteps(TrackId trackId, int slotKind, int slotIndex,
+                                int paramIndex) const
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc == nullptr)
+        return 0;
+    const auto& params = proc->getParameters();
+    if (paramIndex < 0 || paramIndex >= (int) params.size())
+        return 0;
+    auto* p = params[(size_t) paramIndex];
+    if (p == nullptr)
+        return 0;
+    if (dynamic_cast<juce::AudioParameterBool*>(p) != nullptr)
+        return 2;
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*>(p))
+        return choice->choices.size();
+    if (auto* integer = dynamic_cast<juce::AudioParameterInt*>(p))
+        return integer->getRange().getLength();
+    return 0;
+}
+
+const char* Engine::pluginParamTextAtValue(TrackId trackId, int slotKind,
+                                            int slotIndex, int paramIndex,
+                                            float normalisedValue) const
+{
+    stringOut_.clear();
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc == nullptr)
+        return stringOut_.c_str();
+    const auto& params = proc->getParameters();
+    if (paramIndex < 0 || paramIndex >= (int) params.size())
+        return stringOut_.c_str();
+    if (auto* p = params[(size_t) paramIndex])
+        stringOut_ = p->getText(juce::jlimit(0.0f, 1.0f, normalisedValue), 64).toStdString();
     return stringOut_.c_str();
 }
 
@@ -6543,6 +6884,8 @@ juce::Result Engine::setPluginParamValue(TrackId trackId, int slotKind,
         proc = transport_->fxProcessorFor(trackId, slotIndex);
     else if (slotKind == 1)
         proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
     if (proc == nullptr)
         return fail("plugin not found");
     const auto& params = proc->getParameters();
@@ -8117,6 +8460,16 @@ const char* Engine::trackFxNameAt(TrackId trackId, int slotIndex) const
     return stringOut_.c_str();
 }
 
+const char* Engine::trackFxUidAt(TrackId trackId, int slotIndex) const
+{
+    stringOut_.clear();
+    if (auto project = std::atomic_load(&project_))
+        if (const Track* track = project->findTrack(trackId))
+            if (slotIndex >= 0 && slotIndex < (int) track->fx.size())
+                stringOut_ = track->fx[(size_t) slotIndex].pluginUid.toStdString();
+    return stringOut_.c_str();
+}
+
 bool Engine::trackFxBypassAt(TrackId trackId, int slotIndex) const
 {
     if (auto project = std::atomic_load(&project_))
@@ -8132,6 +8485,15 @@ const char* Engine::trackInstrumentName(TrackId trackId) const
     if (auto project = std::atomic_load(&project_))
         if (const Track* track = project->findTrack(trackId))
             stringOut_ = track->instrument.name.toStdString();
+    return stringOut_.c_str();
+}
+
+const char* Engine::trackInstrumentUid(TrackId trackId) const
+{
+    stringOut_.clear();
+    if (auto project = std::atomic_load(&project_))
+        if (const Track* track = project->findTrack(trackId))
+            stringOut_ = track->instrument.pluginUid.toStdString();
     return stringOut_.c_str();
 }
 
@@ -8391,6 +8753,15 @@ const char* Engine::masterFxNameAt(int slotIndex) const
     if (auto project = std::atomic_load(&project_))
         if (slotIndex >= 0 && slotIndex < (int) project->masterFx.size())
             stringOut_ = project->masterFx[(size_t) slotIndex].name.toStdString();
+    return stringOut_.c_str();
+}
+
+const char* Engine::masterFxUidAt(int slotIndex) const
+{
+    stringOut_.clear();
+    if (auto project = std::atomic_load(&project_))
+        if (slotIndex >= 0 && slotIndex < (int) project->masterFx.size())
+            stringOut_ = project->masterFx[(size_t) slotIndex].pluginUid.toStdString();
     return stringOut_.c_str();
 }
 

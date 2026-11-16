@@ -55,6 +55,34 @@ abstract final class CadenceResult {
   static const errorNetwork = 8;
 }
 
+/// One MIDI message mirrored by the engine monitor.
+///
+/// [type] is 0 note-on, 1 note-off, 2 CC, 3 pitch-bend, 4 program-change,
+/// 5 channel-pressure/aftertouch. For CC messages [data1] is the controller
+/// number and [data2] the value.
+class EngineMidiEvent {
+  const EngineMidiEvent({
+    required this.type,
+    required this.channel,
+    required this.data1,
+    required this.data2,
+    required this.timestampMs,
+  });
+
+  static const noteOn = 0;
+  static const noteOff = 1;
+  static const controller = 2;
+  static const pitchBend = 3;
+  static const programChange = 4;
+  static const pressure = 5;
+
+  final int type;
+  final int channel;
+  final int data1;
+  final int data2;
+  final int timestampMs;
+}
+
 /// High-level handle around one CadenceEngine instance.
 final class CadenceEngine {
   /// [attachHandleAddress]: wraps an engine created in ANOTHER isolate of
@@ -109,6 +137,18 @@ final class CadenceEngine {
         'cadence_engine_midi_clip_set_notes');
     _selectedMidiInputIndex = _lib.lookupFunction<Int32 Function(Pointer<Void>),
         int Function(Pointer<Void>)>('cadence_engine_selected_midi_input_index');
+    _pollMidiEvents = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Int32>, Int32),
+        int Function(Pointer<Void>, Pointer<Int32>, int)>(
+        'cadence_engine_poll_midi_events');
+    _injectMidi = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Pointer<Uint8>, Int32),
+        int Function(Pointer<Void>, Pointer<Uint8>, int)>(
+        'cadence_engine_debug_inject_midi');
+    _setControllerNoteConsumed = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int32, Int32),
+        int Function(Pointer<Void>, int, int)>(
+        'cadence_engine_set_controller_note_consumed');
     _addClip = _lib.lookupFunction<
         Int64 Function(Pointer<Void>, Int64, Pointer<Utf8>, Double, Float),
         int Function(Pointer<Void>, int, Pointer<Utf8>, double, double)>(
@@ -184,6 +224,8 @@ final class CadenceEngine {
         int Function(Pointer<Void>, int)>('cadence_engine_track_fx_count');
     _trackFxNameAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int64, Int32),
         Pointer<Utf8> Function(Pointer<Void>, int, int)>('cadence_engine_track_fx_name_at');
+    _trackFxUidAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int64, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int)>('cadence_engine_track_fx_uid_at');
     _trackFxBypassAt = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32),
         int Function(Pointer<Void>, int, int)>('cadence_engine_track_fx_bypass_at');
     _trackSetInstrumentPlugin = _lib.lookupFunction<
@@ -215,6 +257,8 @@ final class CadenceEngine {
         'cadence_engine_open_instrument_editor_with_clip');
     _trackInstrumentName = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int64),
         Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_track_instrument_name');
+    _trackInstrumentUid = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int64),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_track_instrument_uid');
     _trackSetMidifx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Int32),
         int Function(Pointer<Void>, int, int)>('cadence_engine_track_set_midifx');
     _trackClearMidifx = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int64),
@@ -231,6 +275,8 @@ final class CadenceEngine {
         int Function(Pointer<Void>)>('cadence_engine_master_fx_count');
     _masterFxNameAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int32),
         Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_master_fx_name_at');
+    _masterFxUidAt = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int)>('cadence_engine_master_fx_uid_at');
     _masterFxBypassAt = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
         int Function(Pointer<Void>, int)>('cadence_engine_master_fx_bypass_at');
     _masterOpenFxEditor = _lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
@@ -391,6 +437,22 @@ final class CadenceEngine {
         Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32),
         Pointer<Utf8> Function(Pointer<Void>, int, int, int,
             int)>('cadence_engine_plugin_param_text');
+    _pluginParamFlags = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        int Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_flags');
+    _pluginParamDefault = _lib.lookupFunction<
+        Float Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        double Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_default');
+    _pluginParamNumSteps = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        int Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_num_steps');
+    _pluginParamTextAtValue = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32, Float),
+        Pointer<Utf8> Function(Pointer<Void>, int, int, int, int,
+            double)>('cadence_engine_plugin_param_text_at_value');
     _setPluginParamValue = _lib.lookupFunction<
         Int32 Function(Pointer<Void>, Int64, Int32, Int32, Int32, Float),
         int Function(Pointer<Void>, int, int, int, int,
@@ -686,6 +748,7 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int, int, int) _trackSetFxBypass;
   late final int Function(Pointer<Void>, int) _trackFxCount;
   late final Pointer<Utf8> Function(Pointer<Void>, int, int) _trackFxNameAt;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int) _trackFxUidAt;
   late final int Function(Pointer<Void>, int, int) _trackFxBypassAt;
   late final int Function(Pointer<Void>, int, int) _trackSetInstrumentPlugin;
   late final int Function(Pointer<Void>, int) _trackClearInstrument;
@@ -699,6 +762,7 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int) _openInstrumentEditor;
   late final int Function(Pointer<Void>, int, int) _openInstrumentEditorWithClip;
   late final Pointer<Utf8> Function(Pointer<Void>, int) _trackInstrumentName;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _trackInstrumentUid;
   late final int Function(Pointer<Void>, int, int) _trackSetMidifx;
   late final int Function(Pointer<Void>, int) _trackClearMidifx;
   late final Pointer<Utf8> Function(Pointer<Void>, int) _trackMidifxName;
@@ -707,6 +771,7 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int, int) _masterSetFxBypass;
   late final int Function(Pointer<Void>) _masterFxCount;
   late final Pointer<Utf8> Function(Pointer<Void>, int) _masterFxNameAt;
+  late final Pointer<Utf8> Function(Pointer<Void>, int) _masterFxUidAt;
   late final int Function(Pointer<Void>, int) _masterFxBypassAt;
   late final int Function(Pointer<Void>, int) _masterOpenFxEditor;
   late final int Function(Pointer<Void>, int, int) _midiClipRemoveNote;
@@ -714,6 +779,9 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int, Pointer<Int32>, Pointer<Int32>,
       Pointer<Double>, Pointer<Double>, int) _midiClipSetNotes;
   late final int Function(Pointer<Void>) _selectedMidiInputIndex;
+  late final int Function(Pointer<Void>, Pointer<Int32>, int) _pollMidiEvents;
+  late final int Function(Pointer<Void>, Pointer<Uint8>, int) _injectMidi;
+  late final int Function(Pointer<Void>, int, int) _setControllerNoteConsumed;
   late final int Function(Pointer<Void>, int, Pointer<Utf8>, double, double) _addClip;
   late final int Function(Pointer<Void>, int, double) _setTrackVolume;
   late final int Function(Pointer<Void>, int, double) _setTrackPan;
@@ -821,6 +889,13 @@ final class CadenceEngine {
       _pluginParamValue;
   late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int)
       _pluginParamText;
+  late final int Function(Pointer<Void>, int, int, int, int) _pluginParamFlags;
+  late final double Function(Pointer<Void>, int, int, int, int)
+      _pluginParamDefault;
+  late final int Function(Pointer<Void>, int, int, int, int)
+      _pluginParamNumSteps;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int, double)
+      _pluginParamTextAtValue;
   late final int Function(Pointer<Void>, int, int, int, int, double)
       _setPluginParamValue;
 
@@ -1144,6 +1219,23 @@ final class CadenceEngine {
           int trackId, int slotKind, int slotIndex, int paramIndex) =>
       _pluginParamText(_handle, trackId, slotKind, slotIndex, paramIndex)
           .toDartString();
+  /// 1 = boolean, 2 = choice/enum, 4 = integer.
+  int pluginParamFlags(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamFlags(_handle, trackId, slotKind, slotIndex, paramIndex);
+  double pluginParamDefault(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamDefault(_handle, trackId, slotKind, slotIndex, paramIndex);
+  /// 0 = continuous, 2 = boolean, N = choice count.
+  int pluginParamNumSteps(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamNumSteps(_handle, trackId, slotKind, slotIndex, paramIndex);
+  /// Human-readable text for a hypothetical normalised value.
+  String pluginParamTextAtValue(int trackId, int slotKind, int slotIndex,
+          int paramIndex, double value) =>
+      _pluginParamTextAtValue(
+              _handle, trackId, slotKind, slotIndex, paramIndex, value)
+          .toDartString();
   /// Sets a normalised (0..1) value on the live plug-in. Message thread only.
   bool setPluginParamValue(int trackId, int slotKind, int slotIndex,
           int paramIndex, double value) =>
@@ -1463,6 +1555,8 @@ final class CadenceEngine {
   int trackFxCount(int trackId) => _trackFxCount(_handle, trackId);
   String trackFxNameAt(int trackId, int slotIndex) =>
       _trackFxNameAt(_handle, trackId, slotIndex).toDartString();
+  String trackFxUidAt(int trackId, int slotIndex) =>
+      _trackFxUidAt(_handle, trackId, slotIndex).toDartString();
   bool trackFxBypassAt(int trackId, int slotIndex) =>
       _trackFxBypassAt(_handle, trackId, slotIndex) != 0;
   int trackSetInstrumentPlugin(int trackId, int pluginIndex) =>
@@ -1517,6 +1611,8 @@ final class CadenceEngine {
       _openInstrumentEditorWithClip(_handle, trackId, clipId);
   String trackInstrumentName(int trackId) =>
       _trackInstrumentName(_handle, trackId).toDartString();
+  String trackInstrumentUid(int trackId) =>
+      _trackInstrumentUid(_handle, trackId).toDartString();
 
   int trackSetMidifx(int trackId, int pluginIndex) =>
       _trackSetMidifx(_handle, trackId, pluginIndex);
@@ -1531,6 +1627,8 @@ final class CadenceEngine {
   int get masterFxCount => _masterFxCount(_handle);
   String masterFxNameAt(int slotIndex) =>
       _masterFxNameAt(_handle, slotIndex).toDartString();
+  String masterFxUidAt(int slotIndex) =>
+      _masterFxUidAt(_handle, slotIndex).toDartString();
   bool masterFxBypassAt(int slotIndex) => _masterFxBypassAt(_handle, slotIndex) != 0;
   int openMasterFxEditor(int slotIndex) =>
       _masterOpenFxEditor(_handle, slotIndex);
@@ -1573,6 +1671,47 @@ final class CadenceEngine {
   void selectMidiInput(int index) => _selectMidiInput(_handle, index);
   void setMetronome(bool enabled) => _setMetronome(_handle, enabled ? 1 : 0);
   int get selectedMidiInputIndex => _selectedMidiInputIndex(_handle);
+
+  /// Drains the engine's MIDI monitor (notes, CC, pitch-bend, pressure).
+  List<EngineMidiEvent> pollMidiEvents([int maxEvents = 256]) {
+    final buffer = calloc<Int32>(maxEvents * 5);
+    try {
+      final count = _pollMidiEvents(_handle, buffer, maxEvents);
+      final events = <EngineMidiEvent>[];
+      for (var i = 0; i < count; i++) {
+        final base = i * 5;
+        events.add(EngineMidiEvent(
+          type: buffer[base],
+          channel: buffer[base + 1],
+          data1: buffer[base + 2],
+          data2: buffer[base + 3],
+          timestampMs: buffer[base + 4],
+        ));
+      }
+      return events;
+    } finally {
+      calloc.free(buffer);
+    }
+  }
+
+  /// Reserves a note for the controller/action layer. The monitor still sees
+  /// it, but instrument tracks and recording do not.
+  void setControllerNoteConsumed(int note, bool consumed) =>
+      _setControllerNoteConsumed(_handle, note, consumed ? 1 : 0);
+
+  /// Test hook: injects raw MIDI through the same path as a hardware input.
+  bool injectMidiMessage(List<int> bytes) {
+    if (bytes.isEmpty) return false;
+    final buffer = calloc<Uint8>(bytes.length);
+    try {
+      for (var i = 0; i < bytes.length; i++) {
+        buffer[i] = bytes[i] & 0xff;
+      }
+      return _injectMidi(_handle, buffer, bytes.length) == 0;
+    } finally {
+      calloc.free(buffer);
+    }
+  }
   int saveDeviceSettings(String path) =>
       _withUtf8(path, (p) => _saveDeviceSettings(_handle, p));
   int loadDeviceSettings(String path) =>

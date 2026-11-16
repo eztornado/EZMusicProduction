@@ -10,6 +10,7 @@ import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart' show TrackInfo;
 import '../l10n/l10n.dart';
 import 'plugin_picker_dialog.dart' show showPluginPickerDialog;
+import 'device_editor_dialog.dart' show showDeviceEditorDialog;
 
 Future<void> showChannelSettingsDialog(
     BuildContext context, EngineService service, int trackId) {
@@ -38,6 +39,22 @@ class ChannelSettingsBody extends StatefulWidget {
 
 class _ChannelSettingsBodyState extends State<ChannelSettingsBody> {
   void _rebuild() => widget.service.refresh();
+
+  Future<void> _editFx(TrackInfo track, int slotIndex) async {
+    final uid = widget.service.trackFxUidAt(track.id, slotIndex);
+    if (widget.service.isInternalDeviceUid(uid)) {
+      await showDeviceEditorDialog(
+        context,
+        widget.service,
+        trackId: track.id,
+        slotKind: 0,
+        slotIndex: slotIndex,
+        title: track.fxNames[slotIndex],
+      );
+      return;
+    }
+    widget.service.openTrackPluginEditor(track.id, slotIndex);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -124,8 +141,7 @@ class _ChannelSettingsBodyState extends State<ChannelSettingsBody> {
                   widget.service.toggleTrackFxBypass(track.id, i);
                   _rebuild();
                 },
-                onEdit: () =>
-                    widget.service.openTrackPluginEditor(track.id, i),
+                onEdit: () => _editFx(track, i),
                 onRemove: () {
                   widget.service.removeTrackFx(track.id, i);
                   _rebuild();

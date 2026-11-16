@@ -1350,4 +1350,108 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get prefShortcutKeyDelete => 'Supr';
+
+  @override
+  String get appMenuPerformance => 'Interpretación (MiniLab 3)';
+
+  @override
+  String get performanceTitle => 'Interpretación';
+
+  @override
+  String get performanceSubtitle => 'Control por hardware de la pista seleccionada';
+
+  @override
+  String get performanceTrack => 'Pista';
+
+  @override
+  String get performanceDevice => 'Dispositivo';
+
+  @override
+  String get performanceSoftTakeover => 'Captura suave';
+
+  @override
+  String get performanceRelative => 'Encoders relativos';
+
+  @override
+  String get performanceLearn => 'Aprender';
+
+  @override
+  String get performanceLearning => 'Mueve un control…';
+
+  @override
+  String get performanceCancelLearn => 'Cancelar';
+
+  @override
+  String get performanceNoTrack => 'Selecciona o crea una pista';
+
+  @override
+  String get performanceNoDevice => 'Esta pista no tiene un dispositivo automatizable';
+
+  @override
+  String get performanceEncoder => 'ENC';
+
+  @override
+  String get performanceFader => 'FADER';
+
+  @override
+  String get performanceTrackVolume => 'Volumen de pista';
+
+  @override
+  String get performanceTrackPan => 'Pan de pista';
+
+  @override
+  String get performanceMasterVolume => 'Volumen master';
+
+  @override
+  String get performanceNoParameter => 'Sin parámetro';
+
+  @override
+  String get performanceInput => 'Entrada MIDI';
+
+  @override
+  String get performanceNoInput => 'Sin entrada MIDI';
+
+  @override
+  String get performanceHintCatch => 'Mueve un knob o fader. Engancha cuando alcanza el valor actual.';
+
+  @override
+  String get performanceHintLearn => 'Pulsa el icono de objetivo en un control y muévelo para reasignar su CC.';
+
+  @override
+  String get performanceActions => 'Transporte y acciones';
+
+  @override
+  String get performanceActionHint => 'Pulsa el icono de objetivo y después un pad o botón.';
+
+  @override
+  String get performanceActionUnassigned => 'Sin asignar';
+
+  @override
+  String get performanceActionClear => 'Borrar disparador';
+
+  @override
+  String get performanceLearningAction => 'Pulsa un pad o botón…';
+
+  @override
+  String get performanceTapTempo => 'Tap tempo';
+
+  @override
+  String get performanceClose => 'Cerrar';
+
+  @override
+  String performanceParamCount(int count) {
+    return '$count parámetros';
+  }
+
+  @override
+  String get performanceCatch => 'CAPTURA';
+
+  @override
+  String get performanceMidiActivity => 'Actividad MIDI';
+
+  @override
+  String get performanceGenericController => 'Controlador genérico';
+
+  @override
+  String get performanceMiniLab => 'MiniLab 3';
 }
