@@ -50,6 +50,7 @@ set(CADENCE_ENGINE_SOURCES
     src/ezutility.cpp
     src/ezinst.cpp
     src/ezsynth.cpp
+    src/ezsynth2.cpp
     src/ezorq.cpp
     src/ezdrums.cpp
     src/ezarp.cpp

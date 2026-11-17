@@ -372,6 +372,71 @@ const char* cadence_engine_plugin_param_text_at_value(
                : "";
 }
 
+const char* cadence_engine_plugin_param_id(CadenceEngine* engine,
+                                           CadenceTrackId track_id,
+                                           int slot_kind, int slot_index,
+                                           int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamId(track_id, slot_kind,
+                                                 slot_index, param_index)
+               : "";
+}
+
+const char* cadence_engine_plugin_param_group(CadenceEngine* engine,
+                                              CadenceTrackId track_id,
+                                              int slot_kind, int slot_index,
+                                              int param_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginParamGroup(track_id, slot_kind,
+                                                    slot_index, param_index)
+               : "";
+}
+
+int cadence_engine_plugin_program_count(CadenceEngine* engine,
+                                        CadenceTrackId track_id,
+                                        int slot_kind, int slot_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginProgramCount(track_id, slot_kind,
+                                                      slot_index)
+               : 0;
+}
+
+const char* cadence_engine_plugin_program_name(CadenceEngine* engine,
+                                               CadenceTrackId track_id,
+                                               int slot_kind, int slot_index,
+                                               int program_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginProgramName(track_id, slot_kind,
+                                                     slot_index, program_index)
+               : "";
+}
+
+int cadence_engine_plugin_current_program(CadenceEngine* engine,
+                                          CadenceTrackId track_id,
+                                          int slot_kind, int slot_index)
+{
+    return engine != nullptr
+               ? asEngine(engine)->pluginCurrentProgram(track_id, slot_kind,
+                                                        slot_index)
+               : 0;
+}
+
+CadenceResult cadence_engine_set_plugin_program(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int slot_kind, int slot_index,
+                                                int program_index)
+{
+    if (engine == nullptr)
+        return kCadenceErrorNullArgument;
+    const auto r = asEngine(engine)->setPluginProgram(
+        track_id, slot_kind, slot_index, program_index);
+    return r.failed() ? kCadenceErrorNotFound : kCadenceOk;
+}
+
 CadenceResult cadence_engine_set_plugin_param_value(CadenceEngine* engine,
                                                     CadenceTrackId track_id,
                                                     int slot_kind,

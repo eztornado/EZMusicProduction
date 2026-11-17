@@ -190,6 +190,32 @@ CADENCE_API int cadence_engine_plugin_param_num_steps(CadenceEngine* engine,
 CADENCE_API const char* cadence_engine_plugin_param_text_at_value(
     CadenceEngine* engine, CadenceTrackId track_id, int slot_kind,
     int slot_index, int param_index, float normalised_value);
+/* Stable parameter identifier and UI group. Built-in instruments provide
+   both; external plug-ins fall back to their display name. */
+CADENCE_API const char* cadence_engine_plugin_param_id(CadenceEngine* engine,
+                                           CadenceTrackId track_id,
+                                           int slot_kind, int slot_index,
+                                           int param_index);
+CADENCE_API const char* cadence_engine_plugin_param_group(CadenceEngine* engine,
+                                              CadenceTrackId track_id,
+                                              int slot_kind, int slot_index,
+                                              int param_index);
+/* Program/preset list exposed by the live plug-in. */
+CADENCE_API int cadence_engine_plugin_program_count(CadenceEngine* engine,
+                                        CadenceTrackId track_id,
+                                        int slot_kind, int slot_index);
+CADENCE_API const char* cadence_engine_plugin_program_name(CadenceEngine* engine,
+                                               CadenceTrackId track_id,
+                                               int slot_kind, int slot_index,
+                                               int program_index);
+CADENCE_API int cadence_engine_plugin_current_program(CadenceEngine* engine,
+                                          CadenceTrackId track_id,
+                                          int slot_kind, int slot_index);
+/* Applies a program/preset. Message thread only. */
+CADENCE_API CadenceResult cadence_engine_set_plugin_program(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int slot_kind, int slot_index,
+                                                int program_index);
 /* Sets a normalised (0..1) value on the live plug-in. Message thread only. */
 CADENCE_API CadenceResult cadence_engine_set_plugin_param_value(CadenceEngine* engine,
                                                     CadenceTrackId track_id,

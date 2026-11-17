@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 
 import '../engine/engine_service.dart';
 import 'design.dart';
+import 'ezsynth_studio.dart';
 
 Future<void> showDeviceEditorDialog(
   BuildContext context,
@@ -51,6 +52,31 @@ Future<void> showDeviceEditorDialog(
 
 /// Opens the right editor for an insert: the Flutter device editor for a
 /// Cadence-owned effect, or the plug-in's own native window for VST3/AU.
+/// Opens the right instrument editor: EZSynth gets the dedicated Studio,
+/// every other instrument keeps its own native editor window.
+Future<void> editTrackInstrument(
+  BuildContext context,
+  EngineService service,
+  int trackId, {
+  String title = 'EZSynth',
+}) async {
+  if (service.isEzSynthInstrument(trackId)) {
+    await showEzSynthStudio(
+      context,
+      service,
+      trackId: trackId,
+      title: title,
+    );
+    return;
+  }
+  final error = service.openTrackInstrumentEditor(trackId);
+  if (error != null && context.mounted) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(error)),
+    );
+  }
+}
+
 Future<void> editTrackFx(
   BuildContext context,
   EngineService service,

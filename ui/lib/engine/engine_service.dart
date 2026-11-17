@@ -888,6 +888,29 @@ class EngineService extends ChangeNotifier {
       _engine.pluginParamTextAtValue(
           trackId, slotKind, slotIndex, paramIndex, value);
 
+  String pluginParamId(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamId(trackId, slotKind, slotIndex, paramIndex);
+
+  String pluginParamGroup(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamGroup(trackId, slotKind, slotIndex, paramIndex);
+
+  int pluginProgramCount(int trackId, int slotKind, int slotIndex) =>
+      _engine.pluginProgramCount(trackId, slotKind, slotIndex);
+
+  String pluginProgramName(
+          int trackId, int slotKind, int slotIndex, int programIndex) =>
+      _engine.pluginProgramName(
+          trackId, slotKind, slotIndex, programIndex);
+
+  int pluginCurrentProgram(int trackId, int slotKind, int slotIndex) =>
+      _engine.pluginCurrentProgram(trackId, slotKind, slotIndex);
+
+  bool setPluginProgram(
+          int trackId, int slotKind, int slotIndex, int programIndex) =>
+      _engine.setPluginProgram(trackId, slotKind, slotIndex, programIndex);
+
   void setPluginParamValue(
       int trackId, int slotKind, int slotIndex, int paramIndex, double value) {
     _engine.setPluginParamValue(
@@ -904,6 +927,14 @@ class EngineService extends ChangeNotifier {
 
   bool isInternalDeviceUid(String uid) =>
       uid.startsWith('Internal-') || uid.startsWith('internal:');
+
+  /// True when the track's live instrument is the built-in EZSynth 2.0
+  /// processor. The UID is a stable identifier derived from the built-in
+  /// token, so it survives project reloads and preset changes.
+  bool isEzSynthInstrument(int trackId) {
+    final uid = trackInstrumentUid(trackId).toLowerCase();
+    return uid.startsWith('internal:ezsynth') || uid.contains('-ezsynth-');
+  }
 
   /// Input quantize grid for recorded MIDI takes, in seconds (0 = off).
   /// Returns an error message or null.
@@ -1544,8 +1575,8 @@ class EngineService extends ChangeNotifier {
     _libraryStateFile().writeAsStringSync(jsonEncode(state));
   }
 
-  /// Descarga [url] en Library/<category>/<fileName> con progreso 0..1.
-  /// Devuelve un error o null. Escribe <nombre>.license.txt junto al audio
+  /// Descarga [url] en `Library/<category>/<fileName>` con progreso 0..1.
+  /// Devuelve un error o null. Escribe `<nombre>.license.txt` junto al audio
   /// (atribución CC: autor + licencia + fuente).
   Future<String?> downloadLibrarySound({
     required String url,

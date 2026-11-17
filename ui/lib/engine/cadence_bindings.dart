@@ -453,6 +453,30 @@ final class CadenceEngine {
         Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32, Float),
         Pointer<Utf8> Function(Pointer<Void>, int, int, int, int,
             double)>('cadence_engine_plugin_param_text_at_value');
+    _pluginParamId = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_id');
+    _pluginParamGroup = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_param_group');
+    _pluginProgramCount = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32),
+        int Function(Pointer<Void>, int, int,
+            int)>('cadence_engine_plugin_program_count');
+    _pluginProgramName = _lib.lookupFunction<
+        Pointer<Utf8> Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        Pointer<Utf8> Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_plugin_program_name');
+    _pluginCurrentProgram = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32),
+        int Function(Pointer<Void>, int, int,
+            int)>('cadence_engine_plugin_current_program');
+    _setPluginProgram = _lib.lookupFunction<
+        Int32 Function(Pointer<Void>, Int64, Int32, Int32, Int32),
+        int Function(Pointer<Void>, int, int, int,
+            int)>('cadence_engine_set_plugin_program');
     _setPluginParamValue = _lib.lookupFunction<
         Int32 Function(Pointer<Void>, Int64, Int32, Int32, Int32, Float),
         int Function(Pointer<Void>, int, int, int, int,
@@ -896,6 +920,15 @@ final class CadenceEngine {
       _pluginParamNumSteps;
   late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int, double)
       _pluginParamTextAtValue;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int)
+      _pluginParamId;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int)
+      _pluginParamGroup;
+  late final int Function(Pointer<Void>, int, int, int) _pluginProgramCount;
+  late final Pointer<Utf8> Function(Pointer<Void>, int, int, int, int)
+      _pluginProgramName;
+  late final int Function(Pointer<Void>, int, int, int) _pluginCurrentProgram;
+  late final int Function(Pointer<Void>, int, int, int, int) _setPluginProgram;
   late final int Function(Pointer<Void>, int, int, int, int, double)
       _setPluginParamValue;
 
@@ -1236,6 +1269,31 @@ final class CadenceEngine {
       _pluginParamTextAtValue(
               _handle, trackId, slotKind, slotIndex, paramIndex, value)
           .toDartString();
+  /// Stable parameter identifier (EZSynth IDs are stable across sessions).
+  String pluginParamId(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamId(_handle, trackId, slotKind, slotIndex, paramIndex)
+          .toDartString();
+  /// UI grouping hint emitted by built-in instruments.
+  String pluginParamGroup(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _pluginParamGroup(_handle, trackId, slotKind, slotIndex, paramIndex)
+          .toDartString();
+  int pluginProgramCount(int trackId, int slotKind, int slotIndex) =>
+      _pluginProgramCount(_handle, trackId, slotKind, slotIndex);
+  String pluginProgramName(
+          int trackId, int slotKind, int slotIndex, int programIndex) =>
+      _pluginProgramName(
+              _handle, trackId, slotKind, slotIndex, programIndex)
+          .toDartString();
+  int pluginCurrentProgram(int trackId, int slotKind, int slotIndex) =>
+      _pluginCurrentProgram(_handle, trackId, slotKind, slotIndex);
+  /// Applies a program/preset. Message thread only.
+  bool setPluginProgram(
+          int trackId, int slotKind, int slotIndex, int programIndex) =>
+      _setPluginProgram(
+              _handle, trackId, slotKind, slotIndex, programIndex) ==
+      CadenceResult.ok;
   /// Sets a normalised (0..1) value on the live plug-in. Message thread only.
   bool setPluginParamValue(int trackId, int slotKind, int slotIndex,
           int paramIndex, double value) =>

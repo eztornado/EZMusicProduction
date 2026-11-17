@@ -10,7 +10,8 @@ import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart' show TrackInfo;
 import '../l10n/l10n.dart';
 import 'plugin_picker_dialog.dart' show showPluginPickerDialog;
-import 'device_editor_dialog.dart' show showDeviceEditorDialog;
+import 'device_editor_dialog.dart'
+    show showDeviceEditorDialog, editTrackInstrument;
 
 Future<void> showChannelSettingsDialog(
     BuildContext context, EngineService service, int trackId) {
@@ -113,7 +114,14 @@ class _ChannelSettingsBodyState extends State<ChannelSettingsBody> {
               onToggleBypass: null,
               onEdit: track.instrumentName.isEmpty
                   ? null
-                  : () => widget.service.openTrackInstrumentEditor(track.id),
+                  : () {
+                      editTrackInstrument(
+                        context,
+                        widget.service,
+                        track.id,
+                        title: track.instrumentName,
+                      );
+                    },
               onRemove: track.instrumentName.isEmpty
                   ? null
                   : () {

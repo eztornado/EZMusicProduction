@@ -163,6 +163,10 @@ class ControllerSettings {
     this.actions = const {},
   });
 
+  // Verified against a physical MiniLab 3: encoders 1..8 emit these CCs in
+  // this exact order, and faders 1..4 emit the second list. The encoders send
+  // absolute values by default (0..127), so relative mode is opt-in for
+  // users who reprogram them in Arturia MIDI Control Center.
   static const defaultEncoderCcs = <int>[74, 71, 76, 77, 93, 18, 19, 16];
   static const defaultFaderCcs = <int>[82, 83, 85, 17];
 

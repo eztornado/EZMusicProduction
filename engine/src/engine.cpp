@@ -13,6 +13,7 @@
 #include "ezutility.h"
 #include "ezinst.h"
 #include "ezsynth.h"
+#include "ezsynth2.h"
 #include "ezorq.h"
 #include "ezdrums.h"
 #include "ezarp.h"
@@ -605,7 +606,7 @@ std::unique_ptr<juce::AudioProcessor> PluginHost::create(
                         ezinst::create());
                 if (b.fileOrIdentifier == "internal:ezsynth")
                     return std::unique_ptr<juce::AudioProcessor>(
-                        ezsynth::create());
+                        ezsynth2::create());
                 if (b.fileOrIdentifier == "internal:ezorq")
                     return std::unique_ptr<juce::AudioProcessor>(
                         ezorq::create());
@@ -772,18 +773,29 @@ private:
 ProjectAudioSource::ProjectAudioSource()
 {
     // Releases retired snapshots on the message thread once the audio
-    // callback is no longer inside them.
-    startTimer(50);
+    // callback is no longer inside them. Headless tools (CLI tests) do not
+    // create a MessageManager; constructing a juce::Timer there would create
+    // a TimerThread that outlives JUCE's event system, so releaseResources()
+    // drains synchronously instead.
+    if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
+    {
+        retireTimer_ = std::make_unique<RetireTimer>(*this);
+        retireTimer_->startTimer(50);
+    }
 }
 
 ProjectAudioSource::~ProjectAudioSource()
 {
-    stopTimer();
+    if (retireTimer_ != nullptr)
+    {
+        retireTimer_->stopTimer();
+        retireTimer_.reset();
+    }
 }
 
-void ProjectAudioSource::timerCallback()
+void ProjectAudioSource::RetireTimer::timerCallback()
 {
-    drainRetiredStates();
+    owner_.drainRetiredStates();
 }
 
 void ProjectAudioSource::retireState(
@@ -927,6 +939,9 @@ void ProjectAudioSource::releaseResources()
     masterBuffer_.setSize(0, 0);
     deviceRate_.store(0.0, std::memory_order_release);
     deviceBlock_.store(0, std::memory_order_release);
+    // No timer means headless callers rely on this explicit drain. It is
+    // safe here because the device has been stopped.
+    drainRetiredStates();
 }
 
 juce::Synthesiser* ProjectAudioSource::getOrCreateSynth(TrackId trackId, double rate)
@@ -5074,7 +5089,7 @@ const char* Engine::aiContextJson(TrackId selectedTrack, double anchorSeconds,
     auto project = std::atomic_load(&project_);
 
     ai::InstrumentCatalog catalog;
-    catalog.ezsynthPresets = ezsynth::presetNamesForCatalog();
+    catalog.ezsynthPresets = ezsynth2::presetNamesForCatalog();
     catalog.ezinstPrograms = ezinst::programNames();
     catalog.ezorqPrograms = ezorq::availablePrograms();
     catalog.ezdrumsKits = ezdrums::availableKitNames();
@@ -5194,9 +5209,9 @@ juce::Result Engine::applyAiArrangement(const juce::String& json)
         FxSlot slot;
         auto synth = [&] (const juce::String& preset) -> bool
         {
-            auto state = ezsynth::makePresetState(preset);
+            auto state = ezsynth2::makePresetState(preset);
             if (state.isEmpty())
-                state = ezsynth::makePresetState("Init");
+                state = ezsynth2::makePresetState("Init");
             if (state.isEmpty())
                 return false;
             slot.name = "EZSynth";
@@ -6875,6 +6890,108 @@ const char* Engine::pluginParamTextAtValue(TrackId trackId, int slotKind,
     return stringOut_.c_str();
 }
 
+const char* Engine::pluginParamId(TrackId trackId, int slotKind,
+                                  int slotIndex, int paramIndex) const
+{
+    stringOut_.clear();
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc != nullptr)
+    {
+        auto id = ezsynth2::parameterIdAt(proc.get(), paramIndex);
+        if (id.isNotEmpty())
+            stringOut_ = id.toStdString();
+        else if (const auto& params = proc->getParameters();
+                 paramIndex >= 0 && paramIndex < (int) params.size())
+            if (auto* p = params[(size_t) paramIndex])
+                stringOut_ = p->getName(64).toStdString();
+    }
+    return stringOut_.c_str();
+}
+
+const char* Engine::pluginParamGroup(TrackId trackId, int slotKind,
+                                     int slotIndex, int paramIndex) const
+{
+    stringOut_.clear();
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc != nullptr)
+        stringOut_ = ezsynth2::parameterGroupAt(proc.get(), paramIndex)
+                         .toStdString();
+    return stringOut_.c_str();
+}
+
+int Engine::pluginProgramCount(TrackId trackId, int slotKind,
+                               int slotIndex) const
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    return proc != nullptr ? proc->getNumPrograms() : 0;
+}
+
+const char* Engine::pluginProgramName(TrackId trackId, int slotKind,
+                                      int slotIndex, int programIndex) const
+{
+    stringOut_.clear();
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc != nullptr && programIndex >= 0
+        && programIndex < proc->getNumPrograms())
+        stringOut_ = proc->getProgramName(programIndex).toStdString();
+    return stringOut_.c_str();
+}
+
+int Engine::pluginCurrentProgram(TrackId trackId, int slotKind,
+                                 int slotIndex) const
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    return proc != nullptr ? proc->getCurrentProgram() : 0;
+}
+
+juce::Result Engine::setPluginProgram(TrackId trackId, int slotKind,
+                                      int slotIndex, int programIndex)
+{
+    std::shared_ptr<juce::AudioProcessor> proc;
+    if (slotKind == 0)
+        proc = transport_->fxProcessorFor(trackId, slotIndex);
+    else if (slotKind == 1)
+        proc = transport_->instrumentProcessorFor(trackId);
+    else if (slotKind == 2)
+        proc = transport_->masterFxProcessorFor(slotIndex);
+    if (proc == nullptr)
+        return fail("plugin not found");
+    if (programIndex < 0 || programIndex >= proc->getNumPrograms())
+        return fail("program not found");
+    proc->setCurrentProgram(programIndex);
+    return juce::Result::ok();
+}
+
 juce::Result Engine::setPluginParamValue(TrackId trackId, int slotKind,
                                          int slotIndex, int paramIndex,
                                          float normalisedValue)
@@ -8246,7 +8363,7 @@ juce::Result Engine::openInstrumentEditor(TrackId trackId, ClipId clipId)
         }
         // EZSynth edits its own track's clips through this context (clip 0
         // = unbound; it can create one at the playhead from its editor).
-        ezsynth::bindHostContext(proc.get(), this, trackId, bound);
+        ezsynth2::bindHostContext(proc.get(), this, trackId, bound);
         const auto key = (std::uint64_t) trackId << 16;
         auto it = editorWindows_.find(key);
         if (it != editorWindows_.end() && it->second.proc != proc)

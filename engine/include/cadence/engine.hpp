@@ -179,8 +179,7 @@ struct TrackAudioNode {
 // Engine owns one live instance driven by the audio device; extra instances
 // can be created for offline pulls (Engine::renderToFile).
 class ProjectAudioSource : public juce::AudioSource,
-                           public juce::AudioPlayHead,
-                           private juce::Timer {
+                           public juce::AudioPlayHead {
 public:
     ProjectAudioSource();
     ~ProjectAudioSource() override;
@@ -368,7 +367,18 @@ private:
     void retireState(std::shared_ptr<const TrackNodeState> state);
     void retireMasterChain(std::shared_ptr<const FxChain> chain);
     void drainRetiredStates();
-    void timerCallback() override;
+    // Only instantiated when a MessageManager exists. Headless CLI tools
+    // must not construct a juce::Timer: its TimerThread outlives the event
+    // system and trips JUCE's shutdown assertions.
+    class RetireTimer final : public juce::Timer
+    {
+    public:
+        explicit RetireTimer(ProjectAudioSource& owner) : owner_(owner) {}
+        void timerCallback() override;
+    private:
+        ProjectAudioSource& owner_;
+    };
+    std::unique_ptr<RetireTimer> retireTimer_;
 
     void enqueuePluginJob(const Track& track, double rate, int maxBlock);
     bool jobQueuedFor(const Track& track, double rate, int maxBlock) const;
@@ -648,6 +658,21 @@ public:
     const char* pluginParamTextAtValue(TrackId trackId, int slotKind,
                                        int slotIndex, int paramIndex,
                                        float normalisedValue) const;
+    // Stable parameter identifier and UI grouping hint. Built-in EZSynth
+    // returns its internal ID/group; other plug-ins fall back to their name.
+    const char* pluginParamId(TrackId trackId, int slotKind, int slotIndex,
+                              int paramIndex) const;
+    const char* pluginParamGroup(TrackId trackId, int slotKind, int slotIndex,
+                                 int paramIndex) const;
+    // Host-visible program list. EZSynth exposes its preset bank here; other
+    // plug-ins keep their own program semantics.
+    int pluginProgramCount(TrackId trackId, int slotKind, int slotIndex) const;
+    const char* pluginProgramName(TrackId trackId, int slotKind,
+                                  int slotIndex, int programIndex) const;
+    int pluginCurrentProgram(TrackId trackId, int slotKind,
+                             int slotIndex) const;
+    juce::Result setPluginProgram(TrackId trackId, int slotKind,
+                                  int slotIndex, int programIndex);
     // Sets a normalised (0..1) parameter value on the live plug-in. Must run
     // on the message thread (host notification may reach the editor).
     juce::Result setPluginParamValue(TrackId trackId, int slotKind,
