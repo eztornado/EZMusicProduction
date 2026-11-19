@@ -1263,6 +1263,35 @@ class AppLocalizationsEs extends AppLocalizations {
   String get prefPluginsIndexedDirs => 'Directorios indexados';
 
   @override
+  String get prefPluginsAddDir => 'Añadir carpeta';
+
+  @override
+  String get prefPluginsAddDirTitle => 'Añadir directorio de plugins';
+
+  @override
+  String get prefPluginsAddDirHelp => 'Escribe una ruta absoluta que contenga plugins VST3. Puedes usar ~ para tu carpeta personal. La carpeta se creará si no existe.';
+
+  @override
+  String get prefPluginsAddDirHint => 'Ruta absoluta o ~/VST3';
+
+  @override
+  String get prefPluginsRemoveDir => 'Quitar carpeta';
+
+  @override
+  String get prefPluginsRestoreDefaults => 'Restaurar predeterminados';
+
+  @override
+  String get prefPluginsDirsChanged => 'Cambios guardados. Pulsa Re-escanear para actualizar la biblioteca.';
+
+  @override
+  String prefPluginsDataDir(String path) {
+    return 'Los ajustes se guardan en $path';
+  }
+
+  @override
+  String get prefPluginsPathEmpty => 'Escribe una ruta.';
+
+  @override
   String get prefPluginsDirsHelp => 'Copia aquí los plugins VST3 (.vst3). El motor recorre estas carpetas y registra lo que encuentra.';
 
   @override

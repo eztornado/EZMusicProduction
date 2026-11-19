@@ -1,5 +1,5 @@
-// Ajustes del modo debug (desarrollo/diagnóstico), persistidos en
-// ~/Music/Cadence/ui_settings.json.
+// Ajustes del modo debug (desarrollo/diagnóstico), persistidos en el
+// ui_settings.json de la configuración por plataforma.
 //
 // Es configuración SOLO de interfaz: el motor no lee este fichero. El modo
 // debug añade el botón Debug a la barra superior y activa el registro de
@@ -9,6 +9,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+
+import '../app_paths.dart';
 
 class DebugSettings {
   DebugSettings._();
@@ -25,11 +27,9 @@ class DebugSettings {
 
   static File get file {
     if (_override != null) return _override!;
-    _file ??= File('${_home()}/Music/Cadence/ui_settings.json');
+    _file ??= cadenceConfigFile('ui_settings.json');
     return _file!;
   }
-
-  static String _home() => Platform.environment['HOME'] ?? '.';
 
   /// El modo debug está apagado por defecto.
   static bool enabled = false;

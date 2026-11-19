@@ -1,6 +1,6 @@
 // Project dialogs (§5 toolbar): Guardar-como (name input) and Abrir
-// (list of .ezmpp files under ~/Music/Cadence/Projects). Native file
-// pickers would need CocoaPods plugins, which this machine avoids.
+// (list of .ezmpp files under the platform projects folder). Native file
+// pickers would need platform plugins, which this build avoids.
 // The editor is EZMusicProduction: project files are .ezmpp.
 
 import 'dart:io';
@@ -13,8 +13,6 @@ import 'package:cadence_ui/generated/version.dart';
 import '../engine/engine_service.dart';
 import '../l10n/l10n.dart';
 import 'app_alert.dart';
-
-const String kProjectsDir = '/Users/ivan/Music/EZMusicProduction/Projects';
 
 Future<void> showSaveAsDialog(BuildContext context, EngineService service) {
   final controller = TextEditingController(

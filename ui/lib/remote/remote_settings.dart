@@ -1,5 +1,5 @@
-// Ajustes del control remoto (app compañera por LAN), persistidos en
-// ~/Music/Cadence/ui_settings.json.
+// Ajustes del control remoto (app compañera por LAN), persistidos en el
+// ui_settings.json de la configuración por plataforma.
 //
 // Igual que el idioma, es configuración SOLO de interfaz: el motor no lee
 // este fichero. El token se guarda para que el código de emparejamiento sea
@@ -8,6 +8,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+
+import '../app_paths.dart';
 
 /// Valores por defecto del servidor de control remoto.
 const int kDefaultRemotePort = 47823;
@@ -27,11 +29,9 @@ class RemoteSettings {
 
   static File get file {
     if (_override != null) return _override!;
-    _file ??= File('${_home()}/Music/Cadence/ui_settings.json');
+    _file ??= cadenceConfigFile('ui_settings.json');
     return _file!;
   }
-
-  static String _home() => Platform.environment['HOME'] ?? '.';
 
   /// El control remoto está apagado por defecto: es un servidor de red y
   /// nadie debe poder controlar la DAW sin activarlo expresamente.
@@ -74,7 +74,8 @@ class RemoteSettings {
   static void save({bool? enabled, int? port, String? token}) {
     if (enabled != null) RemoteSettings.enabled = enabled;
     if (port != null) {
-      RemoteSettings.port = port > 0 && port <= 65535 ? port : kDefaultRemotePort;
+      RemoteSettings.port =
+          port > 0 && port <= 65535 ? port : kDefaultRemotePort;
     }
     if (token != null) RemoteSettings.token = token.trim();
     try {

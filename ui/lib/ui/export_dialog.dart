@@ -6,11 +6,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../app_paths.dart';
 import '../engine/engine_service.dart';
 import '../l10n/l10n.dart';
 import 'app_alert.dart';
-
-const String kExportsDir = '/Users/ivan/Music/EZMusicProduction/Exports';
 
 Future<void> showExportDialog(BuildContext context, EngineService service) {
   final projectName = service.lastProjectPath != null
@@ -46,9 +45,9 @@ class _ExportBodyState extends State<_ExportBody> {
   Future<void> _export() async {
     final safe = _name.text.trim().replaceAll(RegExp(r'[/:\\]'), '-');
     if (safe.isEmpty) return;
-    final dir = Directory(kExportsDir);
+    final dir = cadenceExportsDirectory();
     if (!dir.existsSync()) dir.createSync(recursive: true);
-    final path = '${dir.path}/$safe.wav';
+    final path = '${dir.path}${Platform.pathSeparator}$safe.wav';
     setState(() => _exporting = true);
     // Let the dialog paint the "exporting" state before the blocking render.
     await Future<void>.delayed(Duration.zero);
@@ -63,6 +62,17 @@ class _ExportBodyState extends State<_ExportBody> {
       _exporting = false;
       _donePath = path;
     });
+  }
+
+  Future<void> _openExportsFolder() async {
+    final path = cadenceExportsDirectory().path;
+    if (Platform.isMacOS) {
+      await Process.run('open', [path]);
+    } else if (Platform.isWindows) {
+      await Process.run('explorer', [path]);
+    } else {
+      await Process.run('xdg-open', [path]);
+    }
   }
 
   @override
@@ -87,8 +97,7 @@ class _ExportBodyState extends State<_ExportBody> {
                         fontSize: 10, color: Color(0xFF9BA1AE))),
                 const SizedBox(height: 8),
                 OutlinedButton(
-                  onPressed: () =>
-                      Process.run('open', [kExportsDir]),
+                  onPressed: _openExportsFolder,
                   child: Text(context.l10n.exportOpenFolder),
                 ),
               ])

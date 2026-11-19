@@ -9,6 +9,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../app_paths.dart';
+
 const String kDefaultAiBaseUrl = 'https://openrouter.ai/api/v1';
 const String kDefaultAiModel = 'openai/gpt-4.1-mini';
 const double kDefaultAiTemperature = 0.8;
@@ -37,17 +39,15 @@ class AiSettings {
 
   static File get file {
     if (_overrideFile != null) return _overrideFile!;
-    _file ??= File('${_home()}/Music/Cadence/ui_settings.json');
+    _file ??= cadenceConfigFile('ui_settings.json');
     return _file!;
   }
 
   static File get credentialsFile {
     if (_overrideCredentials != null) return _overrideCredentials!;
-    _credentials ??= File('${_home()}/Music/Cadence/ai_credentials.json');
+    _credentials ??= cadenceConfigFile('ai_credentials.json');
     return _credentials!;
   }
-
-  static String _home() => Platform.environment['HOME'] ?? '.';
 
   static String baseUrl = kDefaultAiBaseUrl;
   static String model = kDefaultAiModel;

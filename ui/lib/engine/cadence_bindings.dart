@@ -198,6 +198,10 @@ final class CadenceEngine {
         double Function(Pointer<Void>)>('cadence_engine_record_start_seconds');
     _setDebugLoopback = _lib.lookupFunction<Void Function(Int32),
         void Function(int)>('cadence_engine_set_debug_loopback');
+    _setPluginSearchPaths = _lib.lookupFunction<
+        Void Function(Pointer<Void>, Pointer<Utf8>),
+        void Function(Pointer<Void>, Pointer<Utf8>)>(
+        'cadence_engine_set_plugin_search_paths');
     _rescanPlugins = _lib.lookupFunction<Void Function(Pointer<Void>),
         void Function(Pointer<Void>)>('cadence_engine_rescan_plugins');
     _scanPluginsNow = _lib.lookupFunction<Void Function(Pointer<Void>),
@@ -759,6 +763,7 @@ final class CadenceEngine {
   late final int Function(Pointer<Void>, int) _trackType;
   late final void Function(Pointer<Void>, int) _selectMidiInput;
   late final void Function(Pointer<Void>, int) _setMetronome;
+  late final void Function(Pointer<Void>, Pointer<Utf8>) _setPluginSearchPaths;
   late final void Function(Pointer<Void>) _rescanPlugins;
   late final void Function(Pointer<Void>) _scanPluginsNow;
   late final int Function(Pointer<Void>) _pluginScanActive;
@@ -1595,6 +1600,9 @@ final class CadenceEngine {
 
   // ---- plugins (§7.7) ----
 
+  void setPluginSearchPaths(List<String> paths) =>
+      _withUtf8(paths.join('\n'),
+          (p) => _setPluginSearchPaths(_handle, p));
   void rescanPlugins() => _rescanPlugins(_handle);
   void scanPluginsNow() => _scanPluginsNow(_handle);
   bool get pluginScanActive => _pluginScanActive(_handle) != 0;

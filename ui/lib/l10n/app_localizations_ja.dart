@@ -1263,6 +1263,35 @@ class AppLocalizationsJa extends AppLocalizations {
   String get prefPluginsIndexedDirs => '索引するフォルダー';
 
   @override
+  String get prefPluginsAddDir => 'フォルダーを追加';
+
+  @override
+  String get prefPluginsAddDirTitle => 'プラグインフォルダーを追加';
+
+  @override
+  String get prefPluginsAddDirHelp => 'VST3 プラグインを含む絶対パスを入力してください。ホームフォルダーは ~ で指定できます。フォルダーが存在しない場合は作成されます。';
+
+  @override
+  String get prefPluginsAddDirHint => '絶対パスまたは ~/VST3';
+
+  @override
+  String get prefPluginsRemoveDir => 'フォルダーを削除';
+
+  @override
+  String get prefPluginsRestoreDefaults => 'デフォルトに戻す';
+
+  @override
+  String get prefPluginsDirsChanged => '変更を保存しました。ライブラリを更新するには再スキャンを押してください。';
+
+  @override
+  String prefPluginsDataDir(String path) {
+    return '設定の保存先: $path';
+  }
+
+  @override
+  String get prefPluginsPathEmpty => 'パスを入力してください。';
+
+  @override
   String get prefPluginsDirsHelp => 'VST3 プラグイン（.vst3）をここに置いてください。エンジンがこれらのフォルダーを走査して登録します。';
 
   @override

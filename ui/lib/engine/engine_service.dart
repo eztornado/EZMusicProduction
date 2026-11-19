@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../app_paths.dart';
 import 'cadence_bindings.dart';
 import 'cubase/cpr_reader.dart';
 import 'project_snapshot.dart';
@@ -243,8 +244,7 @@ class MixAnalysisSnapshot {
       );
 }
 
-const String kDefaultProjectsDir =
-    '/Users/ivan/Music/EZMusicProduction/Projects';
+String get kDefaultProjectsDir => cadenceProjectsDirectory().path;
 
 class EngineService extends ChangeNotifier {
   /// Sub-windows: attaches to the MAIN window's engine (same process, same
@@ -1422,6 +1422,15 @@ class EngineService extends ChangeNotifier {
     refreshPluginList();
   }
 
+  /// Applies the user-editable VST3 folder list. The engine filters its cache
+  /// immediately, so a removed folder disappears from the picker even before
+  /// the next scan.
+  void setPluginSearchDirectories(Iterable<String> paths) {
+    _engine.setPluginSearchPaths(paths.toList(growable: false));
+    if (_pluginsScanned) refreshPluginList();
+    notifyListeners();
+  }
+
   void addTrackFx(int trackId, int pluginIndex) {
     _engine.trackAddFx(trackId, pluginIndex);
     refresh();
@@ -1553,11 +1562,24 @@ class EngineService extends ChangeNotifier {
   // ---- Biblioteca de sonidos (catálogo CC descargable) ----
 
   String libraryDir() {
-    final home = Platform.environment['HOME'] ?? '.';
-    return '$home/Music/EZMusicProduction/Library';
+    final sep = Platform.pathSeparator;
+    final modern =
+        Directory('${cadenceDataDirectory().path}${sep}Library');
+    final home = Platform.isWindows
+        ? (Platform.environment['USERPROFILE'] ?? '')
+        : (Platform.environment['HOME'] ?? '');
+    if (home.isNotEmpty) {
+      final legacy =
+          Directory('$home${sep}Music${sep}EZMusicProduction${sep}Library');
+      if (!modern.existsSync() && legacy.existsSync()) {
+        return legacy.path;
+      }
+    }
+    return modern.path;
   }
 
-  File _libraryStateFile() => File('${libraryDir()}/library_state.json');
+  File _libraryStateFile() =>
+      File('${libraryDir()}${Platform.pathSeparator}library_state.json');
 
   Map<String, dynamic> libraryState() {
     final f = _libraryStateFile();
@@ -1747,8 +1769,8 @@ class EngineService extends ChangeNotifier {
 
   // ---- recording (§7.11) ----
 
-  static const String defaultSettingsPath =
-      '/Users/ivan/Music/Cadence/settings.json';
+  static String get defaultSettingsPath =>
+      cadenceConfigFile('settings.json').path;
 
   bool get isRecording => _engine.isRecording;
   double get recordStartSeconds => _engine.recordStartSeconds;
@@ -2351,10 +2373,9 @@ class EngineService extends ChangeNotifier {
         .trim()
         .replaceAll(RegExp(r'[/:\\]'), '-');
     if (safe.isEmpty) return L10n.current.serviceProjectNeedsName;
-    final dir = inDir ??
-        Directory('/Users/ivan/Music/EZMusicProduction/Projects');
+    final dir = inDir ?? cadenceProjectsDirectory();
     if (!dir.existsSync()) dir.createSync(recursive: true);
-    final path = '${dir.path}/$safe.ezmpp';
+    final path = '${dir.path}${Platform.pathSeparator}$safe.ezmpp';
     final result = _engine.saveProject(path);
     if (result != CadenceResult.ok) return _engine.lastError;
     lastProjectPath = path;

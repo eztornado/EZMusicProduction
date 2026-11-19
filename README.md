@@ -239,6 +239,23 @@ Copy the engine DLL next to the executable:
 copy build\engine\Release\cadence_engine.dll ui\build\windows\x64\runner\Release\
 ```
 
+### Persistent data and plugin folders
+
+The app is portable, but settings are never written next to the executable.
+On first launch it creates the native per-user folders and migrates the old
+`~/Music/Cadence` settings when present:
+
+| Platform | Settings / cache | App-managed VST3 folder | Projects |
+| --- | --- | --- | --- |
+| macOS | `~/Library/Cadence` | `~/Library/Cadence/Plugins/VST3` | `~/Music/EZMusicProduction/Projects` |
+| Windows | `%APPDATA%\Cadence` | `%LOCALAPPDATA%\Cadence\Plugins\VST3` | `%USERPROFILE%\Music\EZMusicProduction\Projects` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/Cadence` | `${XDG_DATA_HOME:-~/.local/share}/Cadence/Plugins/VST3` | `~/Music/EZMusicProduction/Projects` |
+
+Preferences → Plugins lists the indexed VST3 folders. Folders can be added,
+removed and restored to defaults; the list is saved in `plugin_directories.json`
+inside the settings folder. The engine scans only that list, and its plugin
+cache is pruned when a folder is removed.
+
 ### Tests and CLI
 
 ```bash

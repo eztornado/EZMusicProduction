@@ -545,6 +545,9 @@ CADENCE_API int cadence_engine_track_input_channel(CadenceEngine* engine, Cadenc
 
 /* ---- plugins (§7.7): VST3 + AudioUnit ---- */
 
+/* Folders walked by the VST3 scanner, newline-separated UTF-8. An empty/null
+   string restores JUCE's default locations. AudioUnit discovery is unchanged. */
+CADENCE_API void cadence_engine_set_plugin_search_paths(CadenceEngine* engine, const char* paths);
 CADENCE_API void cadence_engine_rescan_plugins(CadenceEngine* engine);
 CADENCE_API void cadence_engine_scan_plugins_now(CadenceEngine* engine);
 CADENCE_API int cadence_engine_plugin_scan_active(CadenceEngine* engine);

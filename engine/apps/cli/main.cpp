@@ -3323,8 +3323,10 @@ int cmdPlugTest(const char* spec, bool asInstrument, bool demoVariant,
 
     cadence::Engine engine;
     if (demoVariant)
-        engine.loadDeviceSettings(juce::File(
-            "/Users/ivan/Music/Cadence/settings.json")); // app-identical device
+        engine.loadDeviceSettings(
+            juce::File::getSpecialLocation(
+                juce::File::userApplicationDataDirectory)
+                .getChildFile("Cadence/settings.json")); // app-identical device
     if (engine.initialise().failed())
     {
         std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());

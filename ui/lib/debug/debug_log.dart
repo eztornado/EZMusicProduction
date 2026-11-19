@@ -13,6 +13,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../app_paths.dart';
 import 'debug_settings.dart';
 
 class DebugLog {
@@ -33,11 +34,9 @@ class DebugLog {
 
   static File get file {
     if (_override != null) return _override!;
-    _file ??= File('${_home()}/Music/Cadence/debug.log');
+    _file ??= cadenceConfigFile('debug.log');
     return _file!;
   }
-
-  static String _home() => Platform.environment['HOME'] ?? '.';
 
   /// Activa o desactiva la captura global de debugPrint según el ajuste.
   static void configure() {

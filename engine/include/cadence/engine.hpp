@@ -92,6 +92,11 @@ public:
     void scanNow();   // blocking full scan (message thread; CLI/tests)
     bool scanActive() const { return scanning_.load(); }
 
+    // Replaces the VST3 folders walked by the next scan. Empty restores the
+    // JUCE defaults. Removes cached VST3 entries that no longer live under a
+    // selected folder so the picker cannot offer uninstalled plugins.
+    void setSearchPaths(const juce::StringArray& paths);
+
     int pluginCount() const;
     int builtinCount() const { return (int) builtins_.size(); }
     std::unique_ptr<juce::PluginDescription> descriptionAt(int index) const;
@@ -102,6 +107,7 @@ public:
 private:
     void handleAsyncUpdate() override;
     void buildScanners();
+    void pruneKnownOutsideSearchPaths();
     bool scanStep(); // scans one file; false when every format is exhausted
     void mergeNewTypes();
     void saveCache() const;
@@ -113,6 +119,7 @@ private:
     juce::KnownPluginList known_;
     std::unique_ptr<juce::KnownPluginList> scanList_;
     std::vector<std::unique_ptr<juce::PluginDirectoryScanner>> scanners_;
+    juce::StringArray searchPaths_; // empty = JUCE defaults
     size_t scannerIndex_ = 0;
     std::atomic<bool> scanning_ {false};
     std::atomic<juce::uint64> stepDeadline_ {0}; // watchdog deadline, ms clock
@@ -560,6 +567,7 @@ public:
     void rescanPlugins();
     void scanPluginsNow(); // blocking (message thread); CLI/tests
     bool pluginScanActive() const;
+    void setPluginSearchPaths(const juce::StringArray& paths);
 
     // ---- plugin editor windows (§7.7) ----
     // Each open editor is a native window around the plugin's own editor

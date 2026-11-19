@@ -2413,6 +2413,60 @@ abstract class AppLocalizations {
   /// **'Directorios indexados'**
   String get prefPluginsIndexedDirs;
 
+  /// No description provided for @prefPluginsAddDir.
+  ///
+  /// In es, this message translates to:
+  /// **'Añadir carpeta'**
+  String get prefPluginsAddDir;
+
+  /// No description provided for @prefPluginsAddDirTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Añadir directorio de plugins'**
+  String get prefPluginsAddDirTitle;
+
+  /// No description provided for @prefPluginsAddDirHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Escribe una ruta absoluta que contenga plugins VST3. Puedes usar ~ para tu carpeta personal. La carpeta se creará si no existe.'**
+  String get prefPluginsAddDirHelp;
+
+  /// No description provided for @prefPluginsAddDirHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Ruta absoluta o ~/VST3'**
+  String get prefPluginsAddDirHint;
+
+  /// No description provided for @prefPluginsRemoveDir.
+  ///
+  /// In es, this message translates to:
+  /// **'Quitar carpeta'**
+  String get prefPluginsRemoveDir;
+
+  /// No description provided for @prefPluginsRestoreDefaults.
+  ///
+  /// In es, this message translates to:
+  /// **'Restaurar predeterminados'**
+  String get prefPluginsRestoreDefaults;
+
+  /// No description provided for @prefPluginsDirsChanged.
+  ///
+  /// In es, this message translates to:
+  /// **'Cambios guardados. Pulsa Re-escanear para actualizar la biblioteca.'**
+  String get prefPluginsDirsChanged;
+
+  /// No description provided for @prefPluginsDataDir.
+  ///
+  /// In es, this message translates to:
+  /// **'Los ajustes se guardan en {path}'**
+  String prefPluginsDataDir(String path);
+
+  /// No description provided for @prefPluginsPathEmpty.
+  ///
+  /// In es, this message translates to:
+  /// **'Escribe una ruta.'**
+  String get prefPluginsPathEmpty;
+
   /// No description provided for @prefPluginsDirsHelp.
   ///
   /// In es, this message translates to:

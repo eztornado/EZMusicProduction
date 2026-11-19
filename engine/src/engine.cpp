@@ -460,8 +460,80 @@ void PluginHost::scanNow()
     saveCache();
 }
 
+void PluginHost::setSearchPaths(const juce::StringArray& paths)
+{
+    juce::StringArray normalized;
+    for (auto path : paths)
+    {
+        path = path.trim();
+        if (path.isEmpty())
+            continue;
+        const juce::File file(juce::File::isAbsolutePath(path)
+                                  ? path
+                                  : juce::File::getCurrentWorkingDirectory()
+                                        .getChildFile(path));
+        normalized.addIfNotAlreadyThere(file.getFullPathName());
+    }
+
+    if (normalized == searchPaths_)
+        return;
+
+    searchPaths_ = std::move(normalized);
+    // If a scan is already running, the next buildScanners() will prune the
+    // cache before seeding the scanner. Doing it here too keeps the picker
+    // accurate immediately after the user removes a folder.
+    if (!scanning_.load(std::memory_order_relaxed))
+    {
+        pruneKnownOutsideSearchPaths();
+        saveCache();
+    }
+}
+
+void PluginHost::pruneKnownOutsideSearchPaths()
+{
+    // Empty means "use the format defaults"; the cache is intentionally left
+    // alone so switching back to defaults does not discard known plugins.
+    if (searchPaths_.isEmpty())
+        return;
+
+    std::vector<juce::PluginDescription> keep;
+    {
+        std::lock_guard<std::mutex> lock(knownMutex_);
+        for (int i = 0; i < known_.getNumTypes(); ++i)
+        {
+            const auto* desc = known_.getType(i);
+            if (desc == nullptr)
+                continue;
+
+            const bool isVst = desc->pluginFormatName.equalsIgnoreCase("VST3")
+                            || desc->pluginFormatName.equalsIgnoreCase("VST");
+            if (!isVst)
+            {
+                keep.push_back(*desc); // AU/system formats have no folder list
+                continue;
+            }
+
+            const juce::File file(desc->fileOrIdentifier);
+            bool inside = false;
+            for (const auto& dir : searchPaths_)
+                if (file.isAChildOf(juce::File(dir)))
+                {
+                    inside = true;
+                    break;
+                }
+            if (inside)
+                keep.push_back(*desc);
+        }
+
+        known_.clear();
+        for (const auto& desc : keep)
+            known_.addType(desc);
+    }
+}
+
 void PluginHost::buildScanners()
 {
+    pruneKnownOutsideSearchPaths();
     scanList_ = std::make_unique<juce::KnownPluginList>();
     // Seed with everything already known (cache + this session's merges):
     // with dontRescanIfAlreadyInList the scanner skips those files, so
@@ -477,11 +549,24 @@ void PluginHost::buildScanners()
     for (auto* format : formatManager_.getFormats())
     {
         // The scanner resolves the search paths itself (it calls
-        // searchPathsForPlugins internally) — pass the raw default locations,
-        // NOT the resolved plugin file list.
+        // searchPathsForPlugins internally) — pass folders, NOT the resolved
+        // plugin file list. VST3/VST use the user list; AudioUnit keeps the
+        // system registry/default locations (AUs are not folder-scanned).
+        const bool folderFormat =
+            format->getName().containsIgnoreCase("VST3")
+            || format->getName().equalsIgnoreCase("VST");
+        juce::FileSearchPath searchPaths;
+        if (folderFormat && !searchPaths_.isEmpty())
+        {
+            for (const auto& path : searchPaths_)
+                searchPaths.add(juce::File(path));
+        }
+        else
+        {
+            searchPaths = format->getDefaultLocationsToSearch();
+        }
         scanners_.push_back(std::make_unique<juce::PluginDirectoryScanner>(
-            *scanList_, *format, format->getDefaultLocationsToSearch(), true,
-            deadMansPedalFile_));
+            *scanList_, *format, searchPaths, true, deadMansPedalFile_));
     }
 }
 
@@ -8302,6 +8387,11 @@ void Engine::rescanPlugins()
 void Engine::scanPluginsNow()
 {
     runOnMessageThread([this] { pluginHost_.scanNow(); });
+}
+
+void Engine::setPluginSearchPaths(const juce::StringArray& paths)
+{
+    runOnMessageThread([this, paths] { pluginHost_.setSearchPaths(paths); });
 }
 
 juce::Result Engine::openPluginEditor(TrackId trackId, int slotIndex)

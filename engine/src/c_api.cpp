@@ -1573,6 +1573,23 @@ void cadence_engine_set_debug_loopback(int enabled)
     cadence::Engine::setDebugLoopback(enabled != 0);
 }
 
+void cadence_engine_set_plugin_search_paths(CadenceEngine* engine, const char* paths)
+{
+    if (engine == nullptr)
+        return;
+    juce::StringArray list;
+    if (paths != nullptr)
+    {
+        for (auto line : juce::StringArray::fromLines(juce::String::fromUTF8(paths)))
+        {
+            line = line.trim();
+            if (line.isNotEmpty())
+                list.add(line);
+        }
+    }
+    asEngine(engine)->setPluginSearchPaths(list);
+}
+
 void cadence_engine_rescan_plugins(CadenceEngine* engine)
 {
     if (engine != nullptr)

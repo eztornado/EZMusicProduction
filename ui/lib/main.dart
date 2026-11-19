@@ -13,8 +13,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'app_paths.dart';
 import 'controller/controller_service.dart';
 import 'engine/engine_service.dart';
+import 'engine/plugin_directories.dart';
 import 'l10n/l10n.dart';
 import 'l10n/locale_store.dart';
 import 'remote/remote_settings.dart';
@@ -40,8 +42,12 @@ import 'ui/timeline_view.dart';
 import 'ui/transport_bar.dart';
 
 Future<void> main(List<String> args) async {
-  // Idioma elegido en Preferencias (~/Music/Cadence/ui_settings.json). Cada
-  // ventana es un proceso aparte, asi que lo lee tambien la principal.
+  // Datos persistentes por plataforma (configuración, plugins propios,
+  // proyectos y exportaciones). También migra ajustes antiguos de
+  // ~/Music/Cadence la primera vez.
+  ensureCadenceDirectories();
+  // Idioma elegido en Preferencias. Cada ventana es un proceso aparte, asi
+  // que lo lee tambien la principal.
   LocaleStore.load();
   // Preferencias del control remoto (mismo fichero de interfaz). Solo la
   // ventana principal arranca el servidor; las sub-ventanas comparten motor.
@@ -473,6 +479,12 @@ class _HomePageState extends State<HomePage>
     if (service == null) return;
 
     service.loadDeviceSettings(); // may be absent on first run
+    // The plugin folders are user-editable and persisted. Apply them before
+    // the first scan so a custom list is never silently replaced by defaults.
+    final pluginDirs = PluginDirectoryStore().load();
+    service.setPluginSearchDirectories([
+      for (final dir in pluginDirs) dir.path,
+    ]);
     // The audio device opens lazily on the first play/record call.
     // The project starts EMPTY: open yours with Abrir (⌘O).
     service.updateWindowTitle();

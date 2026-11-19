@@ -17,6 +17,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../app_paths.dart';
 import '../engine/cadence_bindings.dart';
 import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart';
@@ -183,10 +184,8 @@ class ControllerSettings {
         softTakeover: true,
       );
 
-  static File get file {
-    final home = Platform.environment['HOME'] ?? '.';
-    return File('$home/Music/Cadence/controller_settings.json');
-  }
+  static File get file =>
+      cadenceConfigFile('controller_settings.json');
 
   static ControllerSettings load({File? from}) {
     final source = from ?? file;

@@ -1263,6 +1263,35 @@ class AppLocalizationsEn extends AppLocalizations {
   String get prefPluginsIndexedDirs => 'Indexed folders';
 
   @override
+  String get prefPluginsAddDir => 'Add folder';
+
+  @override
+  String get prefPluginsAddDirTitle => 'Add plugin folder';
+
+  @override
+  String get prefPluginsAddDirHelp => 'Enter an absolute folder that contains VST3 plugins. You can use ~ for your home folder. The folder is created if it does not exist.';
+
+  @override
+  String get prefPluginsAddDirHint => 'Absolute path or ~/VST3';
+
+  @override
+  String get prefPluginsRemoveDir => 'Remove folder';
+
+  @override
+  String get prefPluginsRestoreDefaults => 'Restore defaults';
+
+  @override
+  String get prefPluginsDirsChanged => 'Changes saved. Press Rescan to update the library.';
+
+  @override
+  String prefPluginsDataDir(String path) {
+    return 'Settings are stored in $path';
+  }
+
+  @override
+  String get prefPluginsPathEmpty => 'Enter a path.';
+
+  @override
   String get prefPluginsDirsHelp => 'Install VST3 plugins (.vst3) here. The engine walks these folders and registers what it finds.';
 
   @override
