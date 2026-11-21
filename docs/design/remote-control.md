@@ -128,7 +128,7 @@ Respuesta correcta:
       "requiresToken": true,
       "protocol": 1,
       "projectName": "Mi canción",
-      "capabilities": ["transport", "timeline", "mixer", "fx", "automation", "meters", "plugins"]
+      "capabilities": ["transport", "timeline", "mixer", "fx", "automation", "meters", "plugins", "pluginParams", "programs"]
     },
     "state": { "...": "ver §7" },
     "transport": { "...": "ver §8.2" }
@@ -277,8 +277,9 @@ desplazamiento dentro del material fuente del clip.
 | Comando | Campos | Resultado |
 | --- | --- | --- |
 | `plugins.list` | — | Lista `[{index, name, isInstrument, format}]`. |
-| `fx.params` | `trackId`, `slotKind`, `slotIndex` | `{slotKind, slotIndex, params:[{index, name, value, text}]}`. |
+| `fx.params` | `trackId`, `slotKind`, `slotIndex` | `{slotKind, slotIndex, params:[{index, name, value, text, id, group, flags, default, steps, choices?}], programs?, currentProgram?}`. |
 | `fx.setParam` | `trackId`, `slotKind`, `slotIndex`, `paramIndex`, `value` (0..1) | `{value, text}`. |
+| `fx.setProgram` | `trackId`, `slotKind`, `slotIndex`, `programIndex` | `{program, name}`. |
 | `fx.setBypass` | `trackId`, `slotIndex`, `bypass` | `{revision}`. |
 | `fx.remove` | `trackId`, `slotIndex` | `{revision}`. |
 | `fx.add` | `trackId`, `pluginIndex` | `{revision}`. |
@@ -290,13 +291,29 @@ desplazamiento dentro del material fuente del clip.
 
 - `0` = FX insert de la pista.
 - `1` = instrumento de la pista.
+- `2` = insert del master (usa `trackId: 0`).
 
 Los valores de parámetro son **normalizados** (0..1), no unidades del plugin.
 `text` es la representación legible que muestra el propio plugin (por ejemplo
 `3.5 dB`). `plugins.list` usa el mismo índice que `fx.add`/`fx.master.add`.
 
-`fx.setParam` no crea entrada de undo: es un ajuste continuo pensado para
-perillas y sliders remotos.
+`fx.params` incluye metadatos para que un cliente remoto pueda dibujar la
+interfaz del dispositivo sin abrir su editor nativo:
+
+- `id`: identificador estable del parámetro (el nombre en plugins externos).
+- `group`: página o sección de la interfaz (`global`, `a`, `b`, `filter`,
+  `env`, `fx`, `arp`, `macro`, …). Los plugins externos pueden devolverlo vacío.
+- `flags`: bit 1 = booleano, bit 2 = elección, bit 4 = entero.
+- `default`: valor normalizado por defecto.
+- `steps`: número de pasos para booleanos, elecciones y enteros.
+- `choices`: etiquetas legibles para booleanos y elecciones.
+- `programs` y `currentProgram`: banco de presets y preset activo cuando el
+  plugin los expone (EZSynth publica aquí su banco).
+
+`fx.setParam` y `fx.setProgram` no crean entrada de undo: son ajustes de
+interpretación pensados para perillas, sliders y selectores de preset remotos.
+El cliente debe refrescar `fx.params` después de aplicar un programa porque sus
+valores pueden cambiar en bloque.
 
 ### 6.7 Automatización
 

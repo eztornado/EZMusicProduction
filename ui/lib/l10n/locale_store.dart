@@ -1,4 +1,5 @@
-// Idioma de la interfaz, persistido en ~/Music/Cadence/ui_settings.json.
+// Idioma de la interfaz, persistido en la configuración de la app
+// (~/Library/Cadence, %APPDATA%\Cadence o ~/.config/Cadence).
 //
 // Es un fichero SOLO de interfaz (el motor tiene el suyo, settings.json, con
 // audio/MIDI): asi cambiar de idioma nunca puede romper la configuracion de
@@ -7,6 +8,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+
+import '../app_paths.dart';
 
 /// Idioma activo. Cambiarlo reconstruye los MaterialApp (ValueListenableBuilder).
 final ValueNotifier<Locale?> appLocale = ValueNotifier<Locale?>(null);
@@ -24,7 +27,7 @@ class LocaleStore {
   static File? _file;
   static File? _override;
 
-  /// Solo para tests: usa otro fichero en vez de ~/Music/Cadence/ui_settings.json.
+  /// Solo para tests: usa otro fichero en vez del ui_settings.json habitual.
   @visibleForTesting
   static void overrideFile(File? f) {
     _override = f;
@@ -33,11 +36,9 @@ class LocaleStore {
 
   static File get file {
     if (_override != null) return _override!;
-    _file ??= File('${_home()}/Music/Cadence/ui_settings.json');
+    _file ??= cadenceConfigFile('ui_settings.json');
     return _file!;
   }
-
-  static String _home() => Platform.environment['HOME'] ?? '.';
 
   /// Lee el idioma guardado. Si no hay nada (o el fichero esta roto) deja
   /// "seguir al sistema". Se llama al arrancar, en TODOS los procesos: la

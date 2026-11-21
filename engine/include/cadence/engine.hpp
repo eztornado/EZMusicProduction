@@ -92,6 +92,11 @@ public:
     void scanNow();   // blocking full scan (message thread; CLI/tests)
     bool scanActive() const { return scanning_.load(); }
 
+    // Replaces the VST3 folders walked by the next scan. Empty restores the
+    // JUCE defaults. Removes cached VST3 entries that no longer live under a
+    // selected folder so the picker cannot offer uninstalled plugins.
+    void setSearchPaths(const juce::StringArray& paths);
+
     int pluginCount() const;
     int builtinCount() const { return (int) builtins_.size(); }
     std::unique_ptr<juce::PluginDescription> descriptionAt(int index) const;
@@ -102,6 +107,7 @@ public:
 private:
     void handleAsyncUpdate() override;
     void buildScanners();
+    void pruneKnownOutsideSearchPaths();
     bool scanStep(); // scans one file; false when every format is exhausted
     void mergeNewTypes();
     void saveCache() const;
@@ -113,6 +119,7 @@ private:
     juce::KnownPluginList known_;
     std::unique_ptr<juce::KnownPluginList> scanList_;
     std::vector<std::unique_ptr<juce::PluginDirectoryScanner>> scanners_;
+    juce::StringArray searchPaths_; // empty = JUCE defaults
     size_t scannerIndex_ = 0;
     std::atomic<bool> scanning_ {false};
     std::atomic<juce::uint64> stepDeadline_ {0}; // watchdog deadline, ms clock
@@ -179,8 +186,7 @@ struct TrackAudioNode {
 // Engine owns one live instance driven by the audio device; extra instances
 // can be created for offline pulls (Engine::renderToFile).
 class ProjectAudioSource : public juce::AudioSource,
-                           public juce::AudioPlayHead,
-                           private juce::Timer {
+                           public juce::AudioPlayHead {
 public:
     ProjectAudioSource();
     ~ProjectAudioSource() override;
@@ -368,7 +374,18 @@ private:
     void retireState(std::shared_ptr<const TrackNodeState> state);
     void retireMasterChain(std::shared_ptr<const FxChain> chain);
     void drainRetiredStates();
-    void timerCallback() override;
+    // Only instantiated when a MessageManager exists. Headless CLI tools
+    // must not construct a juce::Timer: its TimerThread outlives the event
+    // system and trips JUCE's shutdown assertions.
+    class RetireTimer final : public juce::Timer
+    {
+    public:
+        explicit RetireTimer(ProjectAudioSource& owner) : owner_(owner) {}
+        void timerCallback() override;
+    private:
+        ProjectAudioSource& owner_;
+    };
+    std::unique_ptr<RetireTimer> retireTimer_;
 
     void enqueuePluginJob(const Track& track, double rate, int maxBlock);
     bool jobQueuedFor(const Track& track, double rate, int maxBlock) const;
@@ -513,6 +530,34 @@ public:
     void selectMidiInput(int index);
     int selectedMidiInputIndex() const;
 
+    // ---- MIDI monitor (controller/performance views) ----
+    // Every note/CC/pitch-bend/program/pressure event received from the
+    // selected MIDI input is also mirrored into a small lock-protected ring
+    // buffer. The UI polls it to drive controller mappings (MiniLab 3,
+    // generic MIDI learn) without adding a second MIDI input in the OS.
+    // Each event is five ints: type, channel, data1, data2, timestampMs.
+    // Types: 0 note-on, 1 note-off, 2 CC, 3 pitch-bend, 4 program-change,
+    // 5 channel-pressure/aftertouch.
+    enum MidiMonitorType
+    {
+        midiMonitorNoteOn = 0,
+        midiMonitorNoteOff = 1,
+        midiMonitorController = 2,
+        midiMonitorPitchBend = 3,
+        midiMonitorProgramChange = 4,
+        midiMonitorPressure = 5
+    };
+    // Drains up to maxEvents events into outEvents (maxEvents * 5 ints).
+    // Returns the number of events written. Safe from the UI thread.
+    int pollMidiEvents(int* outEvents, int maxEvents);
+    // Test/integration hook: feeds one raw MIDI message through the same path
+    // as a hardware input (monitor + live routing + recording capture).
+    void debugInjectMidi(const void* data, int size);
+
+    // Controller-owned notes: they still reach the monitor (so the UI can run
+    // transport/pad actions) but are not routed to instruments or recorded.
+    void setControllerNoteConsumed(int note, bool consumed);
+
     // App-level settings file: AudioDeviceManager state + MIDI enable list.
     juce::Result saveDeviceSettings(const juce::File& file) const;
     juce::Result loadDeviceSettings(const juce::File& file);
@@ -522,6 +567,7 @@ public:
     void rescanPlugins();
     void scanPluginsNow(); // blocking (message thread); CLI/tests
     bool pluginScanActive() const;
+    void setPluginSearchPaths(const juce::StringArray& paths);
 
     // ---- plugin editor windows (§7.7) ----
     // Each open editor is a native window around the plugin's own editor
@@ -611,6 +657,30 @@ public:
                            int paramIndex) const;
     const char* pluginParamText(TrackId trackId, int slotKind, int slotIndex,
                                 int paramIndex) const;
+    int pluginParamFlags(TrackId trackId, int slotKind, int slotIndex,
+                         int paramIndex) const;
+    float pluginParamDefault(TrackId trackId, int slotKind, int slotIndex,
+                             int paramIndex) const;
+    int pluginParamNumSteps(TrackId trackId, int slotKind, int slotIndex,
+                            int paramIndex) const;
+    const char* pluginParamTextAtValue(TrackId trackId, int slotKind,
+                                       int slotIndex, int paramIndex,
+                                       float normalisedValue) const;
+    // Stable parameter identifier and UI grouping hint. Built-in EZSynth
+    // returns its internal ID/group; other plug-ins fall back to their name.
+    const char* pluginParamId(TrackId trackId, int slotKind, int slotIndex,
+                              int paramIndex) const;
+    const char* pluginParamGroup(TrackId trackId, int slotKind, int slotIndex,
+                                 int paramIndex) const;
+    // Host-visible program list. EZSynth exposes its preset bank here; other
+    // plug-ins keep their own program semantics.
+    int pluginProgramCount(TrackId trackId, int slotKind, int slotIndex) const;
+    const char* pluginProgramName(TrackId trackId, int slotKind,
+                                  int slotIndex, int programIndex) const;
+    int pluginCurrentProgram(TrackId trackId, int slotKind,
+                             int slotIndex) const;
+    juce::Result setPluginProgram(TrackId trackId, int slotKind,
+                                  int slotIndex, int programIndex);
     // Sets a normalised (0..1) parameter value on the live plug-in. Must run
     // on the message thread (host notification may reach the editor).
     juce::Result setPluginParamValue(TrackId trackId, int slotKind,
@@ -665,12 +735,14 @@ public:
     juce::Result setTrackFxBypass(TrackId trackId, int slotIndex, bool bypass);
     int trackFxCount(TrackId trackId) const;
     const char* trackFxNameAt(TrackId trackId, int slotIndex) const;
+    const char* trackFxUidAt(TrackId trackId, int slotIndex) const;
     bool trackFxBypassAt(TrackId trackId, int slotIndex) const;
 
     // Instrument plugin for instrument tracks (replaces the internal synth).
     juce::Result setTrackInstrumentPlugin(TrackId trackId, int pluginIndex);
     juce::Result clearTrackInstrument(TrackId trackId);
     const char* trackInstrumentName(TrackId trackId) const;
+    const char* trackInstrumentUid(TrackId trackId) const;
 
     // Restores a plug-in's saved state on its LIVE instance (an insert slot or
     // the track's instrument). Cubase (.cpr) stores the VST3 component and
@@ -716,6 +788,7 @@ public:
     juce::Result setMasterFxBypass(int slotIndex, bool bypass);
     int masterFxCount() const;
     const char* masterFxNameAt(int slotIndex) const;
+    const char* masterFxUidAt(int slotIndex) const;
     bool masterFxBypassAt(int slotIndex) const;
     // Native editor for a master insert (message thread).
     juce::Result openMasterFxEditor(int slotIndex);
@@ -1000,6 +1073,61 @@ private:
                                             double elapsed) const;
     void activateMidiInput(const juce::String& identifier);
     void onMidiMessage(const juce::MidiMessage& message);
+    void recordMidiMonitorEvent(const juce::MidiMessage& message);
+
+    struct MidiMonitorEvent
+    {
+        int type = 0;
+        int channel = 0;
+        int data1 = 0;
+        int data2 = 0;
+        int timestampMs = 0;
+    };
+    static constexpr int kMidiMonitorCapacity = 512;
+    std::array<MidiMonitorEvent, kMidiMonitorCapacity> midiMonitor_ {};
+    int midiMonitorWrite_ = 0;
+    int midiMonitorCount_ = 0;
+    juce::SpinLock midiMonitorLock_;
+
+    // 128-bit sets keyed by note number, lock-free for the MIDI thread.
+    // controllerNotes* holds notes reserved by the controller/action layer;
+    // controllerActiveNotes* remembers which of those note-ons were actually
+    // swallowed, so their note-offs are swallowed too without stranding a
+    // note that was already sounding when the mapping changed.
+    std::atomic<std::uint64_t> controllerNotesLow_ {0};
+    std::atomic<std::uint64_t> controllerNotesHigh_ {0};
+    std::atomic<std::uint64_t> controllerActiveNotesLow_ {0};
+    std::atomic<std::uint64_t> controllerActiveNotesHigh_ {0};
+    bool isControllerNoteConsumed(int note) const
+    {
+        if (note < 0 || note > 127)
+            return false;
+        const auto word = note < 64
+                              ? controllerNotesLow_.load(std::memory_order_relaxed)
+                              : controllerNotesHigh_.load(std::memory_order_relaxed);
+        return (word & (std::uint64_t {1} << (note & 63))) != 0;
+    }
+    bool takeControllerNoteActive(int note)
+    {
+        if (note < 0 || note > 127)
+            return false;
+        auto& word = note < 64 ? controllerActiveNotesLow_
+                               : controllerActiveNotesHigh_;
+        const auto bit = std::uint64_t {1} << (note & 63);
+        return (word.fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
+    }
+    void markControllerNoteActive(int note, bool active)
+    {
+        if (note < 0 || note > 127)
+            return;
+        auto& word = note < 64 ? controllerActiveNotesLow_
+                               : controllerActiveNotesHigh_;
+        const auto bit = std::uint64_t {1} << (note & 63);
+        if (active)
+            word.fetch_or(bit, std::memory_order_relaxed);
+        else
+            word.fetch_and(~bit, std::memory_order_relaxed);
+    }
 
     std::shared_ptr<const Project> makeEmptyProjectLocked(double sampleRate);
     void publish(std::shared_ptr<const Project> project,

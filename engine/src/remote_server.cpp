@@ -1358,12 +1358,52 @@ void RemoteServer::executeCommand(const Command& command)
                 trackId, slotKind, slotIndex, i));
             put(item, "text", juce::String::fromUTF8(
                 engine_.pluginParamText(trackId, slotKind, slotIndex, i)));
+            // Rich metadata lets the remote draw switches, choices and
+            // grouped device pages instead of a flat list of sliders. Older
+            // clients simply ignore the extra fields.
+            const int flags = engine_.pluginParamFlags(
+                trackId, slotKind, slotIndex, i);
+            const int steps = engine_.pluginParamNumSteps(
+                trackId, slotKind, slotIndex, i);
+            put(item, "id", juce::String::fromUTF8(engine_.pluginParamId(
+                trackId, slotKind, slotIndex, i)));
+            put(item, "group", juce::String::fromUTF8(engine_.pluginParamGroup(
+                trackId, slotKind, slotIndex, i)));
+            put(item, "flags", flags);
+            put(item, "default", (double) engine_.pluginParamDefault(
+                trackId, slotKind, slotIndex, i));
+            put(item, "steps", steps);
+            if (((flags & 2) != 0 || (flags & 1) != 0) && steps > 0)
+            {
+                juce::Array<juce::var> choices;
+                for (int step = 0; step < steps; ++step)
+                {
+                    const float normalised = steps <= 1
+                        ? 0.0f : (float) step / (float) (steps - 1);
+                    choices.add(juce::String::fromUTF8(
+                        engine_.pluginParamTextAtValue(
+                            trackId, slotKind, slotIndex, i, normalised)));
+                }
+                put(item, "choices", juce::var(choices));
+            }
             params.add(item);
         }
         auto result = makeObject();
         put(result, "slotKind", slotKind);
         put(result, "slotIndex", slotIndex);
         put(result, "params", juce::var(params));
+        const int programCount = engine_.pluginProgramCount(
+            trackId, slotKind, slotIndex);
+        if (programCount > 0)
+        {
+            juce::Array<juce::var> programs;
+            for (int i = 0; i < programCount; ++i)
+                programs.add(juce::String::fromUTF8(
+                    engine_.pluginProgramName(trackId, slotKind, slotIndex, i)));
+            put(result, "programs", juce::var(programs));
+            put(result, "currentProgram", engine_.pluginCurrentProgram(
+                trackId, slotKind, slotIndex));
+        }
         reply(result);
         return;
     }
@@ -1386,6 +1426,28 @@ void RemoteServer::executeCommand(const Command& command)
             trackId, slotKind, slotIndex, paramIndex));
         put(payload, "text", juce::String::fromUTF8(
             engine_.pluginParamText(trackId, slotKind, slotIndex, paramIndex)));
+        reply(payload);
+        return;
+    }
+    if (cmd == "fx.setProgram")
+    {
+        const auto trackId = getInt64(request, "trackId", -1);
+        const int slotKind = getInt(request, "slotKind", 0);
+        const int slotIndex = getInt(request, "slotIndex", 0);
+        const int programIndex = getInt(request, "programIndex", -1);
+        const auto result = engine_.setPluginProgram(
+            trackId, slotKind, slotIndex, programIndex);
+        if (result.failed())
+        {
+            fail("not_found", engineError());
+            return;
+        }
+        auto payload = makeObject();
+        put(payload, "program", engine_.pluginCurrentProgram(
+            trackId, slotKind, slotIndex));
+        put(payload, "name", juce::String::fromUTF8(engine_.pluginProgramName(
+            trackId, slotKind, slotIndex,
+            engine_.pluginCurrentProgram(trackId, slotKind, slotIndex))));
         reply(payload);
         return;
     }
@@ -1706,7 +1768,8 @@ juce::var RemoteServer::buildWelcome(const std::shared_ptr<Client>& client) cons
         put(server, "projectName", project->name);
     juce::Array<juce::var> capabilities;
     for (const char* capability : { "transport", "timeline", "mixer", "fx",
-                                    "automation", "meters", "plugins" })
+                                    "automation", "meters", "plugins",
+                                    "pluginParams", "programs" })
         capabilities.add(capability);
     put(server, "capabilities", juce::var(capabilities));
     put(root, "server", server);

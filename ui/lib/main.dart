@@ -13,7 +13,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'app_paths.dart';
+import 'controller/controller_service.dart';
 import 'engine/engine_service.dart';
+import 'engine/plugin_directories.dart';
 import 'l10n/l10n.dart';
 import 'l10n/locale_store.dart';
 import 'remote/remote_settings.dart';
@@ -30,6 +33,7 @@ import 'ui/design.dart';
 import 'ui/export_dialog.dart';
 import 'ui/sound_library_dialog.dart';
 import 'ui/mixer_zone.dart';
+import 'ui/performance_panel.dart' show showPerformancePanel;
 import 'ui/project_dialogs.dart';
 import 'ui/piano_roll.dart';
 import 'ui/preferences_dialog.dart';
@@ -38,8 +42,12 @@ import 'ui/timeline_view.dart';
 import 'ui/transport_bar.dart';
 
 Future<void> main(List<String> args) async {
-  // Idioma elegido en Preferencias (~/Music/Cadence/ui_settings.json). Cada
-  // ventana es un proceso aparte, asi que lo lee tambien la principal.
+  // Datos persistentes por plataforma (configuración, plugins propios,
+  // proyectos y exportaciones). También migra ajustes antiguos de
+  // ~/Music/Cadence la primera vez.
+  ensureCadenceDirectories();
+  // Idioma elegido en Preferencias. Cada ventana es un proceso aparte, asi
+  // que lo lee tambien la principal.
   LocaleStore.load();
   // Preferencias del control remoto (mismo fichero de interfaz). Solo la
   // ventana principal arranca el servidor; las sub-ventanas comparten motor.
@@ -346,6 +354,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage>
     with SingleTickerProviderStateMixin {
   EngineService? _service;
+  ControllerService? _controller;
   late final Ticker _ticker;
   late final AppLifecycleListener _lifecycle;
   final ValueNotifier<int> _frameTick = ValueNotifier(0);
@@ -381,17 +390,27 @@ class _HomePageState extends State<HomePage>
     } catch (error) {
       _dylibError = error.toString();
     }
+    final service = _service;
+    if (service != null) {
+      // Long-lived: mappings keep working while the performance panel is
+      // closed, exactly like a hardware surface.
+      _controller = ControllerService(service)..start();
+    }
     // Flutter does not dispose the widget tree when the macOS window is
     // closed. Destroy the engine (and every live VST3 instance) explicitly on
     // exit; otherwise plugin static destructors run with live instances and
     // Analog Lab V aborts inside __cxa_finalize_ranges.
     _lifecycle = AppLifecycleListener(
       onExitRequested: () async {
+        _controller?.dispose();
+        _controller = null;
         _service?.dispose();
         _service = null;
         return AppExitResponse.exit;
       },
       onDetach: () {
+        _controller?.dispose();
+        _controller = null;
         _service?.dispose();
         _service = null;
       },
@@ -407,6 +426,13 @@ class _HomePageState extends State<HomePage>
       if (frameCount % 60 == 0) _pruneClosedSubWindows();
     })..start();
     WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
+  }
+
+  void _openPerformance() {
+    final service = _service;
+    final controller = _controller;
+    if (service == null || controller == null) return;
+    showPerformancePanel(context, service, controller);
   }
 
   /// Opens [panel] in its own window and hides the docked copy.
@@ -453,6 +479,12 @@ class _HomePageState extends State<HomePage>
     if (service == null) return;
 
     service.loadDeviceSettings(); // may be absent on first run
+    // The plugin folders are user-editable and persisted. Apply them before
+    // the first scan so a custom list is never silently replaced by defaults.
+    final pluginDirs = PluginDirectoryStore().load();
+    service.setPluginSearchDirectories([
+      for (final dir in pluginDirs) dir.path,
+    ]);
     // The audio device opens lazily on the first play/record call.
     // The project starts EMPTY: open yours with Abrir (⌘O).
     service.updateWindowTitle();
@@ -708,6 +740,12 @@ class _HomePageState extends State<HomePage>
                                 service.toggleMixerOpen();
                                 setState(() {});
                               },
+                            ),
+                            _ToolbarButton(
+                              icon: Icons.graphic_eq_rounded,
+                              label: '',
+                              tooltip: context.l10n.appMenuPerformance,
+                              onTap: _openPerformance,
                             ),
                             _ToolbarButton(
                               icon: Icons.piano_rounded,

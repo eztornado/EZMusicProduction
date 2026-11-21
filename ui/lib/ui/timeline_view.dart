@@ -20,6 +20,7 @@ import '../l10n/l10n.dart';
 import '../shortcuts/shortcut_settings.dart';
 import 'add_track_dialog.dart' show showAddTrackDialog;
 import 'channel_settings_dialog.dart' show showChannelSettingsDialog;
+import 'device_editor_dialog.dart' show editTrackInstrument;
 import 'design.dart';
 import 'plugin_picker_dialog.dart' show showPluginPickerDialog;
 
@@ -2201,8 +2202,16 @@ class _InstrumentChip extends StatelessWidget {
           service.setTrackInstrumentPlugin(track.id, picked.index);
         }
       },
-      onDoubleTap:
-          hasPlugin ? () => service.openTrackInstrumentEditor(track.id) : null,
+      onDoubleTap: hasPlugin
+          ? () {
+              editTrackInstrument(
+                context,
+                service,
+                track.id,
+                title: track.instrumentName,
+              );
+            }
+          : null,
       onLongPress:
           hasPlugin ? () => service.clearTrackInstrument(track.id) : null,
       child: Container(

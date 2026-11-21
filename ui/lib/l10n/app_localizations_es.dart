@@ -1263,6 +1263,35 @@ class AppLocalizationsEs extends AppLocalizations {
   String get prefPluginsIndexedDirs => 'Directorios indexados';
 
   @override
+  String get prefPluginsAddDir => 'Añadir carpeta';
+
+  @override
+  String get prefPluginsAddDirTitle => 'Añadir directorio de plugins';
+
+  @override
+  String get prefPluginsAddDirHelp => 'Escribe una ruta absoluta que contenga plugins VST3. Puedes usar ~ para tu carpeta personal. La carpeta se creará si no existe.';
+
+  @override
+  String get prefPluginsAddDirHint => 'Ruta absoluta o ~/VST3';
+
+  @override
+  String get prefPluginsRemoveDir => 'Quitar carpeta';
+
+  @override
+  String get prefPluginsRestoreDefaults => 'Restaurar predeterminados';
+
+  @override
+  String get prefPluginsDirsChanged => 'Cambios guardados. Pulsa Re-escanear para actualizar la biblioteca.';
+
+  @override
+  String prefPluginsDataDir(String path) {
+    return 'Los ajustes se guardan en $path';
+  }
+
+  @override
+  String get prefPluginsPathEmpty => 'Escribe una ruta.';
+
+  @override
   String get prefPluginsDirsHelp => 'Copia aquí los plugins VST3 (.vst3). El motor recorre estas carpetas y registra lo que encuentra.';
 
   @override
@@ -1350,4 +1379,108 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get prefShortcutKeyDelete => 'Supr';
+
+  @override
+  String get appMenuPerformance => 'Interpretación (MiniLab 3)';
+
+  @override
+  String get performanceTitle => 'Interpretación';
+
+  @override
+  String get performanceSubtitle => 'Control por hardware de la pista seleccionada';
+
+  @override
+  String get performanceTrack => 'Pista';
+
+  @override
+  String get performanceDevice => 'Dispositivo';
+
+  @override
+  String get performanceSoftTakeover => 'Captura suave';
+
+  @override
+  String get performanceRelative => 'Encoders relativos';
+
+  @override
+  String get performanceLearn => 'Aprender';
+
+  @override
+  String get performanceLearning => 'Mueve un control…';
+
+  @override
+  String get performanceCancelLearn => 'Cancelar';
+
+  @override
+  String get performanceNoTrack => 'Selecciona o crea una pista';
+
+  @override
+  String get performanceNoDevice => 'Esta pista no tiene un dispositivo automatizable';
+
+  @override
+  String get performanceEncoder => 'ENC';
+
+  @override
+  String get performanceFader => 'FADER';
+
+  @override
+  String get performanceTrackVolume => 'Volumen de pista';
+
+  @override
+  String get performanceTrackPan => 'Pan de pista';
+
+  @override
+  String get performanceMasterVolume => 'Volumen master';
+
+  @override
+  String get performanceNoParameter => 'Sin parámetro';
+
+  @override
+  String get performanceInput => 'Entrada MIDI';
+
+  @override
+  String get performanceNoInput => 'Sin entrada MIDI';
+
+  @override
+  String get performanceHintCatch => 'Mueve un knob o fader. Engancha cuando alcanza el valor actual.';
+
+  @override
+  String get performanceHintLearn => 'Pulsa el icono de objetivo en un control y muévelo para reasignar su CC.';
+
+  @override
+  String get performanceActions => 'Transporte y acciones';
+
+  @override
+  String get performanceActionHint => 'Pulsa el icono de objetivo y después un pad o botón.';
+
+  @override
+  String get performanceActionUnassigned => 'Sin asignar';
+
+  @override
+  String get performanceActionClear => 'Borrar disparador';
+
+  @override
+  String get performanceLearningAction => 'Pulsa un pad o botón…';
+
+  @override
+  String get performanceTapTempo => 'Tap tempo';
+
+  @override
+  String get performanceClose => 'Cerrar';
+
+  @override
+  String performanceParamCount(int count) {
+    return '$count parámetros';
+  }
+
+  @override
+  String get performanceCatch => 'CAPTURA';
+
+  @override
+  String get performanceMidiActivity => 'Actividad MIDI';
+
+  @override
+  String get performanceGenericController => 'Controlador genérico';
+
+  @override
+  String get performanceMiniLab => 'MiniLab 3';
 }

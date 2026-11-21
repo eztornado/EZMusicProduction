@@ -3,15 +3,23 @@
 #include <cadence/model.hpp>
 #include "../src/ezinst.h"
 #include "../src/ezsynth.h"
+#include "../src/ezsynth2.h"
 #include "../src/ezorq.h"
 #include "../src/ezdrums.h"
 #include "../src/ezq4.h"
+#include "../src/ezreverb.h"
+#include "../src/ezdelay.h"
+#include "../src/ezautofilter.h"
+#include "../src/ezchorus.h"
+#include "../src/ezdrive.h"
+#include "../src/ezutility.h"
 #include "../src/magenta_vae.h"
 #include "../src/ai_generation.h"
 #include <fstream>
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -30,6 +38,13 @@ void printUsage()
         "\n"
         "usage:\n"
         "  cadence-cli devices\n"
+        "  cadence-cli fx-test\n"
+        "      renders an impulse + noise through every built-in effect and\n"
+        "      verifies finite, non-silent output. Also dumps their parameters.\n"
+        "  cadence-cli midi-monitor\n"
+        "      injects note/CC/pitch-bend messages and verifies the controller\n"
+        "      monitor used by the MiniLab 3 performance panel, including\n"
+        "      pads reserved for transport/performance actions.\n"
         "  cadence-cli tone <out.wav> [seconds=3] [freq=440]\n"
         "  cadence-cli play <file> [seconds=9999]\n"
         "  cadence-cli selftest <file>\n"
@@ -49,6 +64,10 @@ void printUsage()
         "      opens UR22 input+output at 48 kHz (device diagnostic).\n"
         "  cadence-cli churntest\n"
         "      swaps instrument/fx snapshots while the audio thread renders.\n"
+        "  cadence-cli ezsynthbench\n"
+        "      16-voice EZSynth realtime benchmark at 48 and 96 kHz.\n"
+        "  cadence-cli midi-live [seconds=20] [input-index]\n"
+        "      prints real events from the selected hardware MIDI input.\n"
         "  cadence-cli editortest\n"
         "      replaces the plugin behind an open editor window.\n"
         "  cadence-cli editorloadtest <project.ezmpp>\n"
@@ -83,6 +102,11 @@ int cmdDevices()
     for (const auto& name : engine.outputDeviceNames())
         std::printf("%s; ", name.toRawUTF8());
     std::printf("\n");
+    const int midiCount = engine.midiInputNames().size();
+    std::printf("MIDI inputs   : ");
+    for (int i = 0; i < midiCount; ++i)
+        std::printf("[%d] %s; ", i, engine.midiInputNameAtUtf8(i));
+    std::printf("\nselected MIDI : %d\n", engine.selectedMidiInputIndex());
     return 0;
 }
 
@@ -384,6 +408,57 @@ double rmsInRange(juce::AudioFormatManager& formats, const juce::File& file, dou
             sum += (double) data[i] * data[i];
     }
     return std::sqrt(sum / ((double) len * buffer.getNumChannels()));
+}
+
+// Helpers shared by the EZSynth 2.0 feature tests. They address parameters by
+// their stable ABI id, exactly like a host or the Studio does.
+juce::AudioProcessorParameter* findProcParam(juce::AudioProcessor* proc,
+                                             const juce::String& id)
+{
+    for (auto* p : proc->getParameters())
+        if (auto* withId =
+                dynamic_cast<juce::AudioProcessorParameterWithID*>(p);
+            withId != nullptr && withId->paramID == id)
+            return p;
+    return nullptr;
+}
+
+bool setProcParam(juce::AudioProcessor* proc, const juce::String& id,
+                  float raw)
+{
+    auto* p = findProcParam(proc, id);
+    if (p == nullptr)
+        return false;
+    if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(p))
+        c->setValueNotifyingHost(c->convertTo0to1(raw));
+    else if (auto* f = dynamic_cast<juce::AudioParameterFloat*>(p))
+        f->setValueNotifyingHost(f->convertTo0to1(raw));
+    else if (auto* i = dynamic_cast<juce::AudioParameterInt*>(p))
+        i->setValueNotifyingHost(i->convertTo0to1((int) std::lround(raw)));
+    else if (auto* b = dynamic_cast<juce::AudioParameterBool*>(p))
+        b->setValueNotifyingHost(raw > 0.5f ? 1.f : 0.f);
+    else
+        return false;
+    return true;
+}
+
+bool getProcParam(juce::AudioProcessor* proc, const juce::String& id,
+                  float& raw)
+{
+    auto* p = findProcParam(proc, id);
+    if (p == nullptr)
+        return false;
+    if (auto* c = dynamic_cast<juce::AudioParameterChoice*>(p))
+        raw = (float) c->getIndex();
+    else if (auto* f = dynamic_cast<juce::AudioParameterFloat*>(p))
+        raw = f->get();
+    else if (auto* i = dynamic_cast<juce::AudioParameterInt*>(p))
+        raw = (float) i->get();
+    else if (auto* b = dynamic_cast<juce::AudioParameterBool*>(p))
+        raw = b->get() ? 1.f : 0.f;
+    else
+        return false;
+    return true;
 }
 
 int cmdProjDemo(const char* outPath, bool playLive)
@@ -760,6 +835,10 @@ int cmdDeviceRestart()
 // of NaNs.
 int cmdChurnTest()
 {
+    // The plugin format manager constructs JUCE MessageListeners. Headless
+    // CLI runs have no event system, so initialise it for this test only.
+    juce::ScopedJuceInitialiser_GUI init;
+
     cadence::PluginHost host;
     host.setup();
 
@@ -2008,7 +2087,7 @@ int cmdEzSynthUiTest()
             midi.clear();
             peak = juce::jmax(peak, buf.getMagnitude(0, buf.getNumSamples()));
         }
-        if (peak > 1e-3f && peak < 4.f)
+        if (peak > 1e-3f && peak <= 1.001f)
             ++presetsOk;
         else
             std::printf("ezsynthuitest: preset %d peak=%.4f BAD\n", i, peak);
@@ -2027,6 +2106,54 @@ int cmdEzSynthUiTest()
 
 int cmdEzSynthTest()
 {
+    juce::ScopedJuceInitialiser_GUI init;
+
+    // Bank integrity: enough sounds to compete, no duplicate names, and
+    // every program must produce a finite, audible, non-clipping signal.
+    {
+        const auto names = ezsynth2::presetNamesForCatalog();
+        auto unique = names;
+        unique.removeDuplicates(false);
+        const bool bankOk = names.size() >= 150 && unique.size() == names.size();
+        std::printf("ezsynthtest: bank=%d unique=%d -> %s\n",
+                    names.size(), unique.size(), bankOk ? "ok" : "FAIL");
+        std::unique_ptr<juce::AudioProcessor> bankProc(ezsynth2::create());
+        bankProc->prepareToPlay(44100.0, 512);
+        int audible = 0;
+        float firstBadPeak = 0.f;
+        juce::String firstBad;
+        for (int i = 0; i < names.size(); ++i)
+        {
+            ezsynth2::applyPresetForTest(bankProc.get(), i);
+            juce::AudioBuffer<float> buf(2, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::allSoundOff(1), 0);
+            midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.9f), 0);
+            float peak = 0.f;
+            for (int b = 0; b < 180; ++b)
+            {
+                buf.clear();
+                bankProc->processBlock(buf, midi);
+                midi.clear();
+                peak = juce::jmax(peak, buf.getMagnitude(0, buf.getNumSamples()));
+            }
+            if (peak > 1e-3f && peak <= 1.001f)
+                ++audible;
+            else if (firstBad.isEmpty())
+            {
+                firstBad = names[i];
+                firstBadPeak = peak;
+            }
+        }
+        std::printf("ezsynthtest: presets audible=%d/%d%s%s peak=%.4f\n",
+                    audible, names.size(),
+                    firstBad.isEmpty() ? "" : " firstBad=",
+                    firstBad.isEmpty() ? "" : firstBad.toRawUTF8(),
+                    firstBadPeak);
+        if (! bankOk || audible != names.size())
+            return 1;
+    }
+
     cadence::Engine engine;
     engine.newProject(44100);
     const auto track = engine.addTrack("Keys", 0,
@@ -2251,18 +2378,432 @@ int cmdEzSynthTest()
                     warpOk ? "POLYPHONIC OK" : "BROKEN");
     }
 
+    // ---- 2.0 feature coverage: matrix, arp, FX, state, migration, MPE ----
+    bool matrixOk = false, arpOk = false, fxOk = false;
+    bool stateOk = false, legacyOk = false, mpeOk = false;
+
+    // A deliberately plain sine patch so the checks measure one feature at a
+    // time instead of relying on whatever a factory program happens to use.
+    auto makeTestProc = [] {
+        auto p = std::unique_ptr<juce::AudioProcessor>(ezsynth2::create());
+        auto set = [&](const juce::String& id, float v) {
+            setProcParam(p.get(), id, v);
+        };
+        set("motor", 1); set("quality", 1); set("level", 1.f);
+        set("pan", 0.f); set("glide", 0.f); set("vel", 0.f);
+        set("morph", 0.f); set("morphMode", 0.f); set("width", 0.5f);
+        set("limiter", 1); set("mpe", 0);
+        set("a_engine", 1); set("a_level", 1.f);
+        set("b_engine", 0); set("b_level", 0.f);
+        set("x_engine", 0); set("x_level", 0.f);
+        set("o1wave", 0); set("o1oct", 0); set("o1semi", 0);
+        set("o1det", 0.f); set("o1lvl", 1.f);
+        set("o2lvl", 0.f); set("o3lvl", 0.f); set("sublvl", 0.f);
+        set("noise", 0.f); set("uni", 1);
+        set("b_o1lvl", 0.f); set("b_o2lvl", 0.f); set("b_o3lvl", 0.f);
+        set("b_sublvl", 0.f); set("b_noise", 0.f); set("b_uni", 1);
+        set("flttype", 0); set("fltcut", 20000.f); set("fltres", 0.f);
+        set("fltkey", 0.f); set("fltenv", 0.f); set("fltdrive", 1.f);
+        set("f2type", 0); set("f2cut", 20000.f); set("f2res", 0.f);
+        set("f2key", 0.f); set("f2env", 0.f); set("f2drive", 1.f);
+        set("froute", 0); set("fbalance", 0.5f);
+        set("fenvA", 0.001f); set("fenvD", 4.f);
+        set("fenvS", 1.f); set("fenvR", 0.2f);
+        set("aenvA", 0.001f); set("aenvD", 4.f);
+        set("aenvS", 1.f); set("aenvR", 0.2f);
+        for (int l = 1; l <= 4; ++l)
+            set("l" + juce::String(l) + "depth", 0.f);
+        for (int i = 0; i < 2; ++i)
+            set("rnd" + juce::String(i + 1) + "depth", 0.f);
+        set("arpOn", 0);
+        for (int slot = 1; slot <= 6; ++slot)
+            set("fx" + juce::String(slot) + "type", 0.f);
+        p->prepareToPlay(48000.0, 512);
+        return p;
+    };
+
+    auto renderNote = [](juce::AudioProcessor& proc, int note, double seconds) {
+        constexpr int block = 512;
+        const int blocks = (int) std::lround(seconds * 48000.0 / block);
+        juce::AudioBuffer<float> buf(2, block);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, note, 1.0f), 0);
+        std::vector<float> out;
+        out.reserve((size_t) blocks * block);
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            proc.processBlock(buf, midi);
+            midi.clear();
+            const auto* d = buf.getReadPointer(0);
+            out.insert(out.end(), d, d + block);
+        }
+        return out;
+    };
+
+    auto hzOf = [](const std::vector<float>& x, double windowSeconds) {
+        const int n = (int) x.size();
+        const int start = juce::jmax(0, n - (int) std::lround(windowSeconds * 48000.0));
+        int zc = 0;
+        for (int i = start + 1; i < n; ++i)
+            if (x[(size_t) i - 1] <= 0.f && x[(size_t) i] > 0.f)
+                ++zc;
+        const double dur = (n - start) / 48000.0;
+        return dur > 0.0 ? zc / dur : 0.0;
+    };
+
+    auto rmsOf = [](const std::vector<float>& x) {
+        double sum = 0.0;
+        for (float v : x)
+            sum += (double) v * v;
+        return x.empty() ? 0.0 : std::sqrt(sum / (double) x.size());
+    };
+
+    auto closeTo = [](double a, double b, double tol = 0.06) {
+        return std::abs(a - b) <= std::abs(b) * tol;
+    };
+
+    // Matrix sources reach their destinations (two different destinations,
+    // one bipolar amount and one negative amount).
+    {
+        auto base = makeTestProc();
+        const double baseHz = hzOf(renderNote(*base, 69, 1.0), 0.3);
+
+        auto pitch = makeTestProc();
+        setProcParam(pitch.get(), "m1src", 17.f); // Macro 1
+        setProcParam(pitch.get(), "m1dst", 1.f);  // Pitch
+        setProcParam(pitch.get(), "m1amt", 1.f);
+        setProcParam(pitch.get(), "macro1", 1.f);
+        const double pitchHz = hzOf(renderNote(*pitch, 69, 1.0), 0.3);
+
+        auto amp = makeTestProc();
+        setProcParam(amp.get(), "m1src", 18.f); // Macro 2
+        setProcParam(amp.get(), "m1dst", 6.f);  // Amp
+        setProcParam(amp.get(), "m1amt", -1.f);
+        setProcParam(amp.get(), "macro2", 1.f);
+        const double dry = rmsOf(renderNote(*makeTestProc(), 69, 0.6));
+        const double wet = rmsOf(renderNote(*amp, 69, 0.6));
+
+        // A full matrix amount to Pitch is +24 semitones = 4x frequency.
+        const bool pitchOk = closeTo(pitchHz, baseHz * 4.0);
+        const bool ampOk = wet < dry * 0.02;
+        matrixOk = pitchOk && ampOk;
+        std::printf("ezsynthtest: matrix pitch=%.1fHz/%.1fHz dry=%.4f "
+                    "amp=%.4f -> %s\n",
+                    pitchHz, baseHz * 4.0, dry, wet,
+                    matrixOk ? "ROUTES ok" : "BROKEN");
+    }
+
+    // Arpeggiator clock: 2 s at 120 BPM must produce 16 sixteenths / 8 eighths.
+    {
+        auto makeArp = [&](int rate) {
+            auto p = makeTestProc();
+            setProcParam(p.get(), "arpOn", 1.f);
+            setProcParam(p.get(), "arpMode", 0.f);
+            setProcParam(p.get(), "arpRate", (float) rate);
+            setProcParam(p.get(), "arpOct", 1.f);
+            setProcParam(p.get(), "arpGate", 0.5f);
+            setProcParam(p.get(), "arpSwing", 0.f);
+            setProcParam(p.get(), "arpLatch", 0.f);
+            setProcParam(p.get(), "arpSteps", 16.f);
+            for (int s = 1; s <= 16; ++s)
+                setProcParam(p.get(), "arpStep" + juce::String(s), 1.f);
+            setProcParam(p.get(), "aenvA", 0.001f);
+            setProcParam(p.get(), "aenvD", 0.015f);
+            setProcParam(p.get(), "aenvS", 0.f);
+            setProcParam(p.get(), "aenvR", 0.015f);
+            return p;
+        };
+        auto countOnsets = [](juce::AudioProcessor& proc) {
+            constexpr int block = 512;
+            constexpr int blocks = 188; // ~2.005 s
+            juce::AudioBuffer<float> buf(2, block);
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::noteOn(1, 60, 0.9f), 0);
+            int count = 0;
+            bool wasOn = false;
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                proc.processBlock(buf, midi);
+                midi.clear();
+                const bool on = buf.getMagnitude(0, block) > 0.05f;
+                if (on && ! wasOn)
+                    ++count;
+                wasOn = on;
+            }
+            return count;
+        };
+        const int n16 = countOnsets(*makeArp(3));
+        const int n8 = countOnsets(*makeArp(1));
+        arpOk = n16 >= 14 && n16 <= 18 && n8 >= 7 && n8 <= 9;
+        std::printf("ezsynthtest: arp 1/16=%d 1/8=%d -> %s\n",
+                    n16, n8, arpOk ? "TIMING ok" : "BROKEN");
+    }
+
+    // Every one of the six FX slots processes, and the full chain is stable.
+    {
+        auto differs = [](const std::vector<float>& a,
+                          const std::vector<float>& b) {
+            const int n = (int) juce::jmin(a.size(), b.size());
+            for (int i = 0; i < n; ++i)
+                if (std::abs(a[(size_t) i] - b[(size_t) i]) > 1e-3f)
+                    return true;
+            return false;
+        };
+        auto stable = [](const std::vector<float>& x) {
+            float peak = 0.f;
+            for (float v : x)
+            {
+                if (! std::isfinite(v))
+                    return false;
+                peak = juce::jmax(peak, std::abs(v));
+            }
+            return peak > 1e-4f && peak < 4.f;
+        };
+
+        const auto dry = renderNote(*makeTestProc(), 57, 1.2);
+        const char* names[] = { "Drive", "Chorus", "Phaser",
+                                "Delay", "Reverb", "Comp" };
+        bool allSlotsOk = true;
+        for (int slot = 1; slot <= 6; ++slot)
+        {
+            auto p = makeTestProc();
+            const auto prefix = "fx" + juce::String(slot);
+            setProcParam(p.get(), prefix + "type", (float) slot);
+            setProcParam(p.get(), prefix + "mix", 0.6f);
+            for (int k = 1; k <= 4; ++k)
+                setProcParam(p.get(), prefix + "p" + juce::String(k), 0.5f);
+            const auto wet = renderNote(*p, 57, 1.2);
+            const bool ok = stable(wet) && differs(dry, wet);
+            allSlotsOk = allSlotsOk && ok;
+            std::printf("ezsynthtest: fx slot %d %-6s -> %s\n",
+                        slot, names[slot - 1], ok ? "ok" : "FAIL");
+        }
+
+        auto chain = makeTestProc();
+        for (int slot = 1; slot <= 6; ++slot)
+        {
+            const auto prefix = "fx" + juce::String(slot);
+            setProcParam(chain.get(), prefix + "type", (float) slot);
+            setProcParam(chain.get(), prefix + "mix", 0.4f);
+            for (int k = 1; k <= 4; ++k)
+                setProcParam(chain.get(), prefix + "p" + juce::String(k), 0.5f);
+        }
+        const auto chained = renderNote(*chain, 57, 1.2);
+        const bool chainOk = stable(chained) && differs(dry, chained);
+        std::printf("ezsynthtest: fx 6-slot chain -> %s\n",
+                    chainOk ? "ok" : "FAIL");
+        fxOk = allSlotsOk && chainOk;
+    }
+
+    // State round-trip preserves the new 2.0 surface, not only legacy params.
+    {
+        struct Entry { const char* id; float value; };
+        const Entry entries[] = {
+            { "mpe", 1.f }, { "arpOn", 1.f }, { "arpMode", 2.f },
+            { "arpRate", 4.f }, { "arpSteps", 7.f }, { "arpStep7", 0.f },
+            { "fx6type", 7.f }, { "fx6mix", 0.73f },
+            { "m16src", 24.f }, { "m16dst", 27.f }, { "m16amt", -0.42f },
+            { "macro8", 0.83f }, { "b_engine", 3.f }, { "b_fmRatio", 7.5f },
+            { "a_wtTable", 3.f }, { "x_engine", 4.f }, { "x_level", 0.61f },
+            { "fltcut", 1234.f }, { "o1lvl", 0.42f },
+        };
+        auto p = makeTestProc();
+        for (const auto& e : entries)
+            setProcParam(p.get(), e.id, e.value);
+        juce::MemoryBlock state;
+        p->getStateInformation(state);
+        auto q = std::unique_ptr<juce::AudioProcessor>(ezsynth2::create());
+        q->setStateInformation(state.getData(), (int) state.getSize());
+        bool ok = true;
+        for (const auto& e : entries)
+        {
+            float got = 0.f;
+            const bool found = getProcParam(q.get(), e.id, got);
+            const float tol = juce::jmax(0.002f, std::abs(e.value) * 0.002f);
+            if (! found || std::abs(got - e.value) > tol)
+            {
+                std::printf("ezsynthtest: state %s expected %.3f got %.3f\n",
+                            e.id, e.value, got);
+                ok = false;
+            }
+        }
+        stateOk = ok;
+        std::printf("ezsynthtest: state round-trip -> %s\n",
+                    stateOk ? "ok" : "LOST");
+    }
+
+    // Legacy EZSYNTH2 XML: old core ids load and the 2.0 layer defaults are
+    // inferred instead of muting the instrument.
+    {
+        juce::XmlElement old("EZSYNTH2");
+        old.setAttribute("o1lvl", 0.42);
+        old.setAttribute("a_level", 0.66);
+        old.setAttribute("fltcut", 777.0);
+        old.setAttribute("aenvA", 0.25);
+        old.setAttribute("l1depth", 0.4);
+        juce::MemoryBlock state;
+        juce::AudioProcessor::copyXmlToBinary(old, state);
+        auto p = std::unique_ptr<juce::AudioProcessor>(ezsynth2::create());
+        p->setStateInformation(state.getData(), (int) state.getSize());
+        float motor = 0.f, engine = 0.f, o1 = 0.f, aLvl = 0.f;
+        float cut = 0.f, atk = 0.f, depth = 0.f;
+        const bool found = getProcParam(p.get(), "motor", motor)
+                           && getProcParam(p.get(), "a_engine", engine)
+                           && getProcParam(p.get(), "o1lvl", o1)
+                           && getProcParam(p.get(), "a_level", aLvl)
+                           && getProcParam(p.get(), "fltcut", cut)
+                           && getProcParam(p.get(), "aenvA", atk)
+                           && getProcParam(p.get(), "l1depth", depth);
+        legacyOk = found && closeTo(motor, 1.0, 0.01)
+                   && closeTo(engine, 1.0, 0.01)
+                   && closeTo(o1, 0.42) && closeTo(aLvl, 0.66)
+                   && closeTo(cut, 777.0, 0.01) && closeTo(atk, 0.25)
+                   && closeTo(depth, 0.4);
+        std::printf("ezsynthtest: EZSYNTH2 migration motor=%.0f engine=%.0f "
+                    "cut=%.0f -> %s\n",
+                    motor, engine, cut, legacyOk ? "ok" : "BROKEN");
+    }
+
+    // MPE: a member-channel note bends within its own range. The layout must
+    // be applied asynchronously on the message thread, like in the app.
+    {
+        auto p = makeTestProc();
+        setProcParam(p.get(), "mpe", 1.f);
+        setProcParam(p.get(), "mpeBend", 12.f);
+        juce::AudioBuffer<float> idle(2, 512);
+        juce::MidiBuffer none;
+        // Offline processing happens on the message thread, so the layout is
+        // applied synchronously here; the app defers it from the audio thread.
+        p->processBlock(idle, none);
+
+        auto run = [&](juce::MidiBuffer& midi, int blocks,
+                       std::vector<float>& out) {
+            juce::AudioBuffer<float> buf(2, 512);
+            for (int b = 0; b < blocks; ++b)
+            {
+                buf.clear();
+                p->processBlock(buf, midi);
+                midi.clear();
+                const auto* d = buf.getReadPointer(0);
+                out.insert(out.end(), d, d + 512);
+            }
+        };
+        auto tailHz = [](const std::vector<float>& x) {
+            const int n = (int) x.size();
+            const int start = juce::jmax(0, n - 12000); // last 0.25 s
+            int zc = 0;
+            for (int i = start + 1; i < n; ++i)
+                if (x[(size_t) i - 1] <= 0.f && x[(size_t) i] > 0.f)
+                    ++zc;
+            const double dur = (n - start) / 48000.0;
+            return dur > 0.0 ? zc / dur : 0.0;
+        };
+
+        std::vector<float> base, bent;
+        juce::MidiBuffer on;
+        on.addEvent(juce::MidiMessage::noteOn(2, 60, 1.0f), 0);
+        run(on, 56, base);
+        juce::MidiBuffer wheel;
+        wheel.addEvent(juce::MidiMessage::pitchWheel(2, 12288), 0);
+        run(wheel, 56, bent);
+        const double baseHz = tailHz(base);
+        const double bentHz = tailHz(bent);
+        const double ratio = baseHz > 0.0 ? bentHz / baseHz : 0.0;
+        const bool mpeNoteOk = closeTo(baseHz, 261.63, 0.04);
+        const bool bendOk = closeTo(ratio, std::sqrt(2.0), 0.05);
+        mpeOk = mpeNoteOk && bendOk;
+        std::printf("ezsynthtest: MPE note=%.1fHz bend x%.3f(exp 1.414) "
+                    "-> %s\n",
+                    baseHz, ratio, mpeOk ? "ok" : "BROKEN");
+    }
+
     const float polyRatio = singleRms > 0 ? chordRms / singleRms : 0;
     const float envRatio = singleRms > 0 ? tailRms / singleRms : 1;
     // The normalized field-recording material is gentler than a 0.01 RMS.
     const bool pass = singleRms > 0.003f && polyRatio > 1.5f && envRatio < 0.6f
-                      && vel0Ok && warpOk;
+                      && vel0Ok && warpOk && matrixOk && arpOk && fxOk
+                      && stateOk && legacyOk && mpeOk;
     std::printf("ezsynthtest: singleRms=%.4f tailRms=%.4f chordRms=%.4f "
-                "poly=%.2f env=%.2f -> %s\n",
+                "poly=%.2f env=%.2f matrix=%d arp=%d fx=%d state=%d "
+                "legacy=%d mpe=%d -> %s\n",
                 singleRms, tailRms, chordRms, polyRatio, envRatio,
+                matrixOk ? 1 : 0, arpOk ? 1 : 0, fxOk ? 1 : 0,
+                stateOk ? 1 : 0, legacyOk ? 1 : 0, mpeOk ? 1 : 0,
                 pass ? "EZSYNTH WORKS" : "BROKEN");
     return pass ? 0 : 1;
 }
 
+
+// Realtime headroom for a dense 16-voice hybrid patch. This is a benchmark,
+// not a correctness gate: a modern Mac should stay comfortably above 1x at
+// both 48 and 96 kHz.
+int cmdEzSynthBench()
+{
+    juce::ScopedJuceInitialiser_GUI init;
+
+    const auto names = ezsynth2::presetNamesForCatalog();
+    int preset = 0;
+    for (int i = 0; i < names.size(); ++i)
+        if (names[i] == "Hybrid · Morph Pad")
+        {
+            preset = i;
+            break;
+        }
+
+    bool pass = true;
+    for (double sr : { 48000.0, 96000.0 })
+    {
+        std::unique_ptr<juce::AudioProcessor> proc(ezsynth2::create());
+        ezsynth2::applyPresetForTest(proc.get(), preset);
+        proc->prepareToPlay(sr, 512);
+
+        juce::AudioBuffer<float> buf(2, 512);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 16; ++i)
+            midi.addEvent(juce::MidiMessage::noteOn(1, 48 + i, 0.8f), 0);
+
+        // Warm up the voices, then measure four seconds of sustained audio.
+        buf.clear();
+        proc->processBlock(buf, midi);
+        midi.clear();
+
+        const int blocks = (int) std::lround(4.0 * sr / 512.0);
+        float peak = 0.f;
+        bool finite = true;
+        const auto start = std::chrono::steady_clock::now();
+        for (int b = 0; b < blocks; ++b)
+        {
+            buf.clear();
+            proc->processBlock(buf, midi);
+            midi.clear();
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                for (int i = 0; i < buf.getNumSamples(); ++i)
+                {
+                    const float v = buf.getSample(ch, i);
+                    if (! std::isfinite(v))
+                        finite = false;
+                    peak = juce::jmax(peak, std::abs(v));
+                }
+        }
+        const auto end = std::chrono::steady_clock::now();
+        const double elapsed =
+            std::chrono::duration<double>(end - start).count();
+        const double audio = blocks * 512.0 / sr;
+        const double xrt = elapsed > 0.0 ? audio / elapsed : 0.0;
+        const bool ok = finite && peak > 1e-3f && peak <= 1.001f
+                        && xrt > 1.0;
+        pass = pass && ok;
+        std::printf("ezsynthbench: 16 voices @ %.0f Hz: %.0f ms for %.1f s "
+                    "-> %.1fx realtime peak=%.3f -> %s\n",
+                    sr, elapsed * 1000.0, audio, xrt, peak,
+                    ok ? "ok" : "FAIL");
+    }
+
+    std::printf("ezsynthbench: %s\n", pass ? "ok" : "TOO SLOW/INVALID");
+    return pass ? 0 : 1;
+}
 
 // EZOrquestra end-to-end: (1) synthesize an Alpine-style tree (brass names
 // C4_f.wav… + freesound-style strings without note names), (2) scan it into
@@ -2782,8 +3323,10 @@ int cmdPlugTest(const char* spec, bool asInstrument, bool demoVariant,
 
     cadence::Engine engine;
     if (demoVariant)
-        engine.loadDeviceSettings(juce::File(
-            "/Users/ivan/Music/Cadence/settings.json")); // app-identical device
+        engine.loadDeviceSettings(
+            juce::File::getSpecialLocation(
+                juce::File::userApplicationDataDirectory)
+                .getChildFile("Cadence/settings.json")); // app-identical device
     if (engine.initialise().failed())
     {
         std::fprintf(stderr, "error: device: %s\n", engine.lastErrorUtf8());
@@ -4094,6 +4637,286 @@ int cmdArrangerTest()
     return 0;
 }
 
+static int cmdFxTest()
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const auto run = [](const char* label, juce::AudioProcessor* raw) {
+        if (raw == nullptr)
+        {
+            std::fprintf(stderr, "%s: create() returned null\n", label);
+            return false;
+        }
+        std::unique_ptr<juce::AudioProcessor> proc(raw);
+        proc->prepareToPlay(48000.0, 256);
+
+        const auto& params = proc->getParameters();
+        std::printf("%s: %d parameters\n", label, (int) params.size());
+        for (int i = 0; i < juce::jmin(24, (int) params.size()); ++i)
+            if (auto* p = params[(size_t) i])
+                std::printf("  [%2d] %-18s %s\n", i,
+                            p->getName(32).toRawUTF8(),
+                            p->getCurrentValueAsText().toRawUTF8());
+
+        juce::AudioBuffer<float> buffer(2, 256);
+        juce::MidiBuffer midi;
+        juce::Random random(0x5eed);
+        double peak = 0.0;
+        double sum = 0.0;
+        std::int64_t samples = 0;
+        for (int block = 0; block < 160; ++block)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buffer.getWritePointer(ch);
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    const float noise = (random.nextFloat() * 2.0f - 1.0f) * 0.12f;
+                    const float tone = std::sin((float) (samples + i) * 0.031f) * 0.08f;
+                    data[i] = noise + tone;
+                }
+            }
+            if (block == 0)
+            {
+                buffer.setSample(0, 0, 0.9f);
+                buffer.setSample(1, 0, -0.9f);
+            }
+
+            proc->processBlock(buffer, midi);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const auto* data = buffer.getReadPointer(ch);
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    const double v = (double) data[i];
+                    if (! std::isfinite(v))
+                    {
+                        std::fprintf(stderr, "%s: non-finite output\n", label);
+                        return false;
+                    }
+                    peak = std::max(peak, std::abs(v));
+                    sum += v * v;
+                    ++samples;
+                }
+            }
+        }
+        const double rms = samples > 0 ? std::sqrt(sum / (double) samples) : 0.0;
+        std::printf("%s: peak %.4f  rms %.4f\n", label, peak, rms);
+
+        juce::MemoryBlock state;
+        proc->getStateInformation(state);
+        if (state.getSize() == 0)
+        {
+            std::fprintf(stderr, "%s: empty state\n", label);
+            return false;
+        }
+        proc->setStateInformation(state.getData(), (int) state.getSize());
+
+        if (peak < 1.0e-6 || rms < 1.0e-9)
+        {
+            std::fprintf(stderr, "%s: output is silent\n", label);
+            return false;
+        }
+
+        // Push every parameter to both extremes and render a short burst. This
+        // catches unstable feedback/filter states and NaNs that the default
+        // preset would hide. It deliberately does not assert on peak level:
+        // some devices are meant to drive the bus hard.
+        for (size_t pi = 0; pi < params.size(); ++pi)
+        {
+            auto* p = params[pi];
+            if (p == nullptr)
+                continue;
+            for (float value : { 0.0f, 1.0f })
+            {
+                p->setValueNotifyingHost(value);
+                for (int block = 0; block < 4; ++block)
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        auto* data = buffer.getWritePointer(ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                        {
+                            const float noise =
+                                (random.nextFloat() * 2.0f - 1.0f) * 0.12f;
+                            const float tone =
+                                std::sin((float) (block * 256 + i) * 0.031f)
+                                * 0.08f;
+                            data[i] = noise + tone;
+                        }
+                    }
+                    proc->processBlock(buffer, midi);
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        const auto* data = buffer.getReadPointer(ch);
+                        for (int i = 0; i < buffer.getNumSamples(); ++i)
+                            if (! std::isfinite((double) data[i]))
+                            {
+                                std::fprintf(stderr,
+                                             "%s: non-finite output while "
+                                             "sweeping parameter %d\n",
+                                             label, (int) pi);
+                                return false;
+                            }
+                    }
+                }
+            }
+        }
+        return true;
+    };
+
+    bool ok = true;
+    ok = run("EZ Reverb", ezreverb::create()) && ok;
+    ok = run("EZ Delay", ezdelay::create()) && ok;
+    ok = run("EZ AutoFilter", ezautofilter::create()) && ok;
+    ok = run("EZ Chorus", ezchorus::create()) && ok;
+    ok = run("EZ Drive", ezdrive::create()) && ok;
+    ok = run("EZ Utility", ezutility::create()) && ok;
+    if (ok)
+        std::printf("fx-test: all built-in effects rendered a finite, non-silent tail\n");
+    return ok ? 0 : 1;
+}
+
+int cmdMidiLive(double seconds, int inputIndex)
+{
+    cadence::Engine engine;
+    if (engine.initialise().failed())
+    {
+        std::fprintf(stderr, "midi-live: could not open audio/MIDI: %s\n",
+                     engine.lastErrorUtf8());
+        return 1;
+    }
+    const auto names = engine.midiInputNames();
+    if (names.isEmpty())
+    {
+        std::fprintf(stderr, "midi-live: no MIDI inputs detected\n");
+        return 1;
+    }
+    if (inputIndex < 0)
+    {
+        inputIndex = 0;
+        for (int i = 0; i < names.size(); ++i)
+            if (names[i].containsIgnoreCase("minilab"))
+            {
+                inputIndex = i;
+                break;
+            }
+    }
+    if (inputIndex >= names.size())
+        inputIndex = 0;
+    engine.selectMidiInput(inputIndex);
+    std::printf("midi-live: listening on [%d] %s for %.1f s\n",
+                inputIndex, engine.midiInputNameAtUtf8(inputIndex),
+                seconds);
+    std::fflush(stdout);
+
+    std::array<int, 5 * 128> events {};
+    const auto end = std::chrono::steady_clock::now()
+                     + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                           std::chrono::duration<double>(seconds));
+    const char* typeNames[] = { "note-on", "note-off", "CC",
+                                "pitch-bend", "program", "pressure" };
+    while (std::chrono::steady_clock::now() < end)
+    {
+        const int count = engine.pollMidiEvents(events.data(), 128);
+        for (int i = 0; i < count; ++i)
+        {
+            const int* e = events.data() + i * 5;
+            const int type = e[0] >= 0 && e[0] <= 5 ? e[0] : 5;
+            std::printf("%8d ms  %-10s ch=%2d data1=%3d data2=%3d\n",
+                        e[4], typeNames[type], e[1], e[2], e[3]);
+        }
+        std::fflush(stdout);
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+    engine.selectMidiInput(-1);
+    std::printf("midi-live: done\n");
+    return 0;
+}
+
+int cmdMidiMonitor()
+{
+    cadence::Engine engine;
+    engine.newProject(48000);
+
+    const std::array<std::array<unsigned char, 3>, 4> messages {{
+        {{ 0x90, 60, 100 }}, // note-on C4
+        {{ 0xB0, 74, 64 }},  // CC 74 (MiniLab encoder 1)
+        {{ 0xE0, 0x00, 0x40 }}, // pitch-bend centre
+        {{ 0x80, 60, 0 }},   // note-off C4
+    }};
+    for (const auto& message : messages)
+        engine.debugInjectMidi(message.data(), (int) message.size());
+
+    std::array<int, 5 * 8> events {};
+    const int count = engine.pollMidiEvents(events.data(), 8);
+    if (count != 4)
+    {
+        std::fprintf(stderr, "midi-monitor: expected 4 events, got %d\n",
+                     count);
+        return 1;
+    }
+
+    struct Expected { int type, channel, data1, data2; };
+    const std::array<Expected, 4> expected {{
+        { 0, 1, 60, 100 },
+        { 2, 1, 74, 64 },
+        { 3, 1, 8192, 0 },
+        { 1, 1, 60, 0 },
+    }};
+    for (int i = 0; i < count; ++i)
+    {
+        const int base = i * 5;
+        const auto& want = expected[(size_t) i];
+        if (events[(size_t) base] != want.type
+            || events[(size_t) base + 1] != want.channel
+            || events[(size_t) base + 2] != want.data1
+            || events[(size_t) base + 3] != want.data2)
+        {
+            std::fprintf(stderr,
+                         "midi-monitor: event %d mismatch "
+                         "(got %d/%d/%d/%d, want %d/%d/%d/%d)\n",
+                         i, events[(size_t) base],
+                         events[(size_t) base + 1],
+                         events[(size_t) base + 2],
+                         events[(size_t) base + 3], want.type, want.channel,
+                         want.data1, want.data2);
+            return 1;
+        }
+    }
+
+    // Draining is destructive: a second poll must be empty.
+    if (engine.pollMidiEvents(events.data(), 8) != 0)
+    {
+        std::fprintf(stderr, "midi-monitor: second poll was not empty\n");
+        return 1;
+    }
+
+    // A note reserved by a controller action still reaches the monitor (so
+    // the UI can fire the action) while the engine keeps it away from
+    // instruments and recording.
+    engine.setControllerNoteConsumed(60, true);
+    const std::array<unsigned char, 3> padOn {{ 0x90, 60, 100 }};
+    const std::array<unsigned char, 3> padOff {{ 0x80, 60, 0 }};
+    engine.debugInjectMidi(padOn.data(), (int) padOn.size());
+    engine.debugInjectMidi(padOff.data(), (int) padOff.size());
+    const int padCount = engine.pollMidiEvents(events.data(), 8);
+    engine.setControllerNoteConsumed(60, false);
+    if (padCount != 2
+        || events[0] != 0 || events[1] != 1 || events[2] != 60
+        || events[3] != 100
+        || events[5] != 1 || events[7] != 60)
+    {
+        std::fprintf(stderr,
+                     "midi-monitor: controller-owned note did not reach the "
+                     "monitor\n");
+        return 1;
+    }
+
+    std::printf("midi-monitor: note-on, CC, pitch-bend, note-off and "
+                "controller-owned pad round-tripped\n");
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
@@ -4106,6 +4929,18 @@ int main(int argc, char** argv)
 
     if (cmd == "devices")
         return cmdDevices();
+
+    if (cmd == "fx-test")
+        return cmdFxTest();
+
+    if (cmd == "midi-monitor")
+        return cmdMidiMonitor();
+    if (cmd == "midi-live")
+    {
+        const double secs = argc > 2 ? std::atof(argv[2]) : 20.0;
+        const int input = argc > 3 ? std::atoi(argv[3]) : -1;
+        return cmdMidiLive(secs, input);
+    }
 
     if (cmd == "plugins")
         return cmdPlugins();
@@ -4205,6 +5040,8 @@ int main(int argc, char** argv)
 
     if (cmd == "ezsynthtest")
         return cmdEzSynthTest();
+    if (cmd == "ezsynthbench")
+        return cmdEzSynthBench();
     if (cmd == "ezsynthuitest")
         return cmdEzSynthUiTest();
 

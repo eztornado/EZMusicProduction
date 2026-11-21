@@ -1,4 +1,4 @@
-// Editable keyboard shortcuts, persisted in ~/Music/Cadence/ui_settings.json.
+// Editable keyboard shortcuts, persisted in the per-platform app config.
 //
 // The file is interface-only configuration: the engine never reads it. Every
 // window process loads it because keyboard handling happens in the main
@@ -9,6 +9,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+
+import '../app_paths.dart';
 
 /// Every app-level keyboard action. The enum name is the stable key used in
 /// ui_settings.json, so do not rename existing values.
@@ -203,11 +205,9 @@ class ShortcutSettings {
 
   static File get file {
     if (_override != null) return _override!;
-    _file ??= File('${_home()}/Music/Cadence/ui_settings.json');
+    _file ??= cadenceConfigFile('ui_settings.json');
     return _file!;
   }
-
-  static String _home() => Platform.environment['HOME'] ?? '.';
 
   /// Only for tests: use a different ui_settings.json.
   @visibleForTesting

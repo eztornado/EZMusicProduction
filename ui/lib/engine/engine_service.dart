@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../app_paths.dart';
 import 'cadence_bindings.dart';
 import 'cubase/cpr_reader.dart';
 import 'project_snapshot.dart';
@@ -243,8 +244,7 @@ class MixAnalysisSnapshot {
       );
 }
 
-const String kDefaultProjectsDir =
-    '/Users/ivan/Music/EZMusicProduction/Projects';
+String get kDefaultProjectsDir => cadenceProjectsDirectory().path;
 
 class EngineService extends ChangeNotifier {
   /// Sub-windows: attaches to the MAIN window's engine (same process, same
@@ -591,6 +591,31 @@ class EngineService extends ChangeNotifier {
 
   int get selectedMidiInputIndex => _engine.selectedMidiInputIndex;
 
+  /// Drains the engine MIDI monitor (controller/performance mappings).
+  List<EngineMidiEvent> pollMidiEvents([int maxEvents = 256]) =>
+      _engine.pollMidiEvents(maxEvents);
+
+  /// Test hook: injects raw MIDI as if it came from the selected input.
+  bool injectMidiMessage(List<int> bytes) =>
+      _engine.injectMidiMessage(bytes);
+
+  /// Reserves a pad/note for a controller action: the UI still sees it in the
+  /// MIDI monitor, but it no longer plays an instrument or enters a take.
+  void setControllerNoteConsumed(int note, bool consumed) =>
+      _engine.setControllerNoteConsumed(note, consumed);
+
+  /// Live mixer values/updates used by hardware controllers. Unlike the
+  /// normal setters these do not refresh the whole snapshot on every CC;
+  /// [ControllerService] asks for a throttled refresh instead.
+  double liveTrackVolume(int trackId) => _engine.trackVolume(trackId);
+  double liveTrackPan(int trackId) => _engine.trackPan(trackId);
+  double get liveMasterGain => _engine.masterGain;
+  void liveSetTrackVolume(int trackId, double gain) =>
+      _engine.setTrackVolume(trackId, gain);
+  void liveSetTrackPan(int trackId, double pan) =>
+      _engine.setTrackPan(trackId, pan);
+  void liveSetMasterGain(double gain) => _engine.setGain(gain);
+
   /// Selects a single clip (clears any group selection).
   void selectClip(int? clipId) {
     final next = clipId == null ? const <int>{} : <int>{clipId};
@@ -837,6 +862,79 @@ class EngineService extends ChangeNotifier {
   String pluginParamName(
           int trackId, int slotKind, int slotIndex, int paramIndex) =>
       _engine.pluginParamName(trackId, slotKind, slotIndex, paramIndex);
+
+  double pluginParamValue(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamValue(trackId, slotKind, slotIndex, paramIndex);
+
+  String pluginParamText(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamText(trackId, slotKind, slotIndex, paramIndex);
+
+  int pluginParamFlags(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamFlags(trackId, slotKind, slotIndex, paramIndex);
+
+  double pluginParamDefault(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamDefault(trackId, slotKind, slotIndex, paramIndex);
+
+  int pluginParamNumSteps(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamNumSteps(trackId, slotKind, slotIndex, paramIndex);
+
+  String pluginParamTextAtValue(int trackId, int slotKind, int slotIndex,
+          int paramIndex, double value) =>
+      _engine.pluginParamTextAtValue(
+          trackId, slotKind, slotIndex, paramIndex, value);
+
+  String pluginParamId(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamId(trackId, slotKind, slotIndex, paramIndex);
+
+  String pluginParamGroup(
+          int trackId, int slotKind, int slotIndex, int paramIndex) =>
+      _engine.pluginParamGroup(trackId, slotKind, slotIndex, paramIndex);
+
+  int pluginProgramCount(int trackId, int slotKind, int slotIndex) =>
+      _engine.pluginProgramCount(trackId, slotKind, slotIndex);
+
+  String pluginProgramName(
+          int trackId, int slotKind, int slotIndex, int programIndex) =>
+      _engine.pluginProgramName(
+          trackId, slotKind, slotIndex, programIndex);
+
+  int pluginCurrentProgram(int trackId, int slotKind, int slotIndex) =>
+      _engine.pluginCurrentProgram(trackId, slotKind, slotIndex);
+
+  bool setPluginProgram(
+          int trackId, int slotKind, int slotIndex, int programIndex) =>
+      _engine.setPluginProgram(trackId, slotKind, slotIndex, programIndex);
+
+  void setPluginParamValue(
+      int trackId, int slotKind, int slotIndex, int paramIndex, double value) {
+    _engine.setPluginParamValue(
+        trackId, slotKind, slotIndex, paramIndex, value);
+  }
+
+  String trackFxUidAt(int trackId, int slotIndex) =>
+      _engine.trackFxUidAt(trackId, slotIndex);
+
+  String trackInstrumentUid(int trackId) =>
+      _engine.trackInstrumentUid(trackId);
+
+  String masterFxUidAt(int slotIndex) => _engine.masterFxUidAt(slotIndex);
+
+  bool isInternalDeviceUid(String uid) =>
+      uid.startsWith('Internal-') || uid.startsWith('internal:');
+
+  /// True when the track's live instrument is the built-in EZSynth 2.0
+  /// processor. The UID is a stable identifier derived from the built-in
+  /// token, so it survives project reloads and preset changes.
+  bool isEzSynthInstrument(int trackId) {
+    final uid = trackInstrumentUid(trackId).toLowerCase();
+    return uid.startsWith('internal:ezsynth') || uid.contains('-ezsynth-');
+  }
 
   /// Input quantize grid for recorded MIDI takes, in seconds (0 = off).
   /// Returns an error message or null.
@@ -1324,6 +1422,15 @@ class EngineService extends ChangeNotifier {
     refreshPluginList();
   }
 
+  /// Applies the user-editable VST3 folder list. The engine filters its cache
+  /// immediately, so a removed folder disappears from the picker even before
+  /// the next scan.
+  void setPluginSearchDirectories(Iterable<String> paths) {
+    _engine.setPluginSearchPaths(paths.toList(growable: false));
+    if (_pluginsScanned) refreshPluginList();
+    notifyListeners();
+  }
+
   void addTrackFx(int trackId, int pluginIndex) {
     _engine.trackAddFx(trackId, pluginIndex);
     refresh();
@@ -1455,11 +1562,24 @@ class EngineService extends ChangeNotifier {
   // ---- Biblioteca de sonidos (catálogo CC descargable) ----
 
   String libraryDir() {
-    final home = Platform.environment['HOME'] ?? '.';
-    return '$home/Music/EZMusicProduction/Library';
+    final sep = Platform.pathSeparator;
+    final modern =
+        Directory('${cadenceDataDirectory().path}${sep}Library');
+    final home = Platform.isWindows
+        ? (Platform.environment['USERPROFILE'] ?? '')
+        : (Platform.environment['HOME'] ?? '');
+    if (home.isNotEmpty) {
+      final legacy =
+          Directory('$home${sep}Music${sep}EZMusicProduction${sep}Library');
+      if (!modern.existsSync() && legacy.existsSync()) {
+        return legacy.path;
+      }
+    }
+    return modern.path;
   }
 
-  File _libraryStateFile() => File('${libraryDir()}/library_state.json');
+  File _libraryStateFile() =>
+      File('${libraryDir()}${Platform.pathSeparator}library_state.json');
 
   Map<String, dynamic> libraryState() {
     final f = _libraryStateFile();
@@ -1477,8 +1597,8 @@ class EngineService extends ChangeNotifier {
     _libraryStateFile().writeAsStringSync(jsonEncode(state));
   }
 
-  /// Descarga [url] en Library/<category>/<fileName> con progreso 0..1.
-  /// Devuelve un error o null. Escribe <nombre>.license.txt junto al audio
+  /// Descarga [url] en `Library/<category>/<fileName>` con progreso 0..1.
+  /// Devuelve un error o null. Escribe `<nombre>.license.txt` junto al audio
   /// (atribución CC: autor + licencia + fuente).
   Future<String?> downloadLibrarySound({
     required String url,
@@ -1649,8 +1769,8 @@ class EngineService extends ChangeNotifier {
 
   // ---- recording (§7.11) ----
 
-  static const String defaultSettingsPath =
-      '/Users/ivan/Music/Cadence/settings.json';
+  static String get defaultSettingsPath =>
+      cadenceConfigFile('settings.json').path;
 
   bool get isRecording => _engine.isRecording;
   double get recordStartSeconds => _engine.recordStartSeconds;
@@ -2253,10 +2373,9 @@ class EngineService extends ChangeNotifier {
         .trim()
         .replaceAll(RegExp(r'[/:\\]'), '-');
     if (safe.isEmpty) return L10n.current.serviceProjectNeedsName;
-    final dir = inDir ??
-        Directory('/Users/ivan/Music/EZMusicProduction/Projects');
+    final dir = inDir ?? cadenceProjectsDirectory();
     if (!dir.existsSync()) dir.createSync(recursive: true);
-    final path = '${dir.path}/$safe.ezmpp';
+    final path = '${dir.path}${Platform.pathSeparator}$safe.ezmpp';
     final result = _engine.saveProject(path);
     if (result != CadenceResult.ok) return _engine.lastError;
     lastProjectPath = path;

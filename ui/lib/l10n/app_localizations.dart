@@ -2413,6 +2413,60 @@ abstract class AppLocalizations {
   /// **'Directorios indexados'**
   String get prefPluginsIndexedDirs;
 
+  /// No description provided for @prefPluginsAddDir.
+  ///
+  /// In es, this message translates to:
+  /// **'Añadir carpeta'**
+  String get prefPluginsAddDir;
+
+  /// No description provided for @prefPluginsAddDirTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Añadir directorio de plugins'**
+  String get prefPluginsAddDirTitle;
+
+  /// No description provided for @prefPluginsAddDirHelp.
+  ///
+  /// In es, this message translates to:
+  /// **'Escribe una ruta absoluta que contenga plugins VST3. Puedes usar ~ para tu carpeta personal. La carpeta se creará si no existe.'**
+  String get prefPluginsAddDirHelp;
+
+  /// No description provided for @prefPluginsAddDirHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Ruta absoluta o ~/VST3'**
+  String get prefPluginsAddDirHint;
+
+  /// No description provided for @prefPluginsRemoveDir.
+  ///
+  /// In es, this message translates to:
+  /// **'Quitar carpeta'**
+  String get prefPluginsRemoveDir;
+
+  /// No description provided for @prefPluginsRestoreDefaults.
+  ///
+  /// In es, this message translates to:
+  /// **'Restaurar predeterminados'**
+  String get prefPluginsRestoreDefaults;
+
+  /// No description provided for @prefPluginsDirsChanged.
+  ///
+  /// In es, this message translates to:
+  /// **'Cambios guardados. Pulsa Re-escanear para actualizar la biblioteca.'**
+  String get prefPluginsDirsChanged;
+
+  /// No description provided for @prefPluginsDataDir.
+  ///
+  /// In es, this message translates to:
+  /// **'Los ajustes se guardan en {path}'**
+  String prefPluginsDataDir(String path);
+
+  /// No description provided for @prefPluginsPathEmpty.
+  ///
+  /// In es, this message translates to:
+  /// **'Escribe una ruta.'**
+  String get prefPluginsPathEmpty;
+
   /// No description provided for @prefPluginsDirsHelp.
   ///
   /// In es, this message translates to:
@@ -2586,6 +2640,210 @@ abstract class AppLocalizations {
   /// In es, this message translates to:
   /// **'Supr'**
   String get prefShortcutKeyDelete;
+
+  /// No description provided for @appMenuPerformance.
+  ///
+  /// In es, this message translates to:
+  /// **'Interpretación (MiniLab 3)'**
+  String get appMenuPerformance;
+
+  /// No description provided for @performanceTitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Interpretación'**
+  String get performanceTitle;
+
+  /// No description provided for @performanceSubtitle.
+  ///
+  /// In es, this message translates to:
+  /// **'Control por hardware de la pista seleccionada'**
+  String get performanceSubtitle;
+
+  /// No description provided for @performanceTrack.
+  ///
+  /// In es, this message translates to:
+  /// **'Pista'**
+  String get performanceTrack;
+
+  /// No description provided for @performanceDevice.
+  ///
+  /// In es, this message translates to:
+  /// **'Dispositivo'**
+  String get performanceDevice;
+
+  /// No description provided for @performanceSoftTakeover.
+  ///
+  /// In es, this message translates to:
+  /// **'Captura suave'**
+  String get performanceSoftTakeover;
+
+  /// No description provided for @performanceRelative.
+  ///
+  /// In es, this message translates to:
+  /// **'Encoders relativos'**
+  String get performanceRelative;
+
+  /// No description provided for @performanceLearn.
+  ///
+  /// In es, this message translates to:
+  /// **'Aprender'**
+  String get performanceLearn;
+
+  /// No description provided for @performanceLearning.
+  ///
+  /// In es, this message translates to:
+  /// **'Mueve un control…'**
+  String get performanceLearning;
+
+  /// No description provided for @performanceCancelLearn.
+  ///
+  /// In es, this message translates to:
+  /// **'Cancelar'**
+  String get performanceCancelLearn;
+
+  /// No description provided for @performanceNoTrack.
+  ///
+  /// In es, this message translates to:
+  /// **'Selecciona o crea una pista'**
+  String get performanceNoTrack;
+
+  /// No description provided for @performanceNoDevice.
+  ///
+  /// In es, this message translates to:
+  /// **'Esta pista no tiene un dispositivo automatizable'**
+  String get performanceNoDevice;
+
+  /// No description provided for @performanceEncoder.
+  ///
+  /// In es, this message translates to:
+  /// **'ENC'**
+  String get performanceEncoder;
+
+  /// No description provided for @performanceFader.
+  ///
+  /// In es, this message translates to:
+  /// **'FADER'**
+  String get performanceFader;
+
+  /// No description provided for @performanceTrackVolume.
+  ///
+  /// In es, this message translates to:
+  /// **'Volumen de pista'**
+  String get performanceTrackVolume;
+
+  /// No description provided for @performanceTrackPan.
+  ///
+  /// In es, this message translates to:
+  /// **'Pan de pista'**
+  String get performanceTrackPan;
+
+  /// No description provided for @performanceMasterVolume.
+  ///
+  /// In es, this message translates to:
+  /// **'Volumen master'**
+  String get performanceMasterVolume;
+
+  /// No description provided for @performanceNoParameter.
+  ///
+  /// In es, this message translates to:
+  /// **'Sin parámetro'**
+  String get performanceNoParameter;
+
+  /// No description provided for @performanceInput.
+  ///
+  /// In es, this message translates to:
+  /// **'Entrada MIDI'**
+  String get performanceInput;
+
+  /// No description provided for @performanceNoInput.
+  ///
+  /// In es, this message translates to:
+  /// **'Sin entrada MIDI'**
+  String get performanceNoInput;
+
+  /// No description provided for @performanceHintCatch.
+  ///
+  /// In es, this message translates to:
+  /// **'Mueve un knob o fader. Engancha cuando alcanza el valor actual.'**
+  String get performanceHintCatch;
+
+  /// No description provided for @performanceHintLearn.
+  ///
+  /// In es, this message translates to:
+  /// **'Pulsa el icono de objetivo en un control y muévelo para reasignar su CC.'**
+  String get performanceHintLearn;
+
+  /// No description provided for @performanceActions.
+  ///
+  /// In es, this message translates to:
+  /// **'Transporte y acciones'**
+  String get performanceActions;
+
+  /// No description provided for @performanceActionHint.
+  ///
+  /// In es, this message translates to:
+  /// **'Pulsa el icono de objetivo y después un pad o botón.'**
+  String get performanceActionHint;
+
+  /// No description provided for @performanceActionUnassigned.
+  ///
+  /// In es, this message translates to:
+  /// **'Sin asignar'**
+  String get performanceActionUnassigned;
+
+  /// No description provided for @performanceActionClear.
+  ///
+  /// In es, this message translates to:
+  /// **'Borrar disparador'**
+  String get performanceActionClear;
+
+  /// No description provided for @performanceLearningAction.
+  ///
+  /// In es, this message translates to:
+  /// **'Pulsa un pad o botón…'**
+  String get performanceLearningAction;
+
+  /// No description provided for @performanceTapTempo.
+  ///
+  /// In es, this message translates to:
+  /// **'Tap tempo'**
+  String get performanceTapTempo;
+
+  /// No description provided for @performanceClose.
+  ///
+  /// In es, this message translates to:
+  /// **'Cerrar'**
+  String get performanceClose;
+
+  /// No description provided for @performanceParamCount.
+  ///
+  /// In es, this message translates to:
+  /// **'{count} parámetros'**
+  String performanceParamCount(int count);
+
+  /// No description provided for @performanceCatch.
+  ///
+  /// In es, this message translates to:
+  /// **'CAPTURA'**
+  String get performanceCatch;
+
+  /// No description provided for @performanceMidiActivity.
+  ///
+  /// In es, this message translates to:
+  /// **'Actividad MIDI'**
+  String get performanceMidiActivity;
+
+  /// No description provided for @performanceGenericController.
+  ///
+  /// In es, this message translates to:
+  /// **'Controlador genérico'**
+  String get performanceGenericController;
+
+  /// No description provided for @performanceMiniLab.
+  ///
+  /// In es, this message translates to:
+  /// **'MiniLab 3'**
+  String get performanceMiniLab;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

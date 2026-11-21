@@ -16,6 +16,8 @@ import '../engine/engine_service.dart';
 import '../engine/project_snapshot.dart';
 import '../l10n/l10n.dart';
 import 'channel_settings_dialog.dart' show showChannelSettingsDialog;
+import 'device_editor_dialog.dart'
+    show editTrackFx, editMasterFx;
 import 'design.dart';
 import 'mix_assistant_dialog.dart' show showMixAssistantDialog;
 import 'plugin_picker_dialog.dart' show showPluginPickerDialog;
@@ -152,11 +154,13 @@ class _MixerZoneState extends State<MixerZone> {
                                         tracks[i].id,
                                         slot,
                                       ),
-                                  onOpenEditor:
-                                      (slot) => service.openTrackPluginEditor(
-                                        tracks[i].id,
-                                        slot,
-                                      ),
+                                  onOpenEditor: (slot) => editTrackFx(
+                                    context,
+                                    service,
+                                    tracks[i].id,
+                                    slot,
+                                    tracks[i].fxNames[slot],
+                                  ),
                                   onOpenChannel:
                                       () => showChannelSettingsDialog(
                                         context,
@@ -248,8 +252,12 @@ class _MixerZoneState extends State<MixerZone> {
                                         service.toggleMasterFxBypass(slot),
                                 onRemoveFx:
                                     (slot) => service.removeMasterFx(slot),
-                                onOpenEditor:
-                                    (slot) => service.openMasterFxEditor(slot),
+                                onOpenEditor: (slot) => editMasterFx(
+                                  context,
+                                  service,
+                                  slot,
+                                  snapshot.masterFxNames[slot],
+                                ),
                                 onAddFx: () async {
                                   final picked = await showPluginPickerDialog(
                                     context,

@@ -1263,6 +1263,35 @@ class AppLocalizationsJa extends AppLocalizations {
   String get prefPluginsIndexedDirs => '索引するフォルダー';
 
   @override
+  String get prefPluginsAddDir => 'フォルダーを追加';
+
+  @override
+  String get prefPluginsAddDirTitle => 'プラグインフォルダーを追加';
+
+  @override
+  String get prefPluginsAddDirHelp => 'VST3 プラグインを含む絶対パスを入力してください。ホームフォルダーは ~ で指定できます。フォルダーが存在しない場合は作成されます。';
+
+  @override
+  String get prefPluginsAddDirHint => '絶対パスまたは ~/VST3';
+
+  @override
+  String get prefPluginsRemoveDir => 'フォルダーを削除';
+
+  @override
+  String get prefPluginsRestoreDefaults => 'デフォルトに戻す';
+
+  @override
+  String get prefPluginsDirsChanged => '変更を保存しました。ライブラリを更新するには再スキャンを押してください。';
+
+  @override
+  String prefPluginsDataDir(String path) {
+    return '設定の保存先: $path';
+  }
+
+  @override
+  String get prefPluginsPathEmpty => 'パスを入力してください。';
+
+  @override
   String get prefPluginsDirsHelp => 'VST3 プラグイン（.vst3）をここに置いてください。エンジンがこれらのフォルダーを走査して登録します。';
 
   @override
@@ -1350,4 +1379,108 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get prefShortcutKeyDelete => 'Delete';
+
+  @override
+  String get appMenuPerformance => 'パフォーマンス (MiniLab 3)';
+
+  @override
+  String get performanceTitle => 'パフォーマンス';
+
+  @override
+  String get performanceSubtitle => '選択トラックのハードウェア操作';
+
+  @override
+  String get performanceTrack => 'トラック';
+
+  @override
+  String get performanceDevice => 'デバイス';
+
+  @override
+  String get performanceSoftTakeover => 'ソフトテイクオーバー';
+
+  @override
+  String get performanceRelative => '相対エンコーダー';
+
+  @override
+  String get performanceLearn => '学習';
+
+  @override
+  String get performanceLearning => 'コントロールを動かしてください…';
+
+  @override
+  String get performanceCancelLearn => 'キャンセル';
+
+  @override
+  String get performanceNoTrack => 'トラックを選択または作成してください';
+
+  @override
+  String get performanceNoDevice => 'このトラックには操作可能なデバイスがありません';
+
+  @override
+  String get performanceEncoder => 'ENC';
+
+  @override
+  String get performanceFader => 'FADER';
+
+  @override
+  String get performanceTrackVolume => 'トラック音量';
+
+  @override
+  String get performanceTrackPan => 'トラックパン';
+
+  @override
+  String get performanceMasterVolume => 'マスター音量';
+
+  @override
+  String get performanceNoParameter => 'パラメーターなし';
+
+  @override
+  String get performanceInput => 'MIDI 入力';
+
+  @override
+  String get performanceNoInput => 'MIDI 入力なし';
+
+  @override
+  String get performanceHintCatch => 'ノブまたはフェーダーを動かしてください。現在値に達すると追従します。';
+
+  @override
+  String get performanceHintLearn => 'コントロールのターゲットアイコンを押してから動かすと CC を再割り当てできます。';
+
+  @override
+  String get performanceActions => 'トランスポートとアクション';
+
+  @override
+  String get performanceActionHint => 'ターゲットアイコンを押してから、パッドかボタンを押します。';
+
+  @override
+  String get performanceActionUnassigned => '未割り当て';
+
+  @override
+  String get performanceActionClear => 'トリガーを消去';
+
+  @override
+  String get performanceLearningAction => 'パッドかボタンを押してください…';
+
+  @override
+  String get performanceTapTempo => 'タップテンポ';
+
+  @override
+  String get performanceClose => '閉じる';
+
+  @override
+  String performanceParamCount(int count) {
+    return '$count パラメーター';
+  }
+
+  @override
+  String get performanceCatch => 'キャッチ';
+
+  @override
+  String get performanceMidiActivity => 'MIDI アクティビティ';
+
+  @override
+  String get performanceGenericController => '汎用コントローラー';
+
+  @override
+  String get performanceMiniLab => 'MiniLab 3';
 }

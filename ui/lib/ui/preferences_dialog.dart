@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app_paths.dart';
 import '../debug/debug_log.dart';
 import '../debug/debug_settings.dart';
 import '../engine/engine_service.dart';
@@ -417,10 +418,11 @@ class _RailItem extends StatelessWidget {
 }
 
 class _SettingsCard extends StatelessWidget {
-  const _SettingsCard({required this.child, this.title});
+  const _SettingsCard({required this.child, this.title, this.trailing});
 
   final Widget child;
   final String? title;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -435,14 +437,22 @@ class _SettingsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (title != null) ...[
-            Text(
-              title!,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: _text,
-              ),
+          if (title != null || trailing != null) ...[
+            Row(
+              children: [
+                if (title != null)
+                  Expanded(
+                    child: Text(
+                      title!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _text,
+                      ),
+                    ),
+                  ),
+                if (trailing != null) trailing!,
+              ],
             ),
             const SizedBox(height: 10),
           ],
@@ -715,13 +725,21 @@ class _PluginsSectionState extends State<_PluginsSection> {
   Timer? _poll;
   late bool _scanning;
   late List<PluginSearchDirectory> _directories;
+  late final PluginDirectoryStore _store;
+  bool _rescanPending = false;
 
   EngineService get _service => widget.service;
+
+  List<String> get _paths => [for (final dir in _directories) dir.path];
 
   @override
   void initState() {
     super.initState();
-    _directories = defaultPluginSearchDirectories();
+    _store = PluginDirectoryStore();
+    _directories = _store.load();
+    // Apply the persisted list before the first scan. This is idempotent with
+    // the same call made during app boot.
+    _service.setPluginSearchDirectories(_paths);
     if (!_service.pluginsScanned) _service.refreshPluginList();
     _scanning = _service.scanActive;
     _poll = Timer.periodic(const Duration(milliseconds: 800), (_) {
@@ -742,12 +760,63 @@ class _PluginsSectionState extends State<_PluginsSection> {
     super.dispose();
   }
 
+  void _persistDirectories() {
+    _store.save(_directories);
+    _service.setPluginSearchDirectories(_paths);
+  }
+
   void _scan() {
+    _service.setPluginSearchDirectories(_paths);
     _service.scanPlugins();
     setState(() {
       _scanning = _service.scanActive;
-      _directories = defaultPluginSearchDirectories();
+      _rescanPending = false;
     });
+  }
+
+  Future<void> _addDirectory() async {
+    final path = await showDialog<String>(
+      context: context,
+      builder: (_) => const _AddPluginDirectoryDialog(),
+    );
+    if (path == null) return;
+    final normalized = normalizePluginDirectoryPath(path);
+    if (normalized.isEmpty) return;
+
+    final before = _directories.length;
+    if (addPluginSearchDirectory(_directories, normalized).length == before) {
+      return; // already listed
+    }
+
+    // Create it so the user can drop plugins in immediately. If creation
+    // fails (permissions), the row simply shows "No existe".
+    try {
+      Directory(normalized).createSync(recursive: true);
+    } catch (_) {}
+
+    setState(() {
+      _directories = addPluginSearchDirectory(_directories, normalized);
+      _rescanPending = true;
+    });
+    _persistDirectories();
+  }
+
+  void _removeDirectory(PluginSearchDirectory directory) {
+    if (_directories.length <= 1) return;
+    setState(() {
+      _directories = removePluginSearchDirectory(_directories, directory.path);
+      _rescanPending = true;
+    });
+    _persistDirectories();
+  }
+
+  void _restoreDefaults() {
+    _store.reset();
+    setState(() {
+      _directories = defaultPluginSearchDirectories();
+      _rescanPending = true;
+    });
+    _service.setPluginSearchDirectories(_paths);
   }
 
   @override
@@ -824,10 +893,34 @@ class _PluginsSectionState extends State<_PluginsSection> {
             const SizedBox(height: 14),
             _SettingsCard(
               title: l10n.prefPluginsIndexedDirs,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton.icon(
+                    onPressed: _scanning ? null : _addDirectory,
+                    icon: const Icon(Icons.add, size: 14),
+                    label: Text(
+                      l10n.prefPluginsAddDir,
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _scanning ? null : _restoreDefaults,
+                    tooltip: l10n.prefPluginsRestoreDefaults,
+                    icon: const Icon(Icons.settings_backup_restore, size: 16),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final dir in _directories) _DirectoryRow(directory: dir),
+                  for (final dir in _directories)
+                    _DirectoryRow(
+                      directory: dir,
+                      canRemove: !_scanning && _directories.length > 1,
+                      onRemove: () => _removeDirectory(dir),
+                    ),
                   if (_directories.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -838,7 +931,17 @@ class _PluginsSectionState extends State<_PluginsSection> {
                     ),
                   const SizedBox(height: 8),
                   Text(
-                    l10n.prefPluginsDirsHelp,
+                    _rescanPending
+                        ? l10n.prefPluginsDirsChanged
+                        : l10n.prefPluginsDirsHelp,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: _rescanPending ? _accent : _faint,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    l10n.prefPluginsDataDir(cadenceConfigDirectory().path),
                     style: const TextStyle(fontSize: 10, color: _faint),
                   ),
                   if (_isMacOs) ...[
@@ -894,9 +997,15 @@ class _FormatChip extends StatelessWidget {
 }
 
 class _DirectoryRow extends StatelessWidget {
-  const _DirectoryRow({required this.directory});
+  const _DirectoryRow({
+    required this.directory,
+    this.onRemove,
+    this.canRemove = false,
+  });
 
   final PluginSearchDirectory directory;
+  final VoidCallback? onRemove;
+  final bool canRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -956,8 +1065,94 @@ class _DirectoryRow extends StatelessWidget {
               ),
             ),
           ),
+          if (onRemove != null) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              onPressed: canRemove ? onRemove : null,
+              tooltip: l10n.prefPluginsRemoveDir,
+              icon: const Icon(Icons.close_rounded, size: 14),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _AddPluginDirectoryDialog extends StatefulWidget {
+  const _AddPluginDirectoryDialog();
+
+  @override
+  State<_AddPluginDirectoryDialog> createState() =>
+      _AddPluginDirectoryDialogState();
+}
+
+class _AddPluginDirectoryDialogState extends State<_AddPluginDirectoryDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = _controller.text.trim();
+    if (value.isEmpty) {
+      setState(() => _error = context.l10n.prefPluginsPathEmpty);
+      return;
+    }
+    Navigator.pop(context, value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return AlertDialog(
+      backgroundColor: _panel,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      title: Text(
+        l10n.prefPluginsAddDirTitle,
+        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+      ),
+      content: SizedBox(
+        width: 430,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              l10n.prefPluginsAddDirHelp,
+              style: const TextStyle(fontSize: 11, color: _muted),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: l10n.prefPluginsAddDirHint,
+                errorText: _error,
+                isDense: true,
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(l10n.projectCancel),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(l10n.prefPluginsAddDir),
+        ),
+      ],
     );
   }
 }

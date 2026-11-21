@@ -41,11 +41,12 @@ Sin buscar plugins, sin packs adicionales que comprar y sin suscripciones. Insta
 | **Timeline y grabación** | Arreglo multipista para audio y MIDI, snap al beat, cortar/copiar/pegar, metrónomo, tempo y compás, playhead con precisión de frame. |
 | **Librería de sonidos** | Más de 21.000 loops y golpes sueltos gratis, con búsqueda por categoría y tipo, escucha previa y colocación directa en la pista seleccionada. |
 | **Instrumentos incluidos** | EZInstruments (128 sonidos General MIDI + kit de batería), EZSynth, EZDrums y EZOrquestra. |
-| **Efectos incluidos** | EZQ4 (ecualizador paramétrico de 8 bandas), EZCompresor, EZLimitador y EZArpegiador. |
+| **Efectos incluidos** | EZQ4 (ecualizador paramétrico de 8 bandas), EZCompresor, EZLimitador, EZ Reverb, EZ Delay, EZ AutoFilter, EZ Chorus, EZ Drive, EZ Utility y EZArpegiador. |
 | **Herramientas IA** | Asistente de mezcla IA (auto-balanceo de niveles, pan, EQ, compresión), arreglista de canciones IA, generación musical IA (MusicVAE/LSTM). |
 | **Control remoto** | Servidor WebSocket por LAN para control y monitorización externa desde apps compañeras. |
 | **Piano Roll** | Dibujo, redimensionado y edición de velocidad de notas, más cuantización no destructiva con rejilla, swing, catch range, iQ y freeze. |
 | **Mezclador y efectos** | Canales con insertos, sends, pan, mute/solo y medidores, canal master y Channel Settings. Aloja plugins AU y VST3. |
+| **Control por hardware** | MiniLab 3 y controladores MIDI genéricos: 8 encoders, 4 faders, acciones de transporte/pads, MIDI learn, encoders relativos y captura suave. |
 | **Automatización** | Lanes de volumen, pan, sustain y parámetros de plugins, con puntos editables y segmentos lineales. |
 | **Importación de Cubase** | Abre proyectos `.cpr` en solo lectura y reconstruye pistas, notas, audio, tempo y estados de plugin. Tus originales no se tocan. |
 | **Exportación** | WAV estéreo offline a la frecuencia del proyecto, en 16 o 24 bits, más rápido que en tiempo real. |
@@ -77,12 +78,20 @@ La librería indexa **más de 21.000 sonidos gratis** —loops, baterías, percu
 
 ### Efectos incluidos
 
-Cuatro procesadores vienen con la app, listos para añadir a cualquier canal o al bus master:
+Nueve procesadores de audio y un efecto MIDI vienen con la app, listos para añadir a cualquier canal o al bus master:
 
 - **EZQ4** — un ecualizador paramétrico de 8 bandas con flujo de trabajo estilo Pro-Q: activación/tipo/frecuencia/ganancia/Q por banda, cortes de 24 dB/oct y filtrado IIR de fase natural basado en biquads RBJ.
 - **EZCompresor** — un procesador de dinámica estéreo con rodilla suave, ataque/liberación y mezcla paralela.
 - **EZLimitador** — un limitador brick-wall con look-ahead para el bus master, con detección de pico estéreo y techo de seguridad.
+- **EZ Reverb** — una reverb algorítmica estéreo con modos Hall, Room y Plate, pre-delay, tamaño, decay, damping, cortes de graves/agudos, anchura, movimiento, nivel de primeras reflexiones, difusión, freeze y mezcla seca/húmeda.
+- **EZ Delay** — un delay estéreo sincronizable al tempo con diez divisiones, feedback filtrado, ping-pong, desfase estéreo, freeze y mezcla seca/húmeda.
+- **EZ AutoFilter** — un filtro de estado variable TPT resonante con modos paso bajo de 12/24 dB, paso banda y paso alto, seguidor de envolvente enlazado, LFO, drive y mezcla seca/húmeda.
+- **EZ Chorus** — un chorus estéreo de 2 a 4 voces con modos Flanger y Ensemble independientes, feedback, anchura estéreo, delay base y ajuste de salida.
+- **EZ Drive** — saturación con sobremuestreo 2x en modos soft, hard, tube y fold, con bias, inclinación de tono graves/agudos, corte de graves para eliminar continua, mezcla y salida.
+- **EZ Utility** — ganancia, balance estéreo, anchura mid/side, mono, inversión de fase independiente y cortes de graves/agudos para limpiar un canal.
 - **EZArpegiador** — un MIDI-FX arpegiador que se coloca en el slot de inserto MIDI del instrumento, consumiendo notas y reemitiéndolas arpegiadas, sincronizado al transporte.
+
+Los efectos integrados se abren en un editor Flutter adaptativo: arrastra un knob para cambiar un valor, haz doble clic para restablecerlo y usa los menús para modos y divisiones. Los plugins AU/VST3 externos conservan su editor nativo.
 
 ### Herramientas impulsadas por IA
 
@@ -105,6 +114,14 @@ La vista sigue al playhead mientras reproduces y grabas. El editor también se p
 El mezclador da a cada pista un canal con insertos, sends, pan, mute/solo y medidor de nivel, además de un canal master. **Channel Settings** muestra el instrumento, los insertos y el routing del canal seleccionado.
 
 EZMusicProduction aloja instrumentos y efectos **AU y VST3**. Hay lanes de automatización para volumen, pan, sustain (CC64) y cualquier parámetro de plugin: haz clic para añadir un punto, arrástralo para moverlo y haz clic derecho para borrarlo.
+
+### Controladores de hardware y vista de interpretación
+
+El motor refleja la entrada MIDI seleccionada en una capa de controladores, así que el hardware puede manejar la DAW sin un segundo puerto virtual. **Interpretación** en la barra de herramientas abre un panel diseñado para el Arturia MiniLab 3: los ocho encoders controlan los parámetros del dispositivo enfocado y los cuatro faders ajustan volumen de pista, pan, un parámetro macro y volumen master. Se reconocen tanto el mapa de CC de Arturia como el de modo DAW del MiniLab 3.
+
+Cualquier control se puede reasignar con MIDI learn, así que también funciona con controladores genéricos. Los controles absolutos usan **captura suave**: un knob físico solo empieza a mover un parámetro cuando alcanza su valor actual, evitando saltos al cambiar de pista o de dispositivo. Los encoders pueden pasar a modo **relativo** para giro infinito. El mapeo se guarda en `~/Music/Cadence/controller_settings.json` y sigue funcionando con el panel cerrado.
+
+La franja **Transporte y acciones** añade play/pausa, stop, grabación, metrónomo, tap tempo, undo y mute/solo de la pista seleccionada. Pulsa el icono de objetivo y después un pad o botón para asignarlo. Las notas usadas por una acción quedan reservadas para la capa de control, así que un pad asignado ya no reproduce un instrumento ni entra en una grabación.
 
 ### Trae tus proyectos de Cubase
 

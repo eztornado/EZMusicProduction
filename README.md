@@ -43,11 +43,12 @@ No plugin hunting, no add-on packs to buy, no subscriptions. Install it, open it
 | **Timeline and recording** | Multitrack arrangement for audio and MIDI, beat snapping, split/copy/paste, metronome, tempo and time signature, frame-accurate playhead. |
 | **Sound library** | More than 21,000 free loops and one-shots, searchable by category and type, with in-place audition and direct placement on the selected track. |
 | **Built-in instruments** | EZInstruments (128 General MIDI sounds + drum kit), EZSynth, EZDrums and EZOrquestra. |
-| **Built-in effects** | EZQ4 (8-band parametric EQ), EZCompressor, EZLimiter and EZArpeggiator. |
+| **Built-in effects** | EZQ4 (8-band parametric EQ), EZCompressor, EZLimiter, EZ Reverb, EZ Delay, EZ AutoFilter, EZ Chorus, EZ Drive, EZ Utility and EZArpeggiator. |
 | **AI tools** | AI Mix Assistant (auto-balance levels, pan, EQ, compression), AI Song Arranger (generate full song structures), AI Music Generation (MusicVAE/LSTM melody generation). |
 | **Remote control** | LAN WebSocket server for external control and monitoring from companion apps. |
 | **Piano Roll** | Note drawing, resizing and velocity editing, plus non-destructive quantize with grid, swing, catch range, iQ and freeze. |
 | **Mixer and effects** | Channel strips with inserts, sends, pan, mute/solo and meters, a master strip and Channel Settings. Hosts AU and VST3 plugins. |
+| **Hardware control** | MiniLab 3 and generic MIDI controllers: 8 encoders, 4 faders, transport/pad actions, MIDI learn, relative encoders and soft takeover. |
 | **Automation** | Volume, pan, sustain and plugin-parameter lanes with editable points and linear segments. |
 | **Cubase import** | Opens `.cpr` projects read-only and rebuilds their tracks, notes, audio, tempo and plugin states. Your originals are never touched. |
 | **Export** | Offline stereo WAV at the project sample rate, in 16 or 24 bits, faster than real time. |
@@ -79,12 +80,20 @@ The library indexes **more than 21,000 free sounds** — loops, drums, percussio
 
 ### Built-in effects
 
-Four processors ship with the app, ready to drop on any channel or the master bus:
+Nine audio processors and a MIDI effect ship with the app, ready to drop on any channel or the master bus:
 
 - **EZQ4** — an 8-band parametric EQ with Pro-Q-style workflow: per-band enable/type/frequency/gain/Q, plus 24 dB/oct cuts and natural-phase IIR filtering based on RBJ-cookbook biquads.
 - **EZCompressor** — a stereo-linked dynamics processor with soft knee, attack/release and parallel mix.
 - **EZLimiter** — a look-ahead brick-wall limiter for the master bus, with stereo-linked peak detection and a hard-clamp safety ceiling.
+- **EZ Reverb** — a stereo algorithmic reverb with Hall, Room and Plate modes, pre-delay, size, decay, damping, low/high cuts, width, movement, early level, diffusion, freeze and dry/wet.
+- **EZ Delay** — a tempo-syncable stereo delay with ten note divisions, filtered feedback, ping-pong routing, stereo offset, freeze and dry/wet.
+- **EZ AutoFilter** — a resonant TPT state-variable filter with 12/24 dB low-pass, band-pass and high-pass modes, a linked envelope follower, an LFO, drive and dry/wet.
+- **EZ Chorus** — a 2–4 voice stereo chorus with separate Flanger and Ensemble modes, feedback, stereo width, base delay and output trim.
+- **EZ Drive** — 2x oversampled soft, hard, tube and fold saturation with bias, a low/high tone tilt, DC-blocking low cut, mix and output.
+- **EZ Utility** — gain, stereo balance, mid/side width, mono, independent phase invert and low/high cut for cleaning up a channel.
 - **EZArpeggiator** — a MIDI-FX arpeggiator that sits in the instrument track's MIDI insert slot, consuming notes and re-emitting them arpeggiated, sample-locked to the host transport.
+
+Built-in effects open in a responsive Flutter device editor: drag a knob to change a value, double-click to reset it, and use the menus for modes and note divisions. External AU/VST3 plug-ins keep their own native editor.
 
 ### AI-powered tools
 
@@ -107,6 +116,14 @@ The view follows the playhead while playing and recording. The editor can also b
 The mixer gives every track a channel strip with inserts, sends, pan, mute/solo and a level meter, plus a master strip. **Channel Settings** exposes the instrument, inserts and routing for the selected channel.
 
 EZMusicProduction hosts **AU and VST3** instruments and effects. Automation lanes are available for volume, pan, sustain (CC64) and any plugin parameter: click to add a point, drag to move it and right-click to delete it.
+
+### Hardware controllers and the performance view
+
+The engine mirrors the selected MIDI input into a controller layer, so hardware can drive the DAW without a second virtual port. **Performance** in the toolbar opens a panel designed around the Arturia MiniLab 3: eight encoders map to the focused device's parameters, while the four faders control track volume, pan, a macro parameter and master volume. Both the MiniLab 3 Arturia and DAW CC maps are recognised.
+
+Every control can be reassigned with MIDI learn, so any generic controller works too. Absolute controls use **soft takeover**: a physical knob starts moving a parameter only after it reaches the current value, avoiding jumps when switching tracks or devices. Encoders can be switched to **relative** mode for endless rotation. The mapping is stored in `~/Music/Cadence/controller_settings.json` and keeps working while the panel is closed.
+
+The panel's **Transport & actions** strip adds play/pause, stop, record, metronome, tap tempo, undo, and selected-track mute/solo. Click the target icon and press a pad or button to bind it. Notes used by an action are reserved for the controller layer, so a mapped pad no longer plays an instrument track or enters a recording.
 
 ### Bring your Cubase projects
 
@@ -223,6 +240,23 @@ Copy the engine DLL next to the executable:
 ```powershell
 copy build\engine\Release\cadence_engine.dll ui\build\windows\x64\runner\Release\
 ```
+
+### Persistent data and plugin folders
+
+The app is portable, but settings are never written next to the executable.
+On first launch it creates the native per-user folders and migrates the old
+`~/Music/Cadence` settings when present:
+
+| Platform | Settings / cache | App-managed VST3 folder | Projects |
+| --- | --- | --- | --- |
+| macOS | `~/Library/Cadence` | `~/Library/Cadence/Plugins/VST3` | `~/Music/EZMusicProduction/Projects` |
+| Windows | `%APPDATA%\Cadence` | `%LOCALAPPDATA%\Cadence\Plugins\VST3` | `%USERPROFILE%\Music\EZMusicProduction\Projects` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/Cadence` | `${XDG_DATA_HOME:-~/.local/share}/Cadence/Plugins/VST3` | `~/Music/EZMusicProduction/Projects` |
+
+Preferences → Plugins lists the indexed VST3 folders. Folders can be added,
+removed and restored to defaults; the list is saved in `plugin_directories.json`
+inside the settings folder. The engine scans only that list, and its plugin
+cache is pruned when a folder is removed.
 
 ### Tests and CLI
 

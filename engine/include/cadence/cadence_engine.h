@@ -172,6 +172,50 @@ CADENCE_API const char* cadence_engine_plugin_param_text(CadenceEngine* engine,
                                              CadenceTrackId track_id,
                                              int slot_kind, int slot_index,
                                              int param_index);
+/* Metadata for a generic device editor. `flags` is a bit set:
+   1 = boolean, 2 = choice/enum, 4 = integer. `num_steps` is 0 for a
+   continuous parameter, 2 for a boolean, or the choice count. */
+CADENCE_API int cadence_engine_plugin_param_flags(CadenceEngine* engine,
+                                      CadenceTrackId track_id,
+                                      int slot_kind, int slot_index,
+                                      int param_index);
+CADENCE_API float cadence_engine_plugin_param_default(CadenceEngine* engine,
+                                          CadenceTrackId track_id,
+                                          int slot_kind, int slot_index,
+                                          int param_index);
+CADENCE_API int cadence_engine_plugin_param_num_steps(CadenceEngine* engine,
+                                          CadenceTrackId track_id,
+                                          int slot_kind, int slot_index,
+                                          int param_index);
+CADENCE_API const char* cadence_engine_plugin_param_text_at_value(
+    CadenceEngine* engine, CadenceTrackId track_id, int slot_kind,
+    int slot_index, int param_index, float normalised_value);
+/* Stable parameter identifier and UI group. Built-in instruments provide
+   both; external plug-ins fall back to their display name. */
+CADENCE_API const char* cadence_engine_plugin_param_id(CadenceEngine* engine,
+                                           CadenceTrackId track_id,
+                                           int slot_kind, int slot_index,
+                                           int param_index);
+CADENCE_API const char* cadence_engine_plugin_param_group(CadenceEngine* engine,
+                                              CadenceTrackId track_id,
+                                              int slot_kind, int slot_index,
+                                              int param_index);
+/* Program/preset list exposed by the live plug-in. */
+CADENCE_API int cadence_engine_plugin_program_count(CadenceEngine* engine,
+                                        CadenceTrackId track_id,
+                                        int slot_kind, int slot_index);
+CADENCE_API const char* cadence_engine_plugin_program_name(CadenceEngine* engine,
+                                               CadenceTrackId track_id,
+                                               int slot_kind, int slot_index,
+                                               int program_index);
+CADENCE_API int cadence_engine_plugin_current_program(CadenceEngine* engine,
+                                          CadenceTrackId track_id,
+                                          int slot_kind, int slot_index);
+/* Applies a program/preset. Message thread only. */
+CADENCE_API CadenceResult cadence_engine_set_plugin_program(CadenceEngine* engine,
+                                                CadenceTrackId track_id,
+                                                int slot_kind, int slot_index,
+                                                int program_index);
 /* Sets a normalised (0..1) value on the live plug-in. Message thread only. */
 CADENCE_API CadenceResult cadence_engine_set_plugin_param_value(CadenceEngine* engine,
                                                     CadenceTrackId track_id,
@@ -465,6 +509,27 @@ CADENCE_API void cadence_engine_select_midi_input(CadenceEngine* engine, int ind
 CADENCE_API int cadence_engine_selected_midi_input_index(CadenceEngine* engine);
 CADENCE_API const char* cadence_engine_midi_input_name_at(CadenceEngine* engine, int index);
 
+/* MIDI monitor for controller/performance views. Drains up to max_events
+   messages into out_events, which must hold max_events * 5 ints. Each event
+   is { type, channel, data1, data2, timestamp_ms }, where type is:
+   0 note-on, 1 note-off, 2 CC, 3 pitch-bend, 4 program-change,
+   5 channel-pressure/aftertouch. Returns the number of events written. */
+CADENCE_API int cadence_engine_poll_midi_events(CadenceEngine* engine,
+                                                int* out_events,
+                                                int max_events);
+
+/* Test/integration hook: inject one raw MIDI message as if it came from the
+   selected input. Used by the CLI and UI tests to verify controller mappings
+   without physical hardware. */
+CADENCE_API CadenceResult cadence_engine_debug_inject_midi(
+    CadenceEngine* engine, const unsigned char* data, int size);
+
+/* Marks a note as reserved by the controller/action layer. The event still
+   reaches the MIDI monitor so a mapped pad can fire an action, but it is not
+   sent to instrument tracks or captured into a recording. */
+CADENCE_API CadenceResult cadence_engine_set_controller_note_consumed(
+    CadenceEngine* engine, int note, int consumed);
+
 /* Device/MIDI settings file (JSON). Save/load round-trips the
    AudioDeviceManager state plus the enabled MIDI inputs. */
 CADENCE_API CadenceResult cadence_engine_save_device_settings(CadenceEngine* engine, const char* utf8_path);
@@ -480,6 +545,9 @@ CADENCE_API int cadence_engine_track_input_channel(CadenceEngine* engine, Cadenc
 
 /* ---- plugins (§7.7): VST3 + AudioUnit ---- */
 
+/* Folders walked by the VST3 scanner, newline-separated UTF-8. An empty/null
+   string restores JUCE's default locations. AudioUnit discovery is unchanged. */
+CADENCE_API void cadence_engine_set_plugin_search_paths(CadenceEngine* engine, const char* paths);
 CADENCE_API void cadence_engine_rescan_plugins(CadenceEngine* engine);
 CADENCE_API void cadence_engine_scan_plugins_now(CadenceEngine* engine);
 CADENCE_API int cadence_engine_plugin_scan_active(CadenceEngine* engine);
@@ -498,6 +566,8 @@ CADENCE_API CadenceResult cadence_engine_track_set_fx_bypass(CadenceEngine* engi
 CADENCE_API int cadence_engine_track_fx_count(CadenceEngine* engine, CadenceTrackId track_id);
 CADENCE_API const char* cadence_engine_track_fx_name_at(CadenceEngine* engine, CadenceTrackId track_id,
                                             int slot_index);
+CADENCE_API const char* cadence_engine_track_fx_uid_at(CadenceEngine* engine, CadenceTrackId track_id,
+                                           int slot_index);
 CADENCE_API int cadence_engine_track_fx_bypass_at(CadenceEngine* engine, CadenceTrackId track_id,
                                       int slot_index);
 
@@ -515,6 +585,8 @@ CADENCE_API const char* cadence_engine_track_midifx_name(CadenceEngine* engine,
                                              CadenceTrackId track_id);
 CADENCE_API const char* cadence_engine_track_instrument_name(CadenceEngine* engine,
                                                  CadenceTrackId track_id);
+CADENCE_API const char* cadence_engine_track_instrument_uid(CadenceEngine* engine,
+                                                CadenceTrackId track_id);
 
 /* Restores a saved plug-in state on the LIVE instance in an insert slot /
    instrument. `component`/`controller` are the raw VST3 component and
@@ -534,7 +606,7 @@ CADENCE_API CadenceResult cadence_engine_track_set_instrument_state(CadenceEngin
                                                         const void* controller,
                                                         int controller_size);
 /* Test hook: the state the live plug-in currently reports, base64-encoded
-   (empty when the slot is empty). slot_kind: 0 = fx chain, 1 = instrument. */
+   (empty when the slot is empty). slot_kind: 0 = fx chain, 1 = instrument, 2 = master fx. */
 CADENCE_API const char* cadence_engine_plugin_state_base64(CadenceEngine* engine,
                                                CadenceTrackId track_id,
                                                int slot_kind, int slot_index);
@@ -553,6 +625,7 @@ CADENCE_API CadenceResult cadence_engine_open_instrument_editor_with_clip(
 
 CADENCE_API int cadence_engine_master_fx_count(CadenceEngine* engine);
 CADENCE_API const char* cadence_engine_master_fx_name_at(CadenceEngine* engine, int slot_index);
+CADENCE_API const char* cadence_engine_master_fx_uid_at(CadenceEngine* engine, int slot_index);
 CADENCE_API CadenceResult cadence_engine_master_add_fx(CadenceEngine* engine, int plugin_index);
 CADENCE_API CadenceResult cadence_engine_master_remove_fx(CadenceEngine* engine, int slot_index);
 CADENCE_API CadenceResult cadence_engine_master_set_fx_bypass(CadenceEngine* engine, int slot_index,
